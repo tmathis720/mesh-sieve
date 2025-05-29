@@ -4,7 +4,6 @@
 //! All handles are **waitable** but non-blocking -– completion.rs calls
 //! `.wait()` before it trusts that the buffer is ready.
 
-use std::sync::mpsc::{self, Sender, Receiver};
 use std::sync::{Arc, Mutex};
 use dashmap::DashMap;
 use bytes::Bytes;

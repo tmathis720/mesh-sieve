@@ -43,7 +43,7 @@ fn neighbour_links<V: Clone + Default>(
     //    send to every ghost rank that I linked
     for (p, _) in section.iter() {
         // for every outgoing arrow from my mesh-point -> partition_point(peer)
-        for (dst, rem) in ovlp.cone(p) {
+        for (_dst, rem) in ovlp.cone(p) {
             if rem.rank != my_rank {
                 out.entry(rem.rank)
                    .or_default()
@@ -101,7 +101,7 @@ pub fn complete_section<V, D, C>(
 
     // --- Stage 2: exchange data ---
     let mut recv_data = HashMap::new();
-    for (&nbr, links) in &nb_links {
+    for (&nbr, _links) in &nb_links {
         let n_items = sizes_in[&nbr] as usize;
         let mut buffer = vec![0u8; n_items * std::mem::size_of::<D::Part>()];
         let h = comm.irecv(nbr, BASE_TAG+1, &mut buffer);

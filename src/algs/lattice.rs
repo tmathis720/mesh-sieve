@@ -88,7 +88,6 @@ where
 mod tests {
     use super::*;
     use crate::topology::sieve::InMemorySieve;
-    use crate::topology::arrow::Arrow;
 
     fn simple_pair() -> (InMemorySieve<P, ()>, P, P) {
         // two triangles sharing an edge

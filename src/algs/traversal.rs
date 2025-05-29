@@ -81,7 +81,6 @@ pub fn depth_map<S: Sieve<Point = Point>>(sieve: &S, seed: Point) -> Vec<(Point,
 mod tests {
     use super::*;
     use crate::topology::sieve::InMemorySieve;
-    use crate::topology::arrow::Arrow;
 
     /// helper that builds a toy 2-triangle mesh used in many tests
     fn tiny_mesh() -> InMemorySieve<Point, ()> {

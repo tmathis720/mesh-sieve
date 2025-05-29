@@ -33,7 +33,7 @@ impl Overlap {
     }
 
     /// Returns iterator over `(local, remote_point)` for a given neighbour rank.
-    pub fn links_to<'a>(&'a self, nbr: usize, my_rank: usize) -> impl Iterator<Item=(PointId, PointId)> + 'a {
+    pub fn links_to<'a>(&'a self, nbr: usize, _my_rank: usize) -> impl Iterator<Item=(PointId, PointId)> + 'a {
         Sieve::support(self, partition_point(nbr))
             .filter(move |(_, r)| r.rank == nbr)
             .map(|(local, r)| (local, r.remote_point))
