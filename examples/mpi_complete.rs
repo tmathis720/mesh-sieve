@@ -1,5 +1,5 @@
 //! Run with: mpirun -n 2 cargo run --example mpi_complete --features mpi
-
+#[cfg(feature = "mpi")]
 use sieve_rs::algs::communicator::MpiComm;
 use sieve_rs::algs::completion::complete_section;
 use sieve_rs::overlap::overlap::Overlap;
@@ -9,6 +9,7 @@ use sieve_rs::data::section::Section;
 use sieve_rs::topology::point::PointId;
 use std::process;
 
+#[cfg(feature = "mpi")]
 fn main() {
     // 1) Init MPI
     let comm = MpiComm::new();
@@ -72,4 +73,9 @@ fn main() {
     if rank == 0 {
         println!("MPI two-rank example succeeded!");
     }
+}
+
+#[cfg(not(feature = "mpi"))]
+fn main() {
+    eprintln!("This example requires the \"mpi\" feature to be enabled.");
 }
