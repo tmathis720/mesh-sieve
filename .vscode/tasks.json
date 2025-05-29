@@ -1,0 +1,20 @@
+{
+    // See https://code.visualstudio.com/docs/editor/tasks for more details
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build",
+            "type": "shell",
+            "command": "cargo build",
+            "group": "build",
+            "problemMatcher": ["$rustc"]
+        },
+        {
+            "label": "run",
+            "type": "shell",
+            "command": "cargo run",
+            "group": "test",
+            "problemMatcher": ["$rustc"]
+        }
+    ]
+}
