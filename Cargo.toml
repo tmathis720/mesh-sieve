@@ -12,10 +12,11 @@ parking_lot = "0.12.4"
 rayon = "1.10.0"
 serde = { version = "1.0.219", features = ["derive"] }
 static_assertions = "1.1.0"
-bytemuck = { version = "1.14", features = ["derive"] }
+bytemuck = { version = "1", features = ["derive"] }
+mpi = { version = "0.7", optional = true }
 
 [dev-dependencies]
 rand = "0.9"
 
 [features]
-mpi = []
+mpi = ["mpi"]
