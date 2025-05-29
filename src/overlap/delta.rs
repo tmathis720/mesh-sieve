@@ -13,6 +13,7 @@ pub trait Delta<V>: Sized {
 }
 
 /// Identity delta for cloneable values (copy-overwrites-local).
+#[derive(Copy, Clone)]
 pub struct CopyDelta;
 
 impl<V: Clone + Send> Delta<V> for CopyDelta {
@@ -22,6 +23,7 @@ impl<V: Clone + Send> Delta<V> for CopyDelta {
 }
 
 /// Additive delta for summation/balancing fields.
+#[derive(Copy, Clone)]
 pub struct AddDelta;
 
 impl<V> Delta<V> for AddDelta
