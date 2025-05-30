@@ -4,3 +4,6 @@ pub mod topology;
 pub mod data;
 pub mod overlap;
 pub mod algs;
+
+#[cfg(feature = "metis")]
+pub mod metis_partition;

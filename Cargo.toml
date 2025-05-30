@@ -15,9 +15,17 @@ static_assertions = "1.1.0"
 bytemuck = { version = "1", features = ["derive"] }
 mpi = { version = "0.7", optional = true }
 libffi-sys = { version = "2.3", default-features = false, features = ["system"] }
+metis = "0.2"
+metis-sys = "0.3.2"
 
 [dev-dependencies]
 rand = "0.9"
 
 [features]
 mpi-support = ["mpi"]
+metis-support = ["pkg-config", "bindgen"]
+
+[build-dependencies]
+pkg-config = { version = "0.3", optional = true }
+bindgen = { version = "0.65", optional = true }
+regex = "1.8"

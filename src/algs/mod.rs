@@ -5,6 +5,7 @@ pub mod lattice;
 pub mod communicator;
 pub mod completion;
 pub mod dual_graph;
+pub mod metis_partition;
 pub mod partition;
 
 pub use lattice::{meet, join, adjacent};
