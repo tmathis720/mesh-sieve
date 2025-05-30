@@ -131,12 +131,17 @@ mod mpi_backend {
         fn next_tag() -> i32 { TAG_COUNTER.fetch_add(1, Relaxed) as i32 }
     }
 
-    pub struct MpiHandle(Request<'static, [u8], StaticScope>);
+    pub struct MpiHandle {
+        req: Request<'static, [u8], StaticScope>,
+        buf: *mut [u8],
+    }
 
     impl Wait for MpiHandle {
         fn wait(self) -> Option<Vec<u8>> {
-            let _ = self.0.wait();
-            None
+            let _ = self.req.wait();
+            // SAFETY: We own the leaked buffer, so it's safe to reconstruct and take ownership
+            let buf = unsafe { Box::from_raw(self.buf) };
+            Some(buf.to_vec())
         }
     }
 
@@ -150,13 +155,14 @@ mod mpi_backend {
         }
 
         fn irecv(&self, peer: usize, _tag: u16, buf: &mut [u8]) -> MpiHandle {
-            let owned = Vec::from(buf);
-            let boxed: Box<[u8]> = owned.into_boxed_slice();
-            let static_buf: &'static mut [u8] = Box::leak(boxed);
-            let tag = Self::next_tag();
+            let len = buf.len();
+            let mut v = Vec::with_capacity(len);
+            unsafe { v.set_len(len) };
+            let static_buf: &'static mut [u8] = Box::leak(v.into_boxed_slice());
+            let buf_ptr = static_buf as *mut [u8];
             let req = self.world.process_at_rank(peer as i32)
-                .immediate_receive_into(StaticScope, static_buf);
-            MpiHandle(req)
+                .immediate_receive_into(StaticScope, unsafe { &mut *buf_ptr });
+            MpiHandle { req, buf: buf_ptr }
         }
     }
 }

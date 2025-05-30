@@ -132,8 +132,8 @@ pub fn complete_section<V, D, C>(
         buffer.copy_from_slice(&raw);
         let parts: &[D::Part] = cast_slice(&buffer);
         let links = &nb_links[&nbr];
-        for ((loc, _), part) in links.iter().zip(parts) {
-            let mut_slice = section.restrict_mut(*loc);
+        for ((_, dst), part) in links.iter().zip(parts) {
+            let mut_slice = section.restrict_mut(*dst);
             D::fuse(&mut mut_slice[0], *part);
         }
     }
