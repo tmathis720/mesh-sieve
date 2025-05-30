@@ -14,6 +14,7 @@ serde = { version = "1.0.219", features = ["derive"] }
 static_assertions = "1.1.0"
 bytemuck = { version = "1", features = ["derive"] }
 mpi = { version = "0.7", optional = true }
+libffi-sys = { version = "2.3", default-features = false, features = ["system"] }
 
 [dev-dependencies]
 rand = "0.9"

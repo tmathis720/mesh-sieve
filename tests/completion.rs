@@ -1,6 +1,6 @@
 use sieve_rs::algs::{
     communicator::RayonComm,
-    completion::{complete_section, partition_point},
+    completion::complete_section,
 };
 use sieve_rs::data::{atlas::Atlas, section::Section};
 use sieve_rs::topology::point::PointId;

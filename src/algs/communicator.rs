@@ -102,54 +102,66 @@ impl Communicator for RayonComm {
 }
 
 // --- MPI backend (feature = "mpi") ---
-#[cfg(feature = "mpi")]
+#[cfg(feature = "mpi-support")]
 mod mpi_backend {
     use super::*;
-    use rsmpi::{traits::*, topology::SystemCommunicator};
+    use mpi::traits::*;
+    use mpi::topology::{SimpleCommunicator, Communicator as _};
+    use mpi::request::{StaticScope};
+    use mpi::request::Request;
+    use mpi::environment::Universe;
     use std::sync::atomic::{AtomicU16, Ordering::Relaxed};
 
     static TAG_COUNTER: AtomicU16 = AtomicU16::new(42);
 
-    #[derive(Clone)]
+
     pub struct MpiComm {
-        pub world: SystemCommunicator,
-        pub rank:  usize,
+        _universe: Universe, // keep alive until drop
+        pub world: SimpleCommunicator,
+        pub rank: usize,
     }
 
     impl MpiComm {
         pub fn new() -> Self {
-            let world = rsmpi::initialize().unwrap();
-            let rank  = world.rank() as usize;
-            Self { world, rank }
+            let universe = mpi::initialize().unwrap();
+            let world = universe.world();
+            let rank = world.rank() as usize;
+            MpiComm { _universe: universe, world, rank }
         }
         fn next_tag() -> i32 { TAG_COUNTER.fetch_add(1, Relaxed) as i32 }
     }
 
-    pub struct MpiHandle(rsmpi::request::Request<'static>);
+    pub struct MpiHandle(Request<'static, [u8], StaticScope>);
 
     impl Wait for MpiHandle {
-        fn wait(self) { self.0.wait(); }
+        fn wait(self) -> Option<Vec<u8>> {
+            let _ = self.0.wait();
+            None
+        }
     }
 
-    impl Communicator for MpiComm {
-        type SendHandle = MpiHandle;
+    impl crate::algs::communicator::Communicator for MpiComm {
+        type SendHandle = ();
         type RecvHandle = MpiHandle;
 
-        fn isend(&self, peer: usize, _tag: u16, buf: &[u8]) -> MpiHandle {
-            let tag = Self::next_tag();
-            let req = unsafe { self.world.process_at_rank(peer as i32).immediate_send(buf, tag) };
-            MpiHandle(req)
+        fn isend(&self, peer: usize, _tag: u16, buf: &[u8]) -> () {
+            self.world.process_at_rank(peer as i32)
+                .send(buf);
         }
 
         fn irecv(&self, peer: usize, _tag: u16, buf: &mut [u8]) -> MpiHandle {
+            let owned = Vec::from(buf);
+            let boxed: Box<[u8]> = owned.into_boxed_slice();
+            let static_buf: &'static mut [u8] = Box::leak(boxed);
             let tag = Self::next_tag();
-            let req = unsafe { self.world.process_at_rank(peer as i32).immediate_receive_into(buf, tag) };
+            let req = self.world.process_at_rank(peer as i32)
+                .immediate_receive_into(StaticScope, static_buf);
             MpiHandle(req)
         }
     }
 }
 
-#[cfg(feature = "mpi")]
+#[cfg(feature = "mpi-support")]
 pub use mpi_backend::MpiComm;
 
 #[cfg(test)]
@@ -184,10 +196,10 @@ mod tests {
         assert_eq!(&recv_buf, &[1,2,3,4]);
     }
 
-    #[cfg(feature = "mpi")]
+    #[cfg(feature = "mpi-support")]
     #[test]
     fn mpi_roundtrip() {
-        use rsmpi::traits::*;
+        use mpi::traits::*;
         let comm = MpiComm::new();
         let size = comm.world.size() as usize;
         let nbr  = (comm.rank + 1) % size;

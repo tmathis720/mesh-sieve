@@ -585,6 +585,7 @@ dependencies = [
  "bytes",
  "dashmap",
  "itertools 0.14.0",
+ "libffi-sys",
  "mpi",
  "once_cell",
  "parking_lot",
