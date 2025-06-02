@@ -6,7 +6,7 @@ pub mod overlap;
 pub mod algs;
 
 #[cfg(feature = "metis-support")]
-pub mod metis_partition;
+pub use algs::metis_partition;
 
 #[cfg(feature = "partitioning")]
 pub mod partitioning;

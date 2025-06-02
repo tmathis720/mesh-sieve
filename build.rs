@@ -31,7 +31,7 @@ fn main() {
         let lib = env::var("METIS_LIB_DIR")
             .unwrap_or_else(|_| format!("{}/lib", &prefix));
 
-        // Tell Cargo to look in `$lib` for both libmetis.so and libgklib.so:
+        // Tell Cargo to look in `$lib` for both libmetis.so and libgklib.a:
         println!("cargo:rustc-link-search=native={}", lib);
         println!("cargo:rustc-link-lib=dylib=metis");
         println!("cargo:rustc-link-lib=dylib=gklib");
