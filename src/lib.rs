@@ -5,5 +5,8 @@ pub mod data;
 pub mod overlap;
 pub mod algs;
 
-#[cfg(feature = "metis")]
+#[cfg(feature = "metis-support")]
 pub mod metis_partition;
+
+#[cfg(feature = "partitioning")]
+pub mod partitioning;
