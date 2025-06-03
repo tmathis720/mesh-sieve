@@ -31,10 +31,17 @@ fn main() {
         let lib = env::var("METIS_LIB_DIR")
             .unwrap_or_else(|_| format!("{}/lib", &prefix));
 
-        // Tell Cargo to look in `$lib` for both libmetis.so and libgklib.a:
+        // Tell Cargo to look in `$lib` for both libmetis.so and libGKlib.a:
         println!("cargo:rustc-link-search=native={}", lib);
         println!("cargo:rustc-link-lib=dylib=metis");
-        println!("cargo:rustc-link-lib=dylib=gklib");
+        println!("cargo:rustc-link-lib=dylib=GKlib");
+
+        println!("cargo:rustc-link-search=native=/opt/intel/oneapi/compiler/2025.1/lib");
+        println!("cargo:rustc-link-lib=dylib=intlc");
+
+        println!("cargo:rerun-if-env-changed=METIS_DIR");
+        println!("cargo:rerun-if-env-changed=METIS_LIB_DIR");
+        println!("cargo:rerun-if-env-changed=METIS_INCLUDE_DIR");
 
         (inc, lib)
     } else {
@@ -48,7 +55,7 @@ fn main() {
         //   cargo:rustc-link-search=native=/path/to/metis/lib
         //   cargo:rustc-link-lib=dylib=metis
         // All we need to add is GKlib:
-        println!("cargo:rustc-link-lib=dylib=gklib");
+        println!("cargo:rustc-link-lib=dylib=GKlib");
 
         let inc = lib.include_paths
             .get(0)
