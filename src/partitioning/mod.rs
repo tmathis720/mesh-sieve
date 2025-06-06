@@ -15,6 +15,7 @@ pub use self::metrics::*;
 use hashbrown::HashMap;
 use std::hash::Hash;
 use rayon::iter::ParallelIterator;
+use rayon::iter::IntoParallelIterator;
 
 #[cfg(feature = "partitioning")]
 pub type PartitionId = usize;
@@ -80,7 +81,7 @@ pub fn partition<G>(graph: &G, cfg: &PartitionerConfig) -> Result<PartitionMap<G
 where
     G: PartitionableGraph<VertexId = usize> + Sync,
 {
-    use crate::partitioning::{louvain::louvain_cluster, binpack::partition_clusters, binpack::Item, seed_select::pick_seeds, vertex_cut::build_vertex_cuts, metrics::{edge_cut, replication_factor}};
+    use crate::partitioning::{louvain::louvain_cluster, binpack::partition_clusters, binpack::Item, vertex_cut::build_vertex_cuts, metrics::{edge_cut, replication_factor}};
     use std::collections::HashMap;
 
     let verts: Vec<_> = graph.vertices().collect();
@@ -136,11 +137,13 @@ mod tests {
     struct DummyGraph;
     impl PartitionableGraph for DummyGraph {
         type VertexId = usize;
-        fn vertices(&self) -> Vec<Self::VertexId> {
-            vec![0, 1, 2, 3]
+        type VertexParIter<'a> = rayon::vec::IntoIter<usize>;
+        type NeighParIter<'a> = rayon::vec::IntoIter<usize>;
+        fn vertices(&self) -> Self::VertexParIter<'_> {
+            vec![0, 1, 2, 3].into_par_iter()
         }
-        fn neighbors(&self, _v: Self::VertexId) -> Vec<Self::VertexId> {
-            vec![]
+        fn neighbors(&self, _v: Self::VertexId) -> Self::NeighParIter<'_> {
+            Vec::new().into_par_iter()
         }
         fn degree(&self, _v: Self::VertexId) -> usize {
             0

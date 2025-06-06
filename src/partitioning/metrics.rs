@@ -5,6 +5,7 @@ use super::{PartitionableGraph, PartitionMap};
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use rayon::iter::ParallelIterator;
+use rayon::iter::IntoParallelIterator;
 
 /// Returns the part ID for a given vertex.
 impl<V: Eq + Hash + Copy> PartitionMap<V> {
@@ -26,13 +27,12 @@ where
 
     // Build a Vec of all undirected edges (u < v) in parallel:
     let cut_count: usize = g
-        .vertices() // returns a ParallelIterator<Item = VertexId>
+        .vertices()
         .flat_map(|u| {
+            // NeighParIter is a ParallelIterator, not Iterator, so use .filter_map directly
             g.neighbors(u)
-                .into_iter() // `neighbors(u)` returns Vec<VertexId>
                 .filter_map(move |v| {
                     if u < v {
-                        // only count u < v once
                         if pm.part_of(u) != pm.part_of(v) {
                             Some(1)
                         } else {
@@ -55,6 +55,7 @@ where
     G: PartitionableGraph,
     G::VertexId: Eq + Hash + Copy,
 {
+    use rayon::prelude::*;
     // 1. Gather all vertices into a Vec so we can index them [0..n)
     let verts: Vec<G::VertexId> = g.vertices().collect();
     let n = verts.len();
@@ -63,28 +64,24 @@ where
     }
 
     // 2. Build a map from VertexId -> position index
-    let mut idx_map: HashMap<G::VertexId, usize> = HashMap::with_capacity(n);
-    for (i, &v) in verts.iter().enumerate() {
-        idx_map.insert(v, i);
-    }
+    let idx_map: HashMap<G::VertexId, usize> = verts.iter().copied().enumerate().map(|(i, v)| (v, i)).collect();
 
-    // 3. Create a HashSet per‐vertex to accumulate all owning parts
-    let mut owners: Vec<HashSet<usize>> = vec![HashSet::new(); n];
+    // 3. Create a Vec<HashSet<usize>> per vertex to accumulate all owning parts (thread-safe)
+    let owners: Vec<std::sync::Mutex<HashSet<usize>>> = (0..n).map(|_| std::sync::Mutex::new(HashSet::new())).collect();
 
-    // 4. For each vertex u, mark its own part, and also its part for each neighbor v
-    for &u in verts.iter() {
+    // 4. For each vertex u, mark its own part, and also its part for each neighbor v (in parallel)
+    verts.par_iter().for_each(|&u| {
         let pu = pm.part_of(u);
         let u_idx = idx_map[&u];
-        owners[u_idx].insert(pu);
-
-        for v in g.neighbors(u) {
+        owners[u_idx].lock().unwrap().insert(pu);
+        g.neighbors(u).for_each(|v| {
             let v_idx = idx_map[&v];
-            owners[v_idx].insert(pu);
-        }
-    }
+            owners[v_idx].lock().unwrap().insert(pu);
+        });
+    });
 
     // 5. Sum the size of each owner‐set
-    let total_owned: usize = owners.iter().map(|s| s.len()).sum();
+    let total_owned: usize = owners.iter().map(|s| s.lock().unwrap().len()).sum();
 
     // 6. Return average = total / n
     total_owned as f64 / n as f64
@@ -101,25 +98,24 @@ mod tests {
     }
     impl PartitionableGraph for TestGraph {
         type VertexId = usize;
-        fn vertices(&self) -> Vec<Self::VertexId> {
-            (0..self.n).collect()
+        type VertexParIter<'a> = rayon::vec::IntoIter<usize>;
+        type NeighParIter<'a> = rayon::vec::IntoIter<usize>;
+        fn vertices(&self) -> Self::VertexParIter<'_> {
+            (0..self.n).collect::<Vec<_>>().into_par_iter()
         }
-        fn neighbors(&self, v: usize) -> Vec<Self::VertexId> {
-            self.edges
-                .iter()
-                .filter_map(|&(a, b)| {
-                    if a == v {
-                        Some(b)
-                    } else if b == v {
-                        Some(a)
-                    } else {
-                        None
-                    }
-                })
-                .collect()
+        fn neighbors(&self, v: usize) -> Self::NeighParIter<'_> {
+            self.edges.iter().filter_map(|&(a, b)| {
+                if a == v {
+                    Some(b)
+                } else if b == v {
+                    Some(a)
+                } else {
+                    None
+                }
+            }).collect::<Vec<_>>().into_par_iter()
         }
         fn degree(&self, v: usize) -> usize {
-            self.neighbors(v).len()
+            self.neighbors(v).count()
         }
     }
 

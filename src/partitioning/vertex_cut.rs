@@ -2,9 +2,10 @@ use crate::partitioning::graph_traits::PartitionableGraph;
 use crate::partitioning::PartitionMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use parking_lot::Mutex;
-use std::collections::HashSet;
 use ahash::AHasher;
 use rayon::prelude::*; // brings IntoParallelIterator, ParallelIterator, etc.
+use rayon::iter::IntoParallelIterator;
+use std::hash::Hasher;
 
 /// For each edge `(u, v)` in the graph where `pm.part_of(u) != pm.part_of(v)`,
 /// choose a “primary owner” of that edge (by hashing `(u,v)` with a salt),
@@ -111,25 +112,24 @@ mod tests {
     }
     impl PartitionableGraph for TestGraph {
         type VertexId = usize;
-        fn vertices(&self) -> Vec<Self::VertexId> {
-            (0..self.n).collect()
+        type VertexParIter<'a> = rayon::vec::IntoIter<usize>;
+        type NeighParIter<'a> = rayon::vec::IntoIter<usize>;
+        fn vertices(&self) -> Self::VertexParIter<'_> {
+            (0..self.n).collect::<Vec<_>>().into_par_iter()
         }
-        fn neighbors(&self, v: usize) -> Vec<Self::VertexId> {
-            self.edges
-                .iter()
-                .filter_map(|&(a, b)| {
-                    if a == v {
-                        Some(b)
-                    } else if b == v {
-                        Some(a)
-                    } else {
-                        None
-                    }
-                })
-                .collect()
+        fn neighbors(&self, v: usize) -> Self::NeighParIter<'_> {
+            self.edges.iter().filter_map(|&(a, b)| {
+                if a == v {
+                    Some(b)
+                } else if b == v {
+                    Some(a)
+                } else {
+                    None
+                }
+            }).collect::<Vec<_>>().into_par_iter()
         }
         fn degree(&self, v: usize) -> usize {
-            self.neighbors(v).len()
+            self.neighbors(v).count()
         }
     }
 

@@ -46,7 +46,7 @@ pub trait PartitionableGraph: Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rayon::iter::{IntoParallelRefIterator, IntoParallelIterator};
+    use rayon::iter::{IntoParallelIterator};
     use std::collections::HashMap;
 
     /// Simple in-memory undirected graph for testing.

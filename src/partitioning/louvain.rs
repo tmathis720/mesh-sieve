@@ -3,7 +3,7 @@
 use crate::partitioning::graph_traits::PartitionableGraph;
 use crate::partitioning::PartitionerConfig;
 use rayon::iter::ParallelIterator;
-use rayon::prelude::*;
+use rayon::iter::IntoParallelIterator;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -144,10 +144,12 @@ mod tests {
     }
     impl PartitionableGraph for PathGraph {
         type VertexId = usize;
-        fn vertices(&self) -> Vec<Self::VertexId> {
-            (0..self.n).collect()
+        type VertexParIter<'a> = rayon::vec::IntoIter<usize>;
+        type NeighParIter<'a> = rayon::vec::IntoIter<usize>;
+        fn vertices(&self) -> Self::VertexParIter<'_> {
+            (0..self.n).collect::<Vec<_>>().into_par_iter()
         }
-        fn neighbors(&self, v: usize) -> Vec<Self::VertexId> {
+        fn neighbors(&self, v: usize) -> Self::NeighParIter<'_> {
             let mut neigh = Vec::new();
             if v > 0 {
                 neigh.push(v - 1);
@@ -155,14 +157,10 @@ mod tests {
             if v + 1 < self.n {
                 neigh.push(v + 1);
             }
-            neigh
+            neigh.into_par_iter()
         }
         fn degree(&self, v: usize) -> usize {
-            if v == 0 || v + 1 == self.n {
-                1
-            } else {
-                2
-            }
+            self.neighbors(v).count()
         }
     }
     impl PathGraph {

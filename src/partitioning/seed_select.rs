@@ -1,11 +1,10 @@
 use crate::partitioning::graph_traits::PartitionableGraph;
 use crate::partitioning::PartitionerConfig;
 use rayon::iter::ParallelIterator;
-use rayon::prelude::*;
+use rayon::iter::IntoParallelIterator;
 use rand::Rng;
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
-use ahash::AHasher;
 
 /// Returns a Vec<VertexId> of length `num_seeds = ceil(cfg.seed_factor * cfg.n_parts)`,
 /// chosen *without replacement*, weighted by degree.  Assumes `VertexId = usize`.
@@ -24,7 +23,7 @@ where
     let num_seeds = ((cfg.seed_factor * cfg.n_parts as f64).ceil() as usize).min(n).max(1);
 
     // ——— FIX: collect the iterator into a Vec<usize> ———
-    let mut vertices: Vec<usize> = graph.vertices().collect();
+    let vertices: Vec<usize> = graph.vertices().collect();
     // —————————————————————————————————————————————————
 
     let mut weights = degrees.to_vec();
@@ -86,10 +85,12 @@ mod tests {
     }
     impl PartitionableGraph for PathGraph {
         type VertexId = usize;
-        fn vertices(&self) -> Vec<Self::VertexId> {
-            (0..self.n).collect()
+        type VertexParIter<'a> = rayon::vec::IntoIter<usize>;
+        type NeighParIter<'a> = rayon::vec::IntoIter<usize>;
+        fn vertices(&self) -> Self::VertexParIter<'_> {
+            (0..self.n).collect::<Vec<_>>().into_par_iter()
         }
-        fn neighbors(&self, v: usize) -> Vec<Self::VertexId> {
+        fn neighbors(&self, v: usize) -> Self::NeighParIter<'_> {
             let mut neigh = Vec::new();
             if v > 0 {
                 neigh.push(v - 1);
@@ -97,10 +98,10 @@ mod tests {
             if v + 1 < self.n {
                 neigh.push(v + 1);
             }
-            neigh
+            neigh.into_par_iter()
         }
         fn degree(&self, v: usize) -> usize {
-            self.neighbors(v).len()
+            self.neighbors(v).count()
         }
     }
 
