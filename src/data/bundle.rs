@@ -1,7 +1,7 @@
 use crate::topology::point::PointId;
 use crate::topology::stack::{InMemoryStack, Stack};
 use crate::data::section::Section;
-use crate::overlap::delta::{Delta, CopyDelta};
+use crate::overlap::delta::CopyDelta;
 use crate::topology::sieve::Sieve;
 
 /// A bundle links mesh topology to DOF set and packages field storage.

@@ -8,12 +8,11 @@
 //! 3. On receive, Delta::fuse() into local Section.
 
 use std::collections::HashMap;
-
 use bytemuck::{Pod, cast_slice};
 
 use crate::data::section::Section;
 use crate::algs::communicator::{Communicator, Wait};
-use crate::overlap::overlap::{Overlap};
+use crate::overlap::overlap::Overlap;
 use crate::overlap::delta::Delta;
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
@@ -156,10 +155,10 @@ pub fn complete_section<V, D, C>(
 /// Complete the vertical stack structure (exchange stack arrows across ranks).
 /// Each triple (base, cap, payload) is sent to ghost ranks so they can reconstruct the stack.
 pub fn complete_stack<P, Q, Pay, C, S, O, R>(
-    stack: &mut S,
-    overlap: &O,
-    comm: &C,
-    my_rank: usize,
+    _stack: &mut S,
+    _overlap: &O,
+    _comm: &C,
+    _my_rank: usize,
 ) where
     P: Copy + bytemuck::Pod + Eq + std::hash::Hash + Send + 'static,
     Q: Copy + bytemuck::Pod + Eq + std::hash::Hash + Send + 'static,
@@ -169,22 +168,22 @@ pub fn complete_stack<P, Q, Pay, C, S, O, R>(
     O: crate::topology::sieve::Sieve<Point = P, Payload = R> + Sync,
     R: Copy + Send + 'static,
 {
-    use bytemuck::cast_slice;
     use crate::topology::stack::Stack;
-    use crate::topology::point::PointId;
-    use crate::topology::arrow::Orientation;
-    use crate::topology::stack::InMemoryStack;
-    use crate::overlap::overlap::{Overlap, Remote};
-    use crate::algs::communicator::NoComm;
-    use bytemuck::{Pod, Zeroable};
+    // use crate::topology::point::PointId;
+    // use crate::topology::arrow::Orientation;
+    // use crate::topology::stack::InMemoryStack;
+    // use crate::overlap::overlap::{Overlap, Remote};
+    // use crate::algs::communicator::NoComm;
+    // use bytemuck::{Pod, Zeroable};
+    // use bytemuck::derive::{Pod as DerivePod, Zeroable as DeriveZeroable};
 
     #[cfg(test)]
     mod tests {
         use super::*;
-        use bytemuck::{Pod, Zeroable};
         use crate::topology::stack::{InMemoryStack, Stack};
         use crate::algs::communicator::NoComm;
-
+        use bytemuck::{Pod, Zeroable};
+        // Use the derive macros from bytemuck directly
         #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Pod, Zeroable)]
         #[repr(C)]
         pub struct DummyPayload(pub u8);

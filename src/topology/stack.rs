@@ -27,10 +27,6 @@ pub trait Stack {
 }
 
 #[derive(Clone, Debug, Default)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize)
-)]
 pub struct InMemoryStack<
     B: Copy + Eq + std::hash::Hash,
     C: Copy + Eq + std::hash::Hash,
@@ -122,7 +118,6 @@ impl Orientation {
                     Orientation::Positive => Orientation::Negative,
                     Orientation::Negative => Orientation::Positive,
                     Orientation::Permutation(p) => {
-                        // Negate the permutation (reverse order)
                         let mut rev = p.clone();
                         rev.reverse();
                         Orientation::Permutation(rev)
@@ -130,12 +125,8 @@ impl Orientation {
                 }
             }
             (Orientation::Permutation(p1), Orientation::Permutation(p2)) => {
-                // Compose permutations: p2(p1[i])
                 let composed = p1.iter().map(|&i| p2[i]).collect();
                 Orientation::Permutation(composed)
-            }
-            (Orientation::Permutation(p), _) | (_, Orientation::Permutation(p)) => {
-                Orientation::Permutation(p.clone())
             }
         }
     }
@@ -285,7 +276,7 @@ mod tests {
         let mut lifted: Vec<_> = composed.lift(A(1)).map(|(c, p)| (c, *p)).collect();
         lifted.sort_by_key(|(c, _)| c.0);
         assert_eq!(lifted, vec![(C(100), 7), (C(101), 10)]);
-        let mut dropped: Vec<_> = composed.drop(C(100)).map(|(a, p)| (a, *p)).collect();
+        let dropped: Vec<_> = composed.drop(C(100)).map(|(a, p)| (a, *p)).collect();
         assert_eq!(dropped, vec![(A(1), 7)]);
     }
 }

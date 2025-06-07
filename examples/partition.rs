@@ -18,11 +18,11 @@ fn main() {
     };
 
     // 2) Build dual graph
-    let dg: DualGraph = build_dual(&mesh, cells.clone());
+    let _dg: DualGraph = build_dual(&mesh, cells.clone());
 
     #[cfg(feature = "metis-support")] {
       // 3) Partition into 2 parts
-      let p = dg.metis_partition(2);
+      let p = _dg.metis_partition(2);
       println!("partition array = {:?}", p.part);
     }
 }

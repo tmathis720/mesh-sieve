@@ -109,10 +109,6 @@ mod mpi_backend {
     use mpi::request::{StaticScope};
     use mpi::request::Request;
     use mpi::environment::Universe;
-    use std::sync::atomic::{AtomicU16, Ordering::Relaxed};
-
-    static TAG_COUNTER: AtomicU16 = AtomicU16::new(42);
-
 
     pub struct MpiComm {
         _universe: Universe, // keep alive until drop
@@ -127,7 +123,6 @@ mod mpi_backend {
             let rank = world.rank() as usize;
             MpiComm { _universe: universe, world, rank }
         }
-        fn next_tag() -> i32 { TAG_COUNTER.fetch_add(1, Relaxed) as i32 }
     }
 
     pub struct MpiHandle {

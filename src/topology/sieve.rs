@@ -102,8 +102,6 @@ impl<P: Copy + Eq + std::hash::Hash, T: Clone> InMemorySieve<P, T> {
 
 type ConeMapIter<'a, P, T> = std::iter::Map<std::slice::Iter<'a, (P, T)>, fn(&'a (P, T)) -> (P, &'a T)>;
 
-type EmptyMapIter<'a, P, T> = std::iter::Map<std::slice::Iter<'a, (P, T)>, fn(&'a (P, T)) -> (P, &'a T)>;
-
 impl<P: Copy + Eq + std::hash::Hash, T: Clone> Sieve for InMemorySieve<P, T> {
     type Point = P;
     type Payload = T;
@@ -182,14 +180,6 @@ fn set_intersection<P: Ord + Copy>(a: &[P], b: &[P], out: &mut Vec<P>) {
         else if a[i] > b[j] { j += 1; }
         else { out.push(a[i]); i += 1; j += 1; }
     }
-}
-
-/// Helper: remove all points reachable from seeds (via closure) from set
-fn exclude_closure<S, P>(sieve: &S, seeds: &[P], set: &mut Vec<P>)
-where S: Sieve<Point = P>, P: Copy + Ord + Eq + std::hash::Hash {
-    let mut to_remove: Vec<P> = sieve.closure(seeds.iter().copied()).collect();
-    to_remove.sort_unstable(); to_remove.dedup();
-    set.retain(|x| !to_remove.binary_search(x).is_ok());
 }
 
 #[cfg(test)]
