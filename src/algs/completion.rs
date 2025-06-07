@@ -152,3 +152,106 @@ pub fn complete_section<V, D, C>(
     println!("[rank {}] All receives complete", my_rank);
     println!("[rank {}] Leaving complete_section", my_rank);
 }
+
+/// Complete the vertical stack structure (exchange stack arrows across ranks).
+/// Each triple (base, cap, payload) is sent to ghost ranks so they can reconstruct the stack.
+pub fn complete_stack<P, Q, Pay, C, S, O, R>(
+    stack: &mut S,
+    overlap: &O,
+    comm: &C,
+    my_rank: usize,
+) where
+    P: Copy + bytemuck::Pod + Eq + std::hash::Hash + Send + 'static,
+    Q: Copy + bytemuck::Pod + Eq + std::hash::Hash + Send + 'static,
+    Pay: Copy + bytemuck::Pod + Send + 'static,
+    C: crate::algs::communicator::Communicator + Sync,
+    S: crate::topology::stack::Stack<Point = P, CapPt = Q, Payload = Pay>,
+    O: crate::topology::sieve::Sieve<Point = P, Payload = R> + Sync,
+    R: Copy + Send + 'static,
+{
+    use bytemuck::cast_slice;
+    use crate::topology::stack::Stack;
+    use crate::topology::point::PointId;
+    use crate::topology::arrow::Orientation;
+    use crate::topology::stack::InMemoryStack;
+    use crate::overlap::overlap::{Overlap, Remote};
+    use crate::algs::communicator::NoComm;
+    use bytemuck::{Pod, Zeroable};
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use bytemuck::{Pod, Zeroable};
+        use crate::topology::stack::{InMemoryStack, Stack};
+        use crate::algs::communicator::NoComm;
+
+        #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Pod, Zeroable)]
+        #[repr(C)]
+        pub struct DummyPayload(pub u8);
+
+        #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Pod, Zeroable)]
+        #[repr(transparent)]
+        pub struct PodPointId(pub u64);
+        impl PodPointId {
+            pub fn new(raw: u64) -> Self { Self(raw) }
+        }
+
+        #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Pod, Zeroable)]
+        #[repr(C)]
+        pub struct TestRemote {
+            pub rank: usize,
+            pub remote_point: PodPointId,
+        }
+
+        type TestOverlap = crate::topology::sieve::InMemorySieve<PodPointId, TestRemote>;
+
+        #[test]
+        fn complete_stack_sends_and_receives_triples() {
+            let mut stack0 = InMemoryStack::<PodPointId, PodPointId, DummyPayload>::new();
+            let mut stack1 = InMemoryStack::<PodPointId, PodPointId, DummyPayload>::new();
+            stack0.add_arrow(PodPointId::new(1), PodPointId::new(101), DummyPayload(42));
+            stack1.add_arrow(PodPointId::new(2), PodPointId::new(102), DummyPayload(99));
+            let mut overlap = TestOverlap::default();
+            overlap.add_arrow(PodPointId::new(1), PodPointId::new(0), TestRemote { rank: 1, remote_point: PodPointId::new(1) });
+            overlap.add_arrow(PodPointId::new(2), PodPointId::new(1), TestRemote { rank: 0, remote_point: PodPointId::new(2) });
+            let comm = NoComm;
+            super::complete_stack::<PodPointId, PodPointId, DummyPayload, _, _, _, TestRemote>(&mut stack0, &overlap, &comm, 0);
+            super::complete_stack::<PodPointId, PodPointId, DummyPayload, _, _, _, TestRemote>(&mut stack1, &overlap, &comm, 1);
+            let arrows0: Vec<_> = stack0.lift(PodPointId::new(1)).collect();
+            let arrows0b: Vec<_> = stack0.lift(PodPointId::new(2)).collect();
+            let arrows1: Vec<_> = stack1.lift(PodPointId::new(2)).collect();
+            let arrows1b: Vec<_> = stack1.lift(PodPointId::new(1)).collect();
+            assert!(arrows0.iter().any(|&(cap, pay)| cap == PodPointId::new(101) && *pay == DummyPayload(42)));
+            assert!(arrows0b.iter().any(|&(cap, pay)| cap == PodPointId::new(102) && *pay == DummyPayload(99)));
+            assert!(arrows1.iter().any(|&(cap, pay)| cap == PodPointId::new(102) && *pay == DummyPayload(99)));
+            assert!(arrows1b.iter().any(|&(cap, pay)| cap == PodPointId::new(101) && *pay == DummyPayload(42)));
+        }
+
+        #[test]
+        fn complete_stack_local_sim() {
+            let mut stack0 = InMemoryStack::<PodPointId, PodPointId, DummyPayload>::new();
+            let mut stack1 = InMemoryStack::<PodPointId, PodPointId, DummyPayload>::new();
+            Stack::add_arrow(&mut stack0, PodPointId::new(1), PodPointId::new(101), DummyPayload(42));
+            Stack::add_arrow(&mut stack1, PodPointId::new(2), PodPointId::new(102), DummyPayload(99));
+            let mut overlap = TestOverlap::default();
+            overlap.add_arrow(PodPointId::new(1), PodPointId::new(0), TestRemote { rank: 1, remote_point: PodPointId::new(1) });
+            overlap.add_arrow(PodPointId::new(2), PodPointId::new(1), TestRemote { rank: 0, remote_point: PodPointId::new(2) });
+            let comm = NoComm;
+            super::complete_stack::<PodPointId, PodPointId, DummyPayload, _, _, _, TestRemote>(&mut stack0, &overlap, &comm, 0);
+            super::complete_stack::<PodPointId, PodPointId, DummyPayload, _, _, _, TestRemote>(&mut stack1, &overlap, &comm, 1);
+            let mut found0 = false;
+            for (cap, pay) in stack0.lift(PodPointId::new(2)) {
+                if cap == PodPointId::new(102) && *pay == DummyPayload(99) {
+                    found0 = true;
+                }
+            }
+            let mut found1 = false;
+            for (cap, pay) in stack1.lift(PodPointId::new(1)) {
+                if cap == PodPointId::new(101) && *pay == DummyPayload(42) {
+                    found1 = true;
+                }
+            }
+            assert!(found0 && found1);
+        }
+    }
+}

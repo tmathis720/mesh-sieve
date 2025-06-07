@@ -42,6 +42,13 @@ impl Default for Arrow<()> {
     fn default() -> Self { Arrow::unit(PointId::new(1), PointId::new(1)) }
 }
 
+/// Orientation for vertical arrows in a stack (for sign/permutation, etc.)
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Orientation {
+    Forward,
+    Reverse,
+}
+
 // Unit tests
 #[cfg(test)]
 mod tests {

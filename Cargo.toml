@@ -31,6 +31,7 @@ mpi-support = ["mpi"]
 metis-support = ["pkg-config", "bindgen"]
 topology_refine = []  # Feature gate for topology refinement and experimental algorithms
 data_refine = [] # Feature gate for data-layer refinement
+stack_refine = [] # Feature gate for stack/bundle refinement
 
 [build-dependencies]
 pkg-config = { version = "0.3", optional = true }

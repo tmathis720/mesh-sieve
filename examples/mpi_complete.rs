@@ -1,5 +1,5 @@
-//! Run with: mpirun -n 2 cargo run --example mpi_complete --features mpi
-#[cfg(feature = "mpi")]
+//! Run with: mpirun -n 2 cargo run --example mpi_complete --features mpi-support
+#[cfg(feature = "mpi-support")]
 use sieve_rs::algs::communicator::MpiComm;
 use sieve_rs::algs::completion::complete_section;
 use sieve_rs::overlap::overlap::Overlap;

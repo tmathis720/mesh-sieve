@@ -2,3 +2,5 @@
 
 pub mod section;
 pub mod atlas;
+
+pub mod bundle;

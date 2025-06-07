@@ -5,8 +5,8 @@ use std::{
     num::NonZeroU64,
 };
 
+#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 #[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, serde::Serialize, serde::Deserialize)]
 pub struct PointId(NonZeroU64);
 
 impl PointId {

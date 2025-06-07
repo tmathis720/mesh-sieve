@@ -101,7 +101,7 @@ impl Communicator for RayonComm {
     }
 }
 
-// --- MPI backend (feature = "mpi") ---
+// --- MPI backend (feature = "mpi-support") ---
 #[cfg(feature = "mpi-support")]
 mod mpi_backend {
     use super::*;

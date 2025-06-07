@@ -1,5 +1,3 @@
-#![cfg(feature = "partitioning")]
-
 use std::cmp::Reverse;
 use std::sync::atomic::{AtomicU64, Ordering};
 use rayon::prelude::*;
