@@ -74,6 +74,7 @@ pub trait Sieve {
 }
 
 /// In-memory implementation of Sieve using HashMaps.
+#[derive(Clone, Debug)]
 pub struct InMemorySieve<P, T = ()> {
     adjacency_out: HashMap<P, Vec<(P, T)>>,
     adjacency_in: HashMap<P, Vec<(P, T)>>,

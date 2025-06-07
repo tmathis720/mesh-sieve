@@ -26,7 +26,16 @@ pub trait Stack {
     fn cap(&self) -> &Self::CapSieve;
 }
 
-pub struct InMemoryStack<B, C, P = ()> {
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+pub struct InMemoryStack<
+    B: Copy + Eq + std::hash::Hash,
+    C: Copy + Eq + std::hash::Hash,
+    P = (),
+> {
     pub base: InMemorySieve<B, P>,
     pub cap: InMemorySieve<C, P>,
     up: HashMap<B, Vec<(C, P)>>,
