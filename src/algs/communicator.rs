@@ -101,8 +101,7 @@ impl Communicator for RayonComm {
     }
 }
 
-// --- MPI backend (feature = "mpi-support") ---
-#[cfg(feature = "mpi-support")]
+// --- MPI backend ---
 mod mpi_backend {
     use super::*;
     use mpi::traits::*;
@@ -167,7 +166,6 @@ mod mpi_backend {
     }
 }
 
-#[cfg(feature = "mpi-support")]
 pub use mpi_backend::MpiComm;
 
 #[cfg(test)]
@@ -202,17 +200,22 @@ mod tests {
         assert_eq!(&recv_buf, &[1,2,3,4]);
     }
 
-    #[cfg(feature = "mpi-support")]
     #[test]
     fn mpi_roundtrip() {
         use mpi::traits::*;
         let comm = MpiComm::new();
         let size = comm.world.size() as usize;
-        let nbr  = (comm.rank + 1) % size;
+        if size < 2 {
+            eprintln!("mpi_roundtrip test requires at least 2 MPI ranks; skipping.");
+            return;
+        }
+        let nbr_send = (comm.rank + 1) % size;
+        let nbr_recv = (comm.rank + size - 1) % size;
         let mut recv = [0u8; 1];
-        let r = comm.irecv(nbr, 9, &mut recv);
-        let s = comm.isend(nbr, 9, &[42]);
-        s.wait(); r.wait();
-        assert_eq!(recv[0], 42);
+        let r = comm.irecv(nbr_recv, 9, &mut recv);
+        let s = comm.isend(nbr_send, 9, &[comm.rank as u8]);
+        s.wait();
+        r.wait();
+        assert_eq!(recv[0], nbr_recv as u8, "Rank {} expected to receive {} from {} but got {}", comm.rank, nbr_recv as u8, nbr_recv, recv[0]);
     }
 }

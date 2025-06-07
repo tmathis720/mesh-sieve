@@ -37,7 +37,6 @@ impl fmt::Display for PointId {
 }
 
 // ----- Safety guarantees for zero-cost FFI -----
-#[cfg(feature = "mpi-support")]
 unsafe impl mpi::datatype::Equivalence for PointId {
     type Out = <u64 as mpi::datatype::Equivalence>::Out;
     fn equivalent_datatype() -> Self::Out {
