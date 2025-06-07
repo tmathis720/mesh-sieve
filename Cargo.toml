@@ -30,6 +30,7 @@ partitioning = ["rayon", "rand", "ahash"]
 mpi-support = ["mpi"]
 metis-support = ["pkg-config", "bindgen"]
 topology_refine = []  # Feature gate for topology refinement and experimental algorithms
+data_refine = [] # Feature gate for data-layer refinement
 
 [build-dependencies]
 pkg-config = { version = "0.3", optional = true }
