@@ -76,8 +76,9 @@ pub trait Sieve {
 /// In-memory implementation of Sieve using HashMaps.
 #[derive(Clone, Debug)]
 pub struct InMemorySieve<P, T = ()> {
-    adjacency_out: HashMap<P, Vec<(P, T)>>,
-    adjacency_in: HashMap<P, Vec<(P, T)>>,
+    pub(crate) adjacency_out: HashMap<P, Vec<(P, T)>>,
+    pub(crate) adjacency_in: HashMap<P, Vec<(P, T)>>,
+    pub(crate) strata: once_cell::sync::OnceCell<crate::topology::stratum::StrataCache<P>>,
 }
 
 impl<P: Copy + Eq + std::hash::Hash, T> Default for InMemorySieve<P, T> {
@@ -85,6 +86,7 @@ impl<P: Copy + Eq + std::hash::Hash, T> Default for InMemorySieve<P, T> {
         Self {
             adjacency_out: HashMap::new(),
             adjacency_in: HashMap::new(),
+            strata: once_cell::sync::OnceCell::new(),
         }
     }
 }
@@ -125,6 +127,7 @@ impl<P: Copy + Eq + std::hash::Hash, T: Clone> Sieve for InMemorySieve<P, T> {
     fn add_arrow(&mut self, src: P, dst: P, payload: T) {
         self.adjacency_out.entry(src).or_default().push((dst, payload.clone()));
         self.adjacency_in.entry(dst).or_default().push((src, payload));
+        self.strata.take(); // Invalidate strata cache
     }
     fn remove_arrow(&mut self, src: P, dst: P) -> Option<T> {
         let mut removed = None;
@@ -138,6 +141,7 @@ impl<P: Copy + Eq + std::hash::Hash, T: Clone> Sieve for InMemorySieve<P, T> {
                 vec.remove(pos);
             }
         }
+        self.strata.take(); // Invalidate strata cache
         removed
     }
 }
@@ -300,10 +304,9 @@ mod tests {
         s.add_arrow(v(23), v(4), ());
         s.add_arrow(v(24), v(4), ());
         s.add_arrow(v(24), v(2), ());
-        // No support arrows!
         let sep = meet_minimal_separator(&s, v(10), v(11));
         // Should be [] (empty, since closure(10) ∩ closure(11) = closure({10, 11}))
-        // and the shared edge 20 is not in closure({10, 11}).
+        // and the shared edge 20 is in closure({10, 11}).
         assert_eq!(sep, vec![]);
     }
 }
