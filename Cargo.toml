@@ -29,6 +29,7 @@ default = []            # keep core lean
 partitioning = ["rayon", "rand", "ahash"]
 mpi-support = ["mpi"]
 metis-support = ["pkg-config", "bindgen"]
+topology_refine = []  # Feature gate for topology refinement and experimental algorithms
 
 [build-dependencies]
 pkg-config = { version = "0.3", optional = true }

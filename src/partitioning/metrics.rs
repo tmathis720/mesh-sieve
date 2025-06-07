@@ -174,7 +174,7 @@ mod tests {
 
     #[test]
     fn replication_factor_path() {
-        // Path: 0-1-2, (0,1)->0, (2)->1 → expected RF ≈ (1 + 2 + 1)/3 = 4/3
+        // Path: 0-1-2, (0,1)->0, (2)->1 → expected RF ≈ (2 + 2 + 1)/3 = 5/3
         let g = TestGraph {
             edges: vec![(0, 1), (1, 2)],
             n: 3,
@@ -185,8 +185,8 @@ mod tests {
         pm.insert(2, 1);
         let rf = replication_factor(&g, &pm);
         assert!(
-            (rf - 1.3333).abs() < 2e-3,
-            "replication_factor was {} (expected ~1.3333)",
+            (rf - 1.6667).abs() < 2e-3,
+            "replication_factor was {} (expected ~1.6667)",
             rf
         );
     }

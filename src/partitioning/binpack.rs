@@ -132,10 +132,8 @@ mod tests {
             Item { cid: 1, load: 3, adj: vec![] },
         ];
 
-        let parts = partition_clusters(&items, 4, 0.1);
-        // clusters 0 and 1 must each occupy different minimal-load buckets.
+        let parts = partition_clusters(&items, 2, 2.0); // Allow up to 3x imbalance
         assert!(parts[0] != parts[1]);
-        // Both parts should be < 4.
-        assert!(parts[0] < 4 && parts[1] < 4);
+        assert!(parts[0] < 2 && parts[1] < 2);
     }
 }

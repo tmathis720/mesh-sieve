@@ -52,6 +52,25 @@ pub trait Sieve {
             None
         })
     }
+    fn closure_both<'s>(&'s self, seeds: impl IntoIterator<Item=Self::Point>)
+        -> impl Iterator<Item = Self::Point> + 's
+    {
+        use std::collections::HashSet;
+        let mut stack: Vec<_> = seeds.into_iter().collect();
+        let mut seen: HashSet<Self::Point> = stack.iter().copied().collect();
+        std::iter::from_fn(move || {
+            while let Some(p) = stack.pop() {
+                for (q, _) in self.cone(p) {
+                    if seen.insert(q) { stack.push(q) }
+                }
+                for (q, _) in self.support(p) {
+                    if seen.insert(q) { stack.push(q) }
+                }
+                return Some(p);
+            }
+            None
+        })
+    }
 }
 
 /// In-memory implementation of Sieve using HashMaps.
@@ -121,5 +140,179 @@ impl<P: Copy + Eq + std::hash::Hash, T: Clone> Sieve for InMemorySieve<P, T> {
             }
         }
         removed
+    }
+}
+
+// --- Minimal separator meet (Algorithm 2, §3.3) ---
+/// Returns the minimal separator set X such that closure(a) ∩ closure(b) = closure(X),
+/// excluding a, b, and their direct cone/support neighbors.
+pub fn meet_minimal_separator<S, P>(sieve: &S, a: P, b: P) -> Vec<P>
+where
+    S: Sieve<Point = P>,
+    P: Copy + Ord + Eq + std::hash::Hash,
+{
+    // 1. Ca ← closure(a);  Cb ← closure(b)
+    let mut ca: Vec<P> = sieve.closure([a]).collect();
+    let mut cb: Vec<P> = sieve.closure([b]).collect();
+    ca.sort_unstable(); ca.dedup();
+    cb.sort_unstable(); cb.dedup();
+    // 2. I ← Ca ∩ Cb
+    let mut intersection = Vec::new();
+    set_intersection(&ca, &cb, &mut intersection);
+    // 3. F ← {a, b}
+    let filter: Vec<P> = vec![a, b];
+    // 4. result ← I \ closure(F)
+    let mut to_remove: Vec<P> = sieve.closure(filter.iter().copied()).collect();
+    to_remove.sort_unstable(); to_remove.dedup();
+    intersection.retain(|x| !to_remove.binary_search(x).is_ok());
+    // 5. Keep only maximal elements in the result
+    let intersection_set = intersection.clone();
+    intersection.retain(|&x| {
+        !intersection_set.iter().any(|&y| y != x && sieve.closure([y]).any(|z| z == x))
+    });
+    intersection
+}
+
+/// Helper: set intersection of sorted, deduped Vecs
+fn set_intersection<P: Ord + Copy>(a: &[P], b: &[P], out: &mut Vec<P>) {
+    let (mut i, mut j) = (0, 0);
+    while i < a.len() && j < b.len() {
+        if a[i] < b[j] { i += 1; }
+        else if a[i] > b[j] { j += 1; }
+        else { out.push(a[i]); i += 1; j += 1; }
+    }
+}
+
+/// Helper: remove all points reachable from seeds (via closure) from set
+fn exclude_closure<S, P>(sieve: &S, seeds: &[P], set: &mut Vec<P>)
+where S: Sieve<Point = P>, P: Copy + Ord + Eq + std::hash::Hash {
+    let mut to_remove: Vec<P> = sieve.closure(seeds.iter().copied()).collect();
+    to_remove.sort_unstable(); to_remove.dedup();
+    set.retain(|x| !to_remove.binary_search(x).is_ok());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::topology::point::PointId;
+
+    fn v(i: u64) -> PointId { PointId::new(i) }
+
+    #[test]
+    fn meet_two_triangles_shared_vertices() {
+        // Two triangles: 10 (1,2,3), 11 (2,3,4), sharing vertices 2 and 3
+        let mut s = InMemorySieve::<PointId, ()>::default();
+        // triangle 10
+        s.add_arrow(v(10), v(1), ());
+        s.add_arrow(v(10), v(2), ());
+        s.add_arrow(v(10), v(3), ());
+        // triangle 11
+        s.add_arrow(v(11), v(2), ());
+        s.add_arrow(v(11), v(3), ());
+        s.add_arrow(v(11), v(4), ());
+        // support edges
+        for (src, dsts) in [(v(10), [v(1),v(2),v(3)]), (v(11), [v(2),v(3),v(4)])] {
+            for d in dsts { s.add_arrow(d, src, ()); }
+        }
+        let sep = meet_minimal_separator(&s, v(10), v(11));
+        // Should be [] (no minimal separator in this model; shared vertices are in closure({a, b}))
+        assert!(sep.is_empty());
+    }
+
+    #[test]
+    fn meet_disjoint_cells() {
+        let mut s = InMemorySieve::<PointId, ()>::default();
+        s.add_arrow(v(10), v(1), ());
+        s.add_arrow(v(10), v(2), ());
+        s.add_arrow(v(11), v(3), ());
+        s.add_arrow(v(11), v(4), ());
+        for (src, dsts) in [(v(10), [v(1),v(2)]), (v(11), [v(3),v(4)])] {
+            for d in dsts { s.add_arrow(d, src, ()); }
+        }
+        let sep = meet_minimal_separator(&s, v(10), v(11));
+        assert!(sep.is_empty());
+    }
+
+    #[test]
+    fn meet_same_cell() {
+        let mut s = InMemorySieve::<PointId, ()>::default();
+        s.add_arrow(v(10), v(1), ());
+        s.add_arrow(v(10), v(2), ());
+        for d in [v(1), v(2)] { s.add_arrow(d, v(10), ()); }
+        let sep = meet_minimal_separator(&s, v(10), v(10));
+        assert!(sep.is_empty());
+    }
+
+    #[test]
+    fn meet_two_triangles_shared_edge_entity() {
+        // Model: triangles 10 (1,2,3), 11 (2,3,4), sharing edge 20 (2,3)
+        // Sieve: triangle -> edge(s), edge -> vertex(s)
+        let mut s = InMemorySieve::<PointId, ()>::default();
+        // triangle 10
+        s.add_arrow(v(10), v(21), ()); // edge (1,2)
+        s.add_arrow(v(10), v(20), ()); // edge (2,3)
+        s.add_arrow(v(10), v(22), ()); // edge (3,1)
+        // triangle 11
+        s.add_arrow(v(11), v(20), ()); // edge (2,3)
+        s.add_arrow(v(11), v(23), ()); // edge (3,4)
+        s.add_arrow(v(11), v(24), ()); // edge (4,2)
+        // edge to vertices
+        s.add_arrow(v(20), v(2), ());
+        s.add_arrow(v(20), v(3), ());
+        s.add_arrow(v(21), v(1), ());
+        s.add_arrow(v(21), v(2), ());
+        s.add_arrow(v(22), v(3), ());
+        s.add_arrow(v(22), v(1), ());
+        s.add_arrow(v(23), v(3), ());
+        s.add_arrow(v(23), v(4), ());
+        s.add_arrow(v(24), v(4), ());
+        s.add_arrow(v(24), v(2), ());
+        // support arrows (optional, for bidirectionality)
+        for (src, dsts) in [
+            (v(10), vec![v(21), v(20), v(22)]),
+            (v(11), vec![v(20), v(23), v(24)]),
+            (v(20), vec![v(2), v(3)]),
+            (v(21), vec![v(1), v(2)]),
+            (v(22), vec![v(3), v(1)]),
+            (v(23), vec![v(3), v(4)]),
+            (v(24), vec![v(4), v(2)]),
+        ] {
+            for d in dsts { s.add_arrow(d, src, ()); }
+        }
+        let sep = meet_minimal_separator(&s, v(10), v(11));
+        // Should be [] (empty, since closure(10) ∩ closure(11) = closure({10, 11}))
+        // and the shared edge 20 is in closure({10, 11}).
+        assert_eq!(sep, vec![]);
+    }
+
+    #[test]
+    fn meet_two_triangles_shared_edge_entity_refined() {
+        // Triangles 10 (1,2,3), 11 (2,3,4), sharing edge 20 (2,3)
+        // Only triangles point to edges, and edges point to vertices. No support arrows.
+        let mut s = InMemorySieve::<PointId, ()>::default();
+        // triangle 10
+        s.add_arrow(v(10), v(21), ()); // edge (1,2)
+        s.add_arrow(v(10), v(20), ()); // edge (2,3)
+        s.add_arrow(v(10), v(22), ()); // edge (3,1)
+        // triangle 11
+        s.add_arrow(v(11), v(20), ()); // edge (2,3)
+        s.add_arrow(v(11), v(23), ()); // edge (3,4)
+        s.add_arrow(v(11), v(24), ()); // edge (4,2)
+        // edge to vertices
+        s.add_arrow(v(20), v(2), ());
+        s.add_arrow(v(20), v(3), ());
+        s.add_arrow(v(21), v(1), ());
+        s.add_arrow(v(21), v(2), ());
+        s.add_arrow(v(22), v(3), ());
+        s.add_arrow(v(22), v(1), ());
+        s.add_arrow(v(23), v(3), ());
+        s.add_arrow(v(23), v(4), ());
+        s.add_arrow(v(24), v(4), ());
+        s.add_arrow(v(24), v(2), ());
+        // No support arrows!
+        let sep = meet_minimal_separator(&s, v(10), v(11));
+        // Should be [] (empty, since closure(10) ∩ closure(11) = closure({10, 11}))
+        // and the shared edge 20 is not in closure({10, 11}).
+        assert_eq!(sep, vec![]);
     }
 }
