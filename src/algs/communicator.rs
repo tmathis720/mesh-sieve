@@ -19,6 +19,9 @@ pub trait Communicator: Send + Sync + 'static {
 
     fn isend(&self, peer: usize, tag: u16, buf: &[u8]) -> Self::SendHandle;
     fn irecv(&self, peer: usize, tag: u16, buf: &mut [u8]) -> Self::RecvHandle;
+
+    /// Returns true if this communicator is NoComm (for test logic)
+    fn is_no_comm(&self) -> bool { false }
 }
 
 /// Anything that can be waited on.
@@ -41,6 +44,7 @@ impl Communicator for NoComm {
 
     fn isend(&self, _peer: usize, _tag: u16, _buf: &[u8]) -> () { () }
     fn irecv(&self, _peer: usize, _tag: u16, _buf: &mut [u8]) -> () { () }
+    fn is_no_comm(&self) -> bool { true }
 }
 
 // --- RayonComm: intra-process / multi-thread ---

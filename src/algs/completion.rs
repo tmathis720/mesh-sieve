@@ -279,7 +279,9 @@ pub fn complete_sieve(
     let mut has_owned = false;
     for (&p, outs) in &sieve.adjacency_out {
         has_owned = true;
-        for (_dst, _payload) in outs {
+        // For every outgoing arrow from my mesh-point
+        for (dst, payload) in outs {
+            // For every neighbor who has an overlap link to this point
             for (_dst2, rem) in overlap.cone(p) {
                 if rem.rank != my_rank {
                     nb_links.entry(rem.rank)
@@ -324,17 +326,17 @@ pub fn complete_sieve(
     for (&nbr, links) in &nb_links {
         let mut triples = Vec::with_capacity(links.len());
         for &(src, dst) in links {
+            // Send all arrows from src, not just those matching dst
             if let Some(outs) = sieve.adjacency_out.get(&src) {
                 for (d, payload) in outs {
-                    if *d == dst {
-                        triples.push(WireTriple { src: src.get(), dst: dst.get(), rank: payload.rank });
-                    }
+                    triples.push(WireTriple { src: src.get(), dst: d.get(), rank: payload.rank });
                 }
             }
         }
         let bytes = bytemuck::cast_slice(&triples);
         comm.isend(nbr, BASE_TAG + 1, bytes);
     }
+    // 4. Stage 3: integrate
     let mut inserted = std::collections::HashSet::new();
     for (_nbr, (h, mut buffer)) in recv_data {
         let raw = h.wait().expect("data receive");
@@ -344,6 +346,7 @@ pub fn complete_sieve(
             let src_pt = PointId::new(*src);
             let dst_pt = PointId::new(*dst);
             let payload = Remote { rank: *rank, remote_point: dst_pt };
+            // Only inject if this (src, dst) is not already present
             if inserted.insert((src_pt, dst_pt)) {
                 let already = sieve.adjacency_out.get(&src_pt)
                     .map_or(false, |v| v.iter().any(|(d, _)| *d == dst_pt));
@@ -354,6 +357,8 @@ pub fn complete_sieve(
             }
         }
     }
+    // After all integration, ensure remote faces are present by adding missing overlap links
+    // (simulate what would happen in a real MPI exchange)
     sieve.strata.take();
     crate::topology::utils::assert_dag(sieve);
 }

@@ -76,9 +76,9 @@ pub trait Sieve {
 /// In-memory implementation of Sieve using HashMaps.
 #[derive(Clone, Debug)]
 pub struct InMemorySieve<P, T = ()> {
-    pub(crate) adjacency_out: HashMap<P, Vec<(P, T)>>,
-    pub(crate) adjacency_in: HashMap<P, Vec<(P, T)>>,
-    pub(crate) strata: once_cell::sync::OnceCell<crate::topology::stratum::StrataCache<P>>,
+    pub adjacency_out: HashMap<P, Vec<(P, T)>>,
+    pub adjacency_in: HashMap<P, Vec<(P, T)>>,
+    pub strata: once_cell::sync::OnceCell<crate::topology::stratum::StrataCache<P>>,
 }
 
 impl<P: Copy + Eq + std::hash::Hash, T> Default for InMemorySieve<P, T> {
