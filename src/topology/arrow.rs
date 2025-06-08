@@ -1,55 +1,118 @@
-//! Directed incidence relation (“Arrow” in Knepley & Karpeev, 2009).
+//! Arrow: Directed incidence (mesh topology edge) with payload and orientation.
+//!
+//! In mesh algorithms (Knepley & Karpeev, 2009), an *arrow* represents an incidence
+//! relation between two topological entities (e.g., cell → face, face → edge),
+//! optionally carrying data (payload). This module defines the `Arrow` type,
+//! utility constructors, payload mapping, and a simple `Orientation` enum for
+//! vertical arrows in a `Stack`.
 
 use crate::topology::point::PointId;
 
-/// A directed edge from `src → dst` carrying opaque payload `P`.
+/// A directed connection from `src` to `dst` carrying an arbitrary `payload`.
+///
+/// # Type Parameters
+/// - `P`: The type of per-arrow payload. Defaults to `()` for payload-free arrows.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Arrow<P = ()> {
+    /// Source topological point (e.g., a cell or face handle).
     pub src: PointId,
+    /// Destination topological point (e.g., a face or edge handle).
     pub dst: PointId,
+    /// User-defined payload data attached to this incidence.
     pub payload: P,
 }
 
 impl<P> Arrow<P> {
-    /// General constructor.
+    /// Construct a new `Arrow` from `src` → `dst` with given `payload`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use sieve_rs::topology::arrow::Arrow;
+    /// use sieve_rs::topology::point::PointId;
+    /// let a = Arrow::new(PointId::new(1), PointId::new(2), 3u32);
+    /// assert_eq!(a.src.get(), 1);
+    /// assert_eq!(a.dst.get(), 2);
+    /// assert_eq!(a.payload, 3);
+    /// ```
     #[inline]
     pub fn new(src: PointId, dst: PointId, payload: P) -> Self {
-        Self { src, dst, payload }
+        Arrow { src, dst, payload }
     }
 
-    /// Drop payload, returning `(src, dst)`.
+    /// Returns the `(src, dst)` endpoints, dropping the payload.
+    ///
+    /// Useful when you only care about connectivity.
     #[inline]
     pub fn endpoints(&self) -> (PointId, PointId) {
         (self.src, self.dst)
     }
 
-    /// Map payload via closure – handy for building derived views.
+    /// Transform the payload `P` to a new type `Q` by applying `f`.
+    ///
+    /// The source and destination remain unchanged. This is handy for
+    /// deriving new arrow views without mutating the original.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use sieve_rs::topology::arrow::Arrow;
+    /// use sieve_rs::topology::point::PointId;
+    /// let a = Arrow::new(PointId::new(1), PointId::new(2), 10);
+    /// // Double the payload
+    /// let b = a.clone().map(|v| v * 2);
+    /// assert_eq!(b.payload, 20);
+    /// assert_eq!(b.src, a.src);
+    /// assert_eq!(b.dst, a.dst);
+    /// ```
     pub fn map<Q>(self, f: impl FnOnce(P) -> Q) -> Arrow<Q> {
         Arrow::new(self.src, self.dst, f(self.payload))
     }
 }
 
-// Convenience constructor for empty-payload arrows.
+//------------------------------------------------------------------------------
+// Convenience for empty-payload arrows
+//------------------------------------------------------------------------------
+
 impl Arrow<()> {
+    /// Create an arrow with no payload (`()`), i.e., a bare connectivity edge.
+    ///
+    /// This is equivalent to `Arrow::new(src, dst, ())`.
     #[inline]
     pub fn unit(src: PointId, dst: PointId) -> Self {
-        Self::new(src, dst, ())
+        Arrow::new(src, dst, ())
     }
 }
 
-// Re-use `Default` only for the zero-payload specialization.
+/// Provide a default only for `Arrow<()>` so you can write `Arrow::default()`.
+///
+/// The default arrow points from PointId(1) → PointId(1) and carries `()`.
 impl Default for Arrow<()> {
-    fn default() -> Self { Arrow::unit(PointId::new(1), PointId::new(1)) }
+    fn default() -> Self {
+        // We pick a dummy sentinel id `1` for default; users should override.
+        Arrow::unit(PointId::new(1), PointId::new(1))
+    }
 }
 
-/// Orientation for vertical arrows in a stack (for sign/permutation, etc.)
+//------------------------------------------------------------------------------
+// Orientation: for vertical arrows in a Stack
+//------------------------------------------------------------------------------
+
+/// Sign or permutation for vertical incidence arrows in a `Stack`.
+///
+/// Used to record orientation when lifting/pulling degrees-of-freedom.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Orientation {
+    /// No change in orientation (e.g., aligned sign +1).
     Forward,
+    /// Opposite orientation (e.g., sign flip -1).
     Reverse,
 }
 
-// Unit tests
+//------------------------------------------------------------------------------
+// Unit Tests
+//------------------------------------------------------------------------------
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -57,9 +120,10 @@ mod tests {
 
     #[test]
     fn build_and_endpoints() {
-        let (src, dst) = (PointId::new(1), PointId::new(2));
-        let arw = Arrow::unit(src, dst);
-        assert_eq!(arw.endpoints(), (src, dst));
+        let src = PointId::new(1);
+        let dst = PointId::new(2);
+        let arrow = Arrow::unit(src, dst);
+        assert_eq!(arrow.endpoints(), (src, dst));
     }
 
     #[test]
@@ -77,6 +141,7 @@ mod tests {
         let a1 = Arrow::unit(PointId::new(5), PointId::new(6));
         let a2 = Arrow::unit(PointId::new(5), PointId::new(6));
 
+        // Ensure hashing equal arrows yields same hash
         let mut h1 = DefaultHasher::new();
         let mut h2 = DefaultHasher::new();
         a1.hash(&mut h1);

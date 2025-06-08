@@ -1,51 +1,83 @@
-//! Stack trait and in-memory implementation for vertical Sieve arrows.
+//! Stack abstraction for vertical composition of Sieve topologies.
+//!
+//! A _Stack_ represents relationships ("vertical arrows") between two Sieves:
+//! a **base** mesh and a **cap** mesh (e.g., from elements to degrees-of-freedom).
+//! This module provides a generic `Stack` trait and an in-memory implementation,
+//! along with facilities for composing multiple stacks.
 
 use std::collections::HashMap;
 use super::sieve::InMemorySieve;
-use crate::data::section::Sifter;
-use crate::topology::arrow::Orientation;
-use crate::topology::point::PointId;
 
-/// A Stack links a *base* Sieve to a *cap* Sieve with vertical arrows.
+/// A `Stack` links a *base* Sieve to a *cap* Sieve via vertical arrows.
+/// Each arrow carries a payload (e.g., orientation or permutation).
+///
+/// - `Point`:   The point type in the base mesh (commonly `PointId`).
+/// - `CapPt`:   The point type in the cap mesh (commonly `PointId`).
+/// - `Payload`: Data attached to each arrow (e.g., `Orientation`).
 pub trait Stack {
-    type Point   : Copy + Eq + std::hash::Hash;      // in the base Sieve
-    type CapPt   : Copy + Eq + std::hash::Hash;      // in the cap  Sieve
-    type Payload : Clone;
+    /// Base mesh point identifier.
+    type Point: Copy + Eq + std::hash::Hash;
+    /// Cap mesh point identifier.
+    type CapPt: Copy + Eq + std::hash::Hash;
+    /// Per-arrow payload type.
+    type Payload: Clone;
+    /// The underlying base Sieve type.
     type BaseSieve;
+    /// The underlying cap Sieve type.
     type CapSieve;
 
-    // --- topology queries ---
-    /// Upward arrows  (base → cap)   – `capCone`
-    fn lift<'a>(&'a self, p: Self::Point) -> Box<dyn Iterator<Item=(Self::CapPt,&'a Self::Payload)> + 'a>;
-    /// Downward arrows (cap  → base) – `baseSupport`
-    fn drop<'a>(&'a self, q: Self::CapPt) -> Box<dyn Iterator<Item=(Self::Point,&'a Self::Payload)> + 'a>;
+    // === Topology queries ===
+    /// Returns an iterator over all upward arrows from base point `p` to cap points.
+    /// Each item is `(cap_point, &payload)`.
+    fn lift<'a>(&'a self, p: Self::Point) -> Box<dyn Iterator<Item = (Self::CapPt, &'a Self::Payload)> + 'a>;
 
-    // --- mutation helpers ---
+    /// Returns an iterator over all downward arrows from cap point `q` to base points.
+    /// Each item is `(base_point, &payload)`.
+    fn drop<'a>(&'a self, q: Self::CapPt) -> Box<dyn Iterator<Item = (Self::Point, &'a Self::Payload)> + 'a>;
+
+    // === Mutation helpers ===
+    /// Adds a new vertical arrow `base -> cap` with associated payload.
     fn add_arrow(&mut self, base: Self::Point, cap: Self::CapPt, pay: Self::Payload);
+
+    /// Removes the arrow `base -> cap`, returning its payload if present.
     fn remove_arrow(&mut self, base: Self::Point, cap: Self::CapPt) -> Option<Self::Payload>;
 
-    // --- convenience ---
+    // === Convenience accessors ===
+    /// Returns a reference to the underlying base Sieve.
     fn base(&self) -> &Self::BaseSieve;
+    /// Returns a reference to the underlying cap Sieve.
     fn cap(&self) -> &Self::CapSieve;
 }
 
-#[derive(Clone, Debug, Default)]
+/// In-memory implementation of the `Stack` trait.
+///
+/// Stores vertical arrows in two hash maps:
+/// - `up`   maps base points to a list of `(cap_point, payload)`.
+/// - `down` maps cap points to a list of `(base_point, payload)`.
+///
+/// Also embeds two `InMemorySieve`s to represent the base and cap topologies themselves.
+#[derive(Clone, Debug)]
 pub struct InMemoryStack<
     B: Copy + Eq + std::hash::Hash,
     C: Copy + Eq + std::hash::Hash,
     P = (),
 > {
+    /// Underlying base sieve (e.g., mesh connectivity).
     pub base: InMemorySieve<B, P>,
+    /// Underlying cap sieve (e.g., DOF connectivity).
     pub cap: InMemorySieve<C, P>,
-    up: HashMap<B, Vec<(C, P)>>,
-    down: HashMap<C, Vec<(B, P)>>,
+    /// Upward adjacency: base -> cap
+    pub up: HashMap<B, Vec<(C, P)>>,
+    /// Downward adjacency: cap -> base
+    pub down: HashMap<C, Vec<(B, P)>>,
 }
 
-impl<B, C, P: Clone> InMemoryStack<B, C, P>
+impl<B, C, P> InMemoryStack<B, C, P>
 where
     B: Copy + Eq + std::hash::Hash,
     C: Copy + Eq + std::hash::Hash,
 {
+    /// Creates an empty `InMemoryStack` with no arrows.
     pub fn new() -> Self {
         Self {
             base: InMemorySieve::default(),
@@ -54,16 +86,20 @@ where
             down: HashMap::new(),
         }
     }
+}
 
-    /// Given a base point `b`, return the Sifter to each cap point.
-    pub fn sifter(&self, b: B) -> Sifter
-    where
-        C: Into<PointId>,
-        P: Clone + Into<Orientation>,
-    {
-        self.lift(b)
-            .map(|(cap, o)| (cap.into(), o.clone().into()))
-            .collect()
+impl<B, C, P: Clone> Default for InMemoryStack<B, C, P>
+where
+    B: Copy + Eq + std::hash::Hash,
+    C: Copy + Eq + std::hash::Hash,
+{
+    fn default() -> Self {
+        Self {
+            base: InMemorySieve::default(),
+            cap: InMemorySieve::default(),
+            up: HashMap::new(),
+            down: HashMap::new(),
+        }
     }
 }
 
@@ -80,28 +116,36 @@ where
     type CapSieve = InMemorySieve<C, P>;
 
     fn lift<'a>(&'a self, p: B) -> Box<dyn Iterator<Item = (C, &'a P)> + 'a> {
+        // Return all upward arrows or empty if none
         match self.up.get(&p) {
             Some(vec) => Box::new(vec.iter().map(|(c, pay)| (*c, pay))),
             None => Box::new(std::iter::empty()),
         }
     }
+
     fn drop<'a>(&'a self, q: C) -> Box<dyn Iterator<Item = (B, &'a P)> + 'a> {
+        // Return all downward arrows or empty if none
         match self.down.get(&q) {
             Some(vec) => Box::new(vec.iter().map(|(b, pay)| (*b, pay))),
             None => Box::new(std::iter::empty()),
         }
     }
+
     fn add_arrow(&mut self, base: B, cap: C, pay: P) {
+        // Insert into both up and down maps
         self.up.entry(base).or_default().push((cap, pay.clone()));
         self.down.entry(cap).or_default().push((base, pay));
     }
+
     fn remove_arrow(&mut self, base: B, cap: C) -> Option<P> {
+        // Remove from up map, capture payload
         let mut removed = None;
         if let Some(vec) = self.up.get_mut(&base) {
             if let Some(pos) = vec.iter().position(|(c, _)| *c == cap) {
                 removed = Some(vec.remove(pos).1);
             }
         }
+        // Remove from down map, ignore second removal payload
         if let Some(vec) = self.down.get_mut(&cap) {
             if let Some(pos) = vec.iter().position(|(b, _)| *b == base) {
                 vec.remove(pos);
@@ -109,19 +153,25 @@ where
         }
         removed
     }
+
     fn base(&self) -> &Self::BaseSieve { &self.base }
     fn cap(&self) -> &Self::CapSieve { &self.cap }
 }
 
-/// Compose two stacks: base → mid and mid → cap, yielding a stack base → cap.
+/// A stack composed of two existing stacks: `lower: base -> mid` and `upper: mid -> cap`.
+///
+/// Traversal composes payloads via a `compose_payload` function.
 pub struct ComposedStack<'a, S1, S2, F>
 where
     S1: Stack,
     S2: Stack<Point = S1::CapPt>,
     F: Fn(&S1::Payload, &S2::Payload) -> S1::Payload,
 {
+    /// Lower-level stack (base -> mid)
     pub lower: &'a S1,
+    /// Upper-level stack (mid -> cap)
     pub upper: &'a S2,
+    /// Function to merge two payloads into one
     pub compose_payload: F,
 }
 
@@ -141,29 +191,34 @@ where
         let lower = self.lower;
         let upper = self.upper;
         let compose = &self.compose_payload;
+        // First lift through lower, then through upper, composing payloads
         Box::new(
-            lower.lift(p).flat_map(move |(mid, pay1)| {
-                upper.lift(mid).map(move |(cap, pay2)| {
-                    // Compose payloads and store in a Box for correct lifetime
-                    let payload: &'b S1::Payload = Box::leak(Box::new((compose)(pay1, pay2)));
-                    (cap, payload)
+            lower.lift(p)
+                .flat_map(move |(mid, pay1)| {
+                    upper.lift(mid).map(move |(cap, pay2)| {
+                        // Leak a composed payload to extend its lifetime
+                        let payload: &'b S1::Payload = Box::leak(Box::new((compose)(pay1, pay2)));
+                        (cap, payload)
+                    })
                 })
-            })
         )
     }
+
     fn drop<'b>(&'b self, q: S2::CapPt) -> Box<dyn Iterator<Item = (S1::Point, &'b S1::Payload)> + 'b> {
         let lower = self.lower;
         let upper = self.upper;
         let compose = &self.compose_payload;
         Box::new(
-            upper.drop(q).flat_map(move |(mid, pay2)| {
-                lower.drop(mid).map(move |(base, pay1)| {
-                    let payload: &'b S1::Payload = Box::leak(Box::new((compose)(pay1, pay2)));
-                    (base, payload)
+            upper.drop(q)
+                .flat_map(move |(mid, pay2)| {
+                    lower.drop(mid).map(move |(base, pay1)| {
+                        let payload: &'b S1::Payload = Box::leak(Box::new((compose)(pay1, pay2)));
+                        (base, payload)
+                    })
                 })
-            })
         )
     }
+
     fn add_arrow(&mut self, _base: S1::Point, _cap: S2::CapPt, _pay: S1::Payload) {
         panic!("Cannot mutate a composed stack");
     }

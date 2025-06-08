@@ -1,78 +1,178 @@
-//! Field data over a topology atlas.
+//! Section: Field data storage over a topology atlas.
+//!
+//! The `Section<V>` type couples an `Atlas` (mapping points to slices in a
+//! contiguous array) with a `Vec<V>` to hold the actual data. It provides
+//! methods for inserting, accessing, and iterating per-point data slices.
 
 use crate::data::atlas::Atlas;
 use crate::topology::point::PointId;
 
+/// Storage for per-point field data, backed by an `Atlas`.
 #[derive(Clone, Debug)]
 pub struct Section<V> {
+    /// Atlas mapping each `PointId` to (offset, length) in `data`.
     atlas: Atlas,
+    /// Contiguous storage of values for all points.
     data: Vec<V>,
 }
 
 impl<V: Clone + Default> Section<V> {
-    /// Creates an empty section with an existing atlas.
+    /// Construct a new `Section` given an existing `Atlas`.
+    ///
+    /// Initializes the data buffer with `V::default()` repeated for each
+    /// degree of freedom in the atlas.
     pub fn new(atlas: Atlas) -> Self {
-        Self {
-            data: vec![V::default(); atlas.total_len()],
-            atlas,
-        }
+        // Fill `data` with default values up to total_len from atlas.
+        let data = vec![V::default(); atlas.total_len()];
+        Section { atlas, data }
     }
 
-    /// Immutable restriction (read-only slice).
-    #[inline] pub fn restrict(&self, p: PointId) -> &[V] {
-        let (off, len) = self.atlas.get(p)
-            .expect("point not in atlas");
-        &self.data[off .. off + len]
+    /// Read-only view of the data slice for a given point `p`.
+    ///
+    /// # Panics
+    /// Panics if `p` is not registered in the atlas.
+    #[inline]
+    pub fn restrict(&self, p: PointId) -> &[V] {
+        // Look up offset and length in the atlas.
+        let (offset, len) = self.atlas.get(p)
+            .expect("PointId not found in atlas");
+        &self.data[offset .. offset + len]
     }
 
-    /// Mutable restriction (write-capable slice).
-    #[inline] pub fn restrict_mut(&mut self, p: PointId) -> &mut [V] {
-        let (off, len) = self.atlas.get(p)
-            .expect("point not in atlas");
-        &mut self.data[off .. off + len]
+    /// Mutable view of the data slice for a given point `p`.
+    ///
+    /// # Panics
+    /// Panics if `p` is not registered in the atlas.
+    #[inline]
+    pub fn restrict_mut(&mut self, p: PointId) -> &mut [V] {
+        let (offset, len) = self.atlas.get(p)
+            .expect("PointId not found in atlas");
+        &mut self.data[offset .. offset + len]
     }
 
-    /// Copies values into the storage for point `p`.
+    /// Overwrite the data slice at point `p` with the values in `val`.
+    ///
+    /// # Panics
+    /// Panics if the length of `val` does not match the slice length for `p`.
     pub fn set(&mut self, p: PointId, val: &[V]) {
-        let tgt = self.restrict_mut(p);
-        assert_eq!(tgt.len(), val.len());
-        tgt.clone_from_slice(val);
+        let target = self.restrict_mut(p);
+        assert_eq!(target.len(), val.len(),
+            "Input slice length must match point's DOF count");
+        // Clone values into the section's buffer.
+        target.clone_from_slice(val);
     }
 
-    /// Iterate `(PointId, &[V])` pairs in atlas order.
-    pub fn iter<'s>(&'s self) -> impl Iterator<Item=(PointId, &'s [V])> {
+    /// Iterate over `(PointId, &[V])` for all points in atlas order.
+    ///
+    /// Useful for serializing or visiting all data in a deterministic order.
+    pub fn iter<'s>(&'s self) -> impl Iterator<Item = (PointId, &'s [V])> {
+        // Use the atlas's point order for deterministic iteration.
         self.atlas.points()
-            .map(move |p| (p, self.restrict(p)))
+            .map(move |pid| (pid, self.restrict(pid)))
     }
 }
 
 impl<V: Clone + Send> Section<V> {
-    /// Place `other` into slice of *this* determined by `atlas_map`.
-    /// (General building block for MPI receive or threaded gather.)
+    /// Scatter values from an external buffer `other` into this section.
+    ///
+    /// `atlas_map` provides a list of (offset, length) pairs corresponding to
+    /// where each chunk of `other` should be copied in.
+    ///
+    /// # Panics
+    /// Panics if `other` length does not match expected total length or if
+    /// chunk sizes mismatch.
     pub fn scatter_from(&mut self,
                         other: &[V],
                         atlas_map: &[(usize, usize)])
     {
-        for ((off,len), src_chunk) in
-            atlas_map.iter().zip(other.chunks_exact(atlas_map[0].1)) {
-            self.data[*off .. off+*len].clone_from_slice(src_chunk);
+        // Iterate over each (offset,len) and the corresponding chunk.
+        for ((offset, len), chunk) in atlas_map.iter()
+                                                .zip(other.chunks_exact(atlas_map[0].1)) {
+            // Copy the chunk into our data buffer.
+            self.data[*offset .. offset + *len]
+                .clone_from_slice(chunk);
         }
     }
 }
 
-/// A zero‐cost view of per‐point data, used by refine/assemble helpers.
+/// Trait for read-only or mutable views of per-point data.
+///
+/// Provides a zero-cost abstraction over types that can supply a slice
+/// for each `PointId`. Used in data-refinement algorithms.
 pub trait Map<V: Clone + Default> {
-    /// Return immutable slice bound to the mesh point.
+    /// Immutable access to the data slice for `p`.
     fn get(&self, p: PointId) -> &[V];
-    /// Return mutable slice (optional; not all maps are mutable).
-    fn get_mut(&mut self, _p: PointId) -> Option<&mut [V]> { None }
+
+    /// Optional mutable access to the data slice for `p`.
+    ///
+    /// Default implementation returns `None`, meaning the map is read-only.
+    fn get_mut(&mut self, _p: PointId) -> Option<&mut [V]> {
+        None
+    }
 }
 
+/// Implement `Map` for `Section<V>`, allowing it to be used in data refinement.
 impl<V: Clone + Default> Map<V> for Section<V> {
-    fn get(&self, p: PointId) -> &[V] { self.restrict(p) }
+    fn get(&self, p: PointId) -> &[V] {
+        // Use the restrict method to get an immutable slice.
+        self.restrict(p)
+    }
+
     fn get_mut(&mut self, p: PointId) -> Option<&mut [V]> {
+        // Use the restrict_mut method to get a mutable slice, wrapped in Some.
         Some(self.restrict_mut(p))
     }
+}
+
+/// A one‐to‐one mapping from coarse→fine dof, carrying orientation.
+pub type Sifter = Vec<(PointId, crate::topology::arrow::Orientation)>;
+
+#[cfg(feature = "data_refine")]
+pub(crate) fn restrict_closure<'s, M, V: Clone + Default + 's>(
+    sieve: &impl crate::topology::sieve::Sieve<Point = PointId>,
+    map:   &'s M,
+    seeds: impl IntoIterator<Item = PointId>,
+) -> impl Iterator<Item = (PointId, &'s [V])>
+where
+    M: Map<V> + 's,
+{
+    sieve.closure(seeds).map(move |p| (p, map.get(p)))
+}
+
+#[cfg(feature = "data_refine")]
+pub(crate) fn restrict_star<'s, M, V: Clone + Default + 's>(
+    sieve: &impl crate::topology::sieve::Sieve<Point = PointId>,
+    map:   &'s M,
+    seeds: impl IntoIterator<Item = PointId>,
+) -> impl Iterator<Item = (PointId, &'s [V])>
+where
+    M: Map<V> + 's,
+{
+    sieve.star(seeds).map(move |p| (p, map.get(p)))
+}
+
+#[cfg(feature = "data_refine")]
+pub(crate) fn restrict_closure_vec<'s, M, V: Clone + Default + 's>(
+    sieve: &impl crate::topology::sieve::Sieve<Point = PointId>,
+    map:   &'s M,
+    seeds: impl IntoIterator<Item = PointId>,
+) -> Vec<(PointId, &'s [V])>
+where
+    M: Map<V> + 's,
+{
+    restrict_closure(sieve, map, seeds).collect()
+}
+
+#[cfg(feature = "data_refine")]
+pub(crate) fn restrict_star_vec<'s, M, V: Clone + Default + 's>(
+    sieve: &impl crate::topology::sieve::Sieve<Point = PointId>,
+    map:   &'s M,
+    seeds: impl IntoIterator<Item = PointId>,
+) -> Vec<(PointId, &'s [V])>
+where
+    M: Map<V> + 's,
+{
+    restrict_star(sieve, map, seeds).collect()
 }
 
 #[cfg(test)]
@@ -136,54 +236,6 @@ mod tests {
         let s = make_section();
         let mut ro = ReadOnlyMap { section: &s };
         assert!(ro.get_mut(PointId::new(1)).is_none());
-    }
-
-    #[cfg(feature = "data_refine")]
-    pub(crate) fn restrict_closure<'s, M, V: Clone + Default + 's>(
-        sieve: &impl crate::topology::sieve::Sieve<Point = PointId>,
-        map:   &'s M,
-        seeds: impl IntoIterator<Item = PointId>,
-    ) -> impl Iterator<Item = (PointId, &'s [V])>
-    where
-        M: Map<V> + 's,
-    {
-        sieve.closure(seeds).map(move |p| (p, map.get(p)))
-    }
-
-    #[cfg(feature = "data_refine")]
-    pub(crate) fn restrict_star<'s, M, V: Clone + Default + 's>(
-        sieve: &impl crate::topology::sieve::Sieve<Point = PointId>,
-        map:   &'s M,
-        seeds: impl IntoIterator<Item = PointId>,
-    ) -> impl Iterator<Item = (PointId, &'s [V])>
-    where
-        M: Map<V> + 's,
-    {
-        sieve.star(seeds).map(move |p| (p, map.get(p)))
-    }
-
-    #[cfg(feature = "data_refine")]
-    pub(crate) fn restrict_closure_vec<'s, M, V: Clone + Default + 's>(
-        sieve: &impl crate::topology::sieve::Sieve<Point = PointId>,
-        map:   &'s M,
-        seeds: impl IntoIterator<Item = PointId>,
-    ) -> Vec<(PointId, &'s [V])>
-    where
-        M: Map<V> + 's,
-    {
-        restrict_closure(sieve, map, seeds).collect()
-    }
-
-    #[cfg(feature = "data_refine")]
-    pub(crate) fn restrict_star_vec<'s, M, V: Clone + Default + 's>(
-        sieve: &impl crate::topology::sieve::Sieve<Point = PointId>,
-        map:   &'s M,
-        seeds: impl IntoIterator<Item = PointId>,
-    ) -> Vec<(PointId, &'s [V])>
-    where
-        M: Map<V> + 's,
-    {
-        restrict_star(sieve, map, seeds).collect()
     }
 
     #[cfg(feature = "data_refine")]
@@ -450,5 +502,3 @@ mod tests {
     }
 }
 
-/// A one‐to‐one mapping from coarse→fine dof, carrying orientation.
-pub type Sifter = Vec<(PointId, crate::topology::arrow::Orientation)>;

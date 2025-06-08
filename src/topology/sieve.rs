@@ -1,26 +1,54 @@
-//! Sieve trait and in-memory implementation
+//! # Sieve: Bidirectional Mesh Topology Interface
+//!
+//! This module defines the core `Sieve` trait for representing mesh topology
+//! as a bidirectional multimap (`cone`/`support`), offers default graph
+//! traversal algorithms (closure, star, closure_both), and provides a
+//! convenient in-memory implementation `InMemorySieve` using `HashMap`s.
 
 use std::collections::HashMap;
 
-/// The Sieve trait: bidirectional multimap for mesh topology.
+/// The `Sieve` trait models a directed incidence relation (arrows) over
+/// mesh points.  It provides:
+///
+/// - **Forward** incidence (`cone`): all outgoing arrows from a point.
+/// - **Backward** incidence (`support`): all incoming arrows to a point.
+///
+/// Users can insert and remove arrows, and benefit from default graph
+/// algorithms: `closure`, `star`, and `closure_both`.
 pub trait Sieve {
-    /// Handle that indexes the topology (usually `PointId`).
+    /// Type for mesh points (e.g., `PointId`).  Must be `Copy + Eq + Hash`.
     type Point: Copy + Eq + std::hash::Hash;
-    /// Per-arrow user payload.
+    /// Payload attached to each arrow; can carry orientation, weights, etc.
     type Payload;
-    /// Iterator of (dst, &payload) leaving `p` ("cone").
-    type ConeIter<'a>: Iterator<Item = (Self::Point, &'a Self::Payload)> where Self: 'a;
-    /// Iterator of (src, &payload) entering `p` ("support").
-    type SupportIter<'a>: Iterator<Item = (Self::Point, &'a Self::Payload)> where Self: 'a;
+    /// Iterator over `(dst, &payload)` for each arrow `p -> dst`.
+    type ConeIter<'a>: Iterator<Item = (Self::Point, &'a Self::Payload)>
+    where
+        Self: 'a;
 
-    // --- Required methods ---
+    /// Iterator over `(src, &payload)` for each arrow `src -> p`.
+    type SupportIter<'a>: Iterator<Item = (Self::Point, &'a Self::Payload)>
+    where
+        Self: 'a;
+
+    //=== Required methods ===
+
+    /// Return all outgoing arrows from `p`.
     fn cone<'a>(&'a self, p: Self::Point) -> Self::ConeIter<'a>;
+
+    /// Return all incoming arrows to `p`.
     fn support<'a>(&'a self, p: Self::Point) -> Self::SupportIter<'a>;
+
+    /// Insert a new arrow `src -> dst` with given payload.
     fn add_arrow(&mut self, src: Self::Point, dst: Self::Point, payload: Self::Payload);
+
+    /// Remove one arrow `src -> dst`, returning its payload if present.
     fn remove_arrow(&mut self, src: Self::Point, dst: Self::Point) -> Option<Self::Payload>;
 
-    // --- Blanket default algorithms ---
-    fn closure<'s>(&'s self, seeds: impl IntoIterator<Item=Self::Point>)
+    //=== Blanket default graph algorithms ===
+
+    /// Compute the **closure** (transitive hull) following `cone` arrows
+    /// from an initial set of `seeds`.  Yields each reachable point once.
+    fn closure<'s>(&'s self, seeds: impl IntoIterator<Item = Self::Point>)
         -> impl Iterator<Item = Self::Point> + 's
     {
         use std::collections::HashSet;
@@ -28,15 +56,21 @@ pub trait Sieve {
         let mut seen: HashSet<Self::Point> = stack.iter().copied().collect();
         std::iter::from_fn(move || {
             while let Some(p) = stack.pop() {
+                // Explore forward neighbors
                 for (q, _) in self.cone(p) {
-                    if seen.insert(q) { stack.push(q) }
+                    if seen.insert(q) {
+                        stack.push(q);
+                    }
                 }
                 return Some(p);
             }
             None
         })
     }
-    fn star<'s>(&'s self, seeds: impl IntoIterator<Item=Self::Point>)
+
+    /// Compute the **star** (dual transitive hull) following `support` arrows
+    /// from an initial set of `seeds`.
+    fn star<'s>(&'s self, seeds: impl IntoIterator<Item = Self::Point>)
         -> impl Iterator<Item = Self::Point> + 's
     {
         use std::collections::HashSet;
@@ -44,15 +78,21 @@ pub trait Sieve {
         let mut seen: HashSet<Self::Point> = stack.iter().copied().collect();
         std::iter::from_fn(move || {
             while let Some(p) = stack.pop() {
+                // Explore backward neighbors
                 for (q, _) in self.support(p) {
-                    if seen.insert(q) { stack.push(q) }
+                    if seen.insert(q) {
+                        stack.push(q);
+                    }
                 }
                 return Some(p);
             }
             None
         })
     }
-    fn closure_both<'s>(&'s self, seeds: impl IntoIterator<Item=Self::Point>)
+
+    /// Compute **both** closure and star simultaneously.
+    /// Useful for undirected connectivity.
+    fn closure_both<'s>(&'s self, seeds: impl IntoIterator<Item = Self::Point>)
         -> impl Iterator<Item = Self::Point> + 's
     {
         use std::collections::HashSet;
@@ -73,11 +113,22 @@ pub trait Sieve {
     }
 }
 
-/// In-memory implementation of Sieve using HashMaps.
+//-----------------------------------------------------------------------------
+// In-memory `Sieve` implementation using HashMaps for fast prototyping.
+//-----------------------------------------------------------------------------  
+
+/// `InMemorySieve<P, T>` stores two hash maps:
+///
+/// - `adjacency_out`: Vec of `(dst, payload)` per source point.
+/// - `adjacency_in`: Vec of `(src, payload)` per destination point.
+/// - `strata`: lazily computed cache of strata/height/depth.
 #[derive(Clone, Debug)]
 pub struct InMemorySieve<P, T = ()> {
+    /// Outgoing edges: src -> [(dst, payload), ...]
     pub adjacency_out: HashMap<P, Vec<(P, T)>>,
+    /// Incoming edges: dst -> [(src, payload), ...]
     pub adjacency_in: HashMap<P, Vec<(P, T)>>,
+    /// Cached stratification (height/depth).  Invalidated on mutation.
     pub strata: once_cell::sync::OnceCell<crate::topology::stratum::StrataCache<P>>,
 }
 
@@ -92,7 +143,10 @@ impl<P: Copy + Eq + std::hash::Hash, T> Default for InMemorySieve<P, T> {
 }
 
 impl<P: Copy + Eq + std::hash::Hash, T: Clone> InMemorySieve<P, T> {
+    /// Create an empty sieve.
     pub fn new() -> Self { Self::default() }
+
+    /// Build a sieve from a list of `(src, dst, payload)` triples.
     pub fn from_arrows<I: IntoIterator<Item = (P, P, T)>>(arrows: I) -> Self {
         let mut sieve = Self::default();
         for (src, dst, payload) in arrows {
@@ -102,6 +156,7 @@ impl<P: Copy + Eq + std::hash::Hash, T: Clone> InMemorySieve<P, T> {
     }
 }
 
+// Helper type for mapping Vec<(P,T)> -> Iterator<(P,&T)>
 type ConeMapIter<'a, P, T> = std::iter::Map<std::slice::Iter<'a, (P, T)>, fn(&'a (P, T)) -> (P, &'a T)>;
 
 impl<P: Copy + Eq + std::hash::Hash, T: Clone> Sieve for InMemorySieve<P, T> {
@@ -110,73 +165,92 @@ impl<P: Copy + Eq + std::hash::Hash, T: Clone> Sieve for InMemorySieve<P, T> {
     type ConeIter<'a> = ConeMapIter<'a, P, T> where Self: 'a;
     type SupportIter<'a> = ConeMapIter<'a, P, T> where Self: 'a;
 
+    /// Return all `(dst, &payload)` for arrows src -> dst.
     fn cone<'a>(&'a self, p: P) -> Self::ConeIter<'a> {
-        fn map_fn<P, T>((dst, payload): &(P, T)) -> (P, &T) where P: Copy { (*dst, payload) }
+        // Map Vec<(P,T)> to (P,&T)
+        fn map_fn<P, T>((dst, pay): &(P, T)) -> (P, &T)
+        where P: Copy { (*dst, pay) }
         let f: fn(&(P, T)) -> (P, &T) = map_fn::<P, T>;
         self.adjacency_out.get(&p)
             .map(|v| v.iter().map(f))
             .unwrap_or_else(|| [].iter().map(f))
     }
+
+    /// Return all `(src, &payload)` for arrows src -> dst = p.
     fn support<'a>(&'a self, p: P) -> Self::SupportIter<'a> {
-        fn map_fn<P, T>((src, payload): &(P, T)) -> (P, &T) where P: Copy { (*src, payload) }
+        fn map_fn<P, T>((src, pay): &(P, T)) -> (P, &T)
+        where P: Copy { (*src, pay) }
         let f: fn(&(P, T)) -> (P, &T) = map_fn::<P, T>;
         self.adjacency_in.get(&p)
             .map(|v| v.iter().map(f))
             .unwrap_or_else(|| [].iter().map(f))
     }
+
+    /// Insert an arrow; invalidates strata cache for recomputation.
     fn add_arrow(&mut self, src: P, dst: P, payload: T) {
         self.adjacency_out.entry(src).or_default().push((dst, payload.clone()));
         self.adjacency_in.entry(dst).or_default().push((src, payload));
-        self.strata.take(); // Invalidate strata cache
+        self.strata.take(); // drop cached strata
     }
+
+    /// Remove one arrow, if exists, and return its payload; also invalidate strata.
     fn remove_arrow(&mut self, src: P, dst: P) -> Option<T> {
         let mut removed = None;
-        if let Some(vec) = self.adjacency_out.get_mut(&src) {
-            if let Some(pos) = vec.iter().position(|(d, _)| *d == dst) {
-                removed = Some(vec.remove(pos).1);
+        if let Some(v) = self.adjacency_out.get_mut(&src) {
+            if let Some(pos) = v.iter().position(|(d, _)| *d == dst) {
+                removed = Some(v.remove(pos).1);
             }
         }
-        if let Some(vec) = self.adjacency_in.get_mut(&dst) {
-            if let Some(pos) = vec.iter().position(|(s, _)| *s == src) {
-                vec.remove(pos);
+        if let Some(v) = self.adjacency_in.get_mut(&dst) {
+            if let Some(pos) = v.iter().position(|(s, _)| *s == src) {
+                v.remove(pos);
             }
         }
-        self.strata.take(); // Invalidate strata cache
+        self.strata.take();
         removed
     }
 }
 
-// --- Minimal separator meet (Algorithm 2, §3.3) ---
-/// Returns the minimal separator set X such that closure(a) ∩ closure(b) = closure(X),
-/// excluding a, b, and their direct cone/support neighbors.
+//-----------------------------------------------------------------------------
+// Minimal separator (Knepley & Karpeev, Alg 2 §3.3)
+//-----------------------------------------------------------------------------  
+
+/// Compute a minimal separator `X` such that
+/// `closure(a) ∩ closure(b) = closure(X)`, excluding direct neighbors of `a,b`.
+///
+/// Steps:
+/// 1. Build closure sets `Ca`, `Cb`.
+/// 2. Intersect `I = Ca ∩ Cb`.
+/// 3. Remove `closure({a,b})` from `I`.
+/// 4. Keep only maximal elements (no deeper closure relation).
 pub fn meet_minimal_separator<S, P>(sieve: &S, a: P, b: P) -> Vec<P>
 where
     S: Sieve<Point = P>,
     P: Copy + Ord + Eq + std::hash::Hash,
 {
-    // 1. Ca ← closure(a);  Cb ← closure(b)
     let mut ca: Vec<P> = sieve.closure([a]).collect();
     let mut cb: Vec<P> = sieve.closure([b]).collect();
     ca.sort_unstable(); ca.dedup();
     cb.sort_unstable(); cb.dedup();
-    // 2. I ← Ca ∩ Cb
-    let mut intersection = Vec::new();
-    set_intersection(&ca, &cb, &mut intersection);
-    // 3. F ← {a, b}
-    let filter: Vec<P> = vec![a, b];
-    // 4. result ← I \ closure(F)
-    let mut to_remove: Vec<P> = sieve.closure(filter.iter().copied()).collect();
-    to_remove.sort_unstable(); to_remove.dedup();
-    intersection.retain(|x| !to_remove.binary_search(x).is_ok());
-    // 5. Keep only maximal elements in the result
-    let intersection_set = intersection.clone();
-    intersection.retain(|&x| {
-        !intersection_set.iter().any(|&y| y != x && sieve.closure([y]).any(|z| z == x))
+
+    // 2. I = intersection(Ca, Cb)
+    let mut inter = Vec::new();
+    set_intersection(&ca, &cb, &mut inter);
+
+    // 3. Remove closure({a,b})
+    let mut to_rm: Vec<P> = sieve.closure([a, b]).collect();
+    to_rm.sort_unstable(); to_rm.dedup();
+    inter.retain(|x| !to_rm.binary_search(x).is_ok());
+
+    // 4. Keep only maximal elements
+    let original = inter.clone();
+    inter.retain(|&x| {
+        !original.iter().any(|&y| y != x && sieve.closure([y]).any(|z| z == x))
     });
-    intersection
+    inter
 }
 
-/// Helper: set intersection of sorted, deduped Vecs
+/// Helper: intersect two sorted, deduplicated slices into `out`.
 fn set_intersection<P: Ord + Copy>(a: &[P], b: &[P], out: &mut Vec<P>) {
     let (mut i, mut j) = (0, 0);
     while i < a.len() && j < b.len() {
@@ -185,7 +259,9 @@ fn set_intersection<P: Ord + Copy>(a: &[P], b: &[P], out: &mut Vec<P>) {
         else { out.push(a[i]); i += 1; j += 1; }
     }
 }
-
+//-----------------------------------------------------------------------------
+// Tests for minimal separator computation
+//-----------------------------------------------------------------------------
 #[cfg(test)]
 mod tests {
     use super::*;

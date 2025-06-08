@@ -1,15 +1,32 @@
+//! Stratum computation: heights, depths, strata and diameter for a directed acyclic topology.
+//!
+//! This module provides:
+//! 1. `StrataCache<P>`: stores precomputed height, depth, strata layers, and diameter for points of type `P`.
+//! 2. `StratumHelpers`: an extension trait on `InMemorySieve` giving convenient access to stratum information.
+//! 3. A cache invalidation mechanism in `InMemorySieve` and the core algorithm `compute_strata`.
+
 use std::collections::HashMap;
 
-/// Cache for strata, heights, depths, and diameter.
+/// Precomputed stratum information for a DAG of points `P`.
+///
+/// - `height[p]` = distance from sources (points with no incoming arrows).
+/// - `depth[p]`  = distance to sinks   (points with no outgoing arrows).
+/// - `strata[k]` = all points at height `k` (zero‐based).
+/// - `diameter`  = maximum height over all points.
 #[derive(Clone, Debug)]
 pub struct StrataCache<P> {
+    /// Mapping from point to its height (levels above sources).
     pub height: HashMap<P, u32>,
+    /// Mapping from point to its depth (levels above sinks).
     pub depth: HashMap<P, u32>,
-    pub strata: Vec<Vec<P>>, // k -> points
+    /// Vectors of points grouped by height: strata[height] = Vec<points>.
+    pub strata: Vec<Vec<P>>,
+    /// Maximum height observed (also number of strata layers - 1).
     pub diameter: u32,
 }
 
 impl<P: Copy + Eq + std::hash::Hash + Ord> StrataCache<P> {
+    /// Create an empty cache; will be filled by `compute_strata`.
     pub fn new() -> Self {
         Self {
             height: HashMap::new(),
@@ -20,30 +37,43 @@ impl<P: Copy + Eq + std::hash::Hash + Ord> StrataCache<P> {
     }
 }
 
-// Extension trait for Sieve: blanket impl for InMemorySieve only
+// Extend InMemorySieve with stratum query methods.
+/// Trait providing stratum queries on a `Sieve` implementation (only for InMemorySieve).
 pub trait StratumHelpers: crate::topology::sieve::Sieve {
+    /// Return the height (distance from sources) of point `p`.
     fn height(&self, p: Self::Point) -> u32;
+    /// Return the depth  (distance to sinks)   of point `p`.
     fn depth(&self, p: Self::Point) -> u32;
+    /// Return the diameter (maximum height) of the entire topology.
     fn diameter(&self) -> u32;
-    fn height_stratum(&self, k: u32) -> Box<dyn Iterator<Item=Self::Point> + '_>;
-    fn depth_stratum(&self, k: u32) -> Box<dyn Iterator<Item=Self::Point> + '_>;
+    /// Iterate over all points at given height `k`.
+    fn height_stratum(&self, k: u32) -> Box<dyn Iterator<Item = Self::Point> + '_>;
+    /// Iterate over all points at given depth `k`.
+    fn depth_stratum(&self, k: u32) -> Box<dyn Iterator<Item = Self::Point> + '_>;
 }
 
+// Implement StratumHelpers for InMemorySieve
 impl<P, T> StratumHelpers for crate::topology::sieve::InMemorySieve<P, T>
 where
     P: Copy + Eq + std::hash::Hash + Ord,
     T: Clone,
 {
+    
     fn height(&self, p: P) -> u32 {
+        // Use the cached height if available, otherwise return 0
         self.strata_cache().height.get(&p).copied().unwrap_or(0)
     }
     fn depth(&self, p: P) -> u32 {
+        // Use the cached depth if available, otherwise return 0
         self.strata_cache().depth.get(&p).copied().unwrap_or(0)
     }
     fn diameter(&self) -> u32 {
+        // Return the precomputed diameter from the cache
         self.strata_cache().diameter
     }
     fn height_stratum(&self, k: u32) -> Box<dyn Iterator<Item=P> + '_> {
+        // Return an iterator over points at height k
+        // If k is out of bounds, return an empty iterator
         let cache = self.strata_cache();
         if (k as usize) < cache.strata.len() {
             Box::new(cache.strata[k as usize].iter().copied())
@@ -52,13 +82,18 @@ where
         }
     }
     fn depth_stratum(&self, k: u32) -> Box<dyn Iterator<Item=P> + '_> {
+        // Return an iterator over points at depth k
         let cache = self.strata_cache();
         // Build a reverse map: depth value -> Vec<P>
         let mut depth_map: std::collections::HashMap<u32, Vec<P>> = std::collections::HashMap::new();
+        // Populate the map with points grouped by their depth
         for (&p, &d) in &cache.depth {
             depth_map.entry(d).or_default().push(p);
         }
+        // Return the iterator for the requested depth k, or an empty iterator if k is not found
         let points = depth_map.get(&k).cloned().unwrap_or_default();
+        // Convert Vec<P> into an iterator
+        // Use Box to return a trait object for dynamic dispatch
         Box::new(points.into_iter())
     }
 }
@@ -66,14 +101,20 @@ where
 // --- Strata cache population and invalidation ---
 use crate::topology::sieve::InMemorySieve;
 impl<P: Copy + Eq + std::hash::Hash + Ord, T: Clone> InMemorySieve<P, T> {
+    /// Lazily compute and cache the strata information.
     fn strata_cache(&self) -> &StrataCache<P> {
         self.strata.get_or_init(|| compute_strata(self))
     }
+    /// Invalidate the cached strata information.
+    /// This should be called whenever the sieve structure changes (e.g., arrows added/removed).
     fn invalidate_strata(&mut self) {
         self.strata.take();
     }
 }
 
+/// Compute the strata information using Kahn's algorithm for topological sorting.
+/// This computes the height, depth, strata layers, and diameter of the directed acyclic graph (DAG).
+/// It returns a `StrataCache` containing all the computed information.
 fn compute_strata<P, T>(sieve: &InMemorySieve<P, T>) -> StrataCache<P>
 where
     P: Copy + Eq + std::hash::Hash + Ord,
@@ -81,12 +122,20 @@ where
 {
     // Kahn's algorithm for topological sort
     let mut in_deg = HashMap::new();
+    // Count in-degrees for each point
     for (&p, outs) in &sieve.adjacency_out {
+        // Initialize in-degree for point `p`
         in_deg.entry(p).or_insert(0);
+        // For each outgoing arrow from `p`, increment the in-degree of the target point
         for (q, _) in outs {
             *in_deg.entry(*q).or_insert(0) += 1;
         }
     }
+    // Initialize stack with all points that have in-degree 0 (sources)
+    // These are the starting points for the topological sort
+    // and will be processed first.
+    // They are the "cells" in the context of topology.
+    // This is the first step in Kahn's algorithm.
     let mut stack: Vec<P> = in_deg.iter().filter(|&(_, &d)| d == 0).map(|(&p, _)| p).collect();
     let mut topo = Vec::new();
     while let Some(p) = stack.pop() {
@@ -103,11 +152,17 @@ where
     }
     // Compute height as distance from sources (cells) using adjacency_in
     let mut height = HashMap::new();
+    // walk in topological order so parents are done before children
+    // This ensures that when we compute the height of a point,
+    // all its predecessors have already been processed.
     for &p in &topo {
+        // If there are no incoming arrows, height is 0 (source)
         let h = if let Some(ins) = sieve.adjacency_in.get(&p) {
             if ins.is_empty() {
                 0
             } else {
+                // Otherwise, height is 1 + max height of predecessors
+                // This computes the height as the maximum height of incoming points plus one.
                 1 + ins.iter().map(|(pred, _)| *height.get(pred).unwrap_or(&0)).max().unwrap_or(0)
             }
         } else {
@@ -117,8 +172,11 @@ where
     }
     // Compute strata
     let mut max_h = 0;
+    // Find the maximum height to determine the number of strata
     for &h in height.values() { max_h = max_h.max(h); }
+    // Initialize strata as a vector of empty vectors, one for each height level
     let mut strata = vec![Vec::new(); (max_h+1) as usize];
+    // Populate strata with points grouped by their height
     for (&p, &h) in &height {
         strata[h as usize].push(p);
     }
@@ -128,6 +186,10 @@ where
     let mut depth = HashMap::new();
     // walk in reverse topological order so children are done before parents
     for &p in topo.iter().rev() {
+        // If there are no outgoing arrows, depth is 0 (sink)
+        // This computes the depth as the maximum depth of outgoing points plus one.
+        // This ensures that when we compute the depth of a point,
+        // all its successors have already been processed.
         let d = if let Some(outs) = sieve.adjacency_out.get(&p) {
             if outs.is_empty() {
                 0
