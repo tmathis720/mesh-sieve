@@ -60,7 +60,7 @@ impl<V: Clone + Send> Section<V> {
     }
 }
 
-#[cfg(feature = "data_refine")]
+/// A zero‐cost view of per‐point data, used by refine/assemble helpers.
 pub trait Map<V: Clone + Default> {
     /// Return immutable slice bound to the mesh point.
     fn get(&self, p: PointId) -> &[V];
@@ -68,7 +68,6 @@ pub trait Map<V: Clone + Default> {
     fn get_mut(&mut self, _p: PointId) -> Option<&mut [V]> { None }
 }
 
-#[cfg(feature = "data_refine")]
 impl<V: Clone + Default> Map<V> for Section<V> {
     fn get(&self, p: PointId) -> &[V] { self.restrict(p) }
     fn get_mut(&mut self, p: PointId) -> Option<&mut [V]> {
@@ -349,3 +348,6 @@ mod tests {
         SievedArray::<PointId, i32>::new(atlas)
     }
 }
+
+/// A one‐to‐one mapping from coarse→fine dof, carrying orientation.
+pub type Sifter = Vec<(PointId, crate::topology::arrow::Orientation)>;

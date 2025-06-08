@@ -2,6 +2,9 @@
 
 use std::collections::HashMap;
 use super::sieve::InMemorySieve;
+use crate::data::section::Sifter;
+use crate::topology::arrow::Orientation;
+use crate::topology::point::PointId;
 
 /// A Stack links a *base* Sieve to a *cap* Sieve with vertical arrows.
 pub trait Stack {
@@ -51,6 +54,17 @@ where
             down: HashMap::new(),
         }
     }
+
+    /// Given a base point `b`, return the Sifter to each cap point.
+    pub fn sifter(&self, b: B) -> Sifter
+    where
+        C: Into<PointId>,
+        P: Clone + Into<Orientation>,
+    {
+        self.lift(b)
+            .map(|(cap, o)| (cap.into(), o.clone().into()))
+            .collect()
+    }
 }
 
 impl<B, C, P> Stack for InMemoryStack<B, C, P>
@@ -97,39 +111,6 @@ where
     }
     fn base(&self) -> &Self::BaseSieve { &self.base }
     fn cap(&self) -> &Self::CapSieve { &self.cap }
-}
-
-/// Orientation of a vertical arrow in a Stack.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Orientation {
-    Positive, // e.g., aligned or +1
-    Negative, // e.g., flipped or -1
-    Permutation(Vec<usize>), // e.g., for permuting DOF order
-}
-
-impl Orientation {
-    /// Compose two orientations (sign multiplication or permutation composition).
-    pub fn compose(&self, other: &Orientation) -> Orientation {
-        match (self, other) {
-            (Orientation::Positive, o) | (o, Orientation::Positive) => o.clone(),
-            (Orientation::Negative, Orientation::Negative) => Orientation::Positive,
-            (Orientation::Negative, o) | (o, Orientation::Negative) => {
-                match o {
-                    Orientation::Positive => Orientation::Negative,
-                    Orientation::Negative => Orientation::Positive,
-                    Orientation::Permutation(p) => {
-                        let mut rev = p.clone();
-                        rev.reverse();
-                        Orientation::Permutation(rev)
-                    }
-                }
-            }
-            (Orientation::Permutation(p1), Orientation::Permutation(p2)) => {
-                let composed = p1.iter().map(|&i| p2[i]).collect();
-                Orientation::Permutation(composed)
-            }
-        }
-    }
 }
 
 /// Compose two stacks: base → mid and mid → cap, yielding a stack base → cap.
@@ -221,33 +202,6 @@ mod tests {
         // After removal, lift/drop are empty
         assert!(stack.lift(V(1)).next().is_none());
         assert!(stack.drop(Dof(10)).next().is_none());
-    }
-
-    #[test]
-    fn orientation_compose_signs() {
-        use super::Orientation::*;
-        assert_eq!(Positive.compose(&Positive), Positive);
-        assert_eq!(Positive.compose(&Negative), Negative);
-        assert_eq!(Negative.compose(&Positive), Negative);
-        assert_eq!(Negative.compose(&Negative), Positive);
-    }
-
-    #[test]
-    fn orientation_compose_permutations() {
-        use super::Orientation::*;
-        let p1 = Permutation(vec![2, 0, 1]); // maps 0->2, 1->0, 2->1
-        let p2 = Permutation(vec![1, 2, 0]); // maps 0->1, 1->2, 2->0
-        // Compose: p2(p1[i])
-        let composed = p1.compose(&p2);
-        assert_eq!(composed, Permutation(vec![0, 1, 2]));
-    }
-
-    #[test]
-    fn orientation_negate_permutation() {
-        use super::Orientation::*;
-        let p = Permutation(vec![1, 0, 2]);
-        let neg = Negative.compose(&p);
-        assert_eq!(neg, Permutation(vec![2, 0, 1])); // reversed
     }
 
     #[test]
