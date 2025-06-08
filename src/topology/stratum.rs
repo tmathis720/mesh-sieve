@@ -95,14 +95,14 @@ where
             }
         }
     }
-    // Compute height (leaves = 0, parents = 1 + max child)
+    // Compute height as distance from sources (cells) using adjacency_in
     let mut height = HashMap::new();
-    for &p in topo.iter().rev() {
-        let h = if let Some(outs) = sieve.adjacency_out.get(&p) {
-            if outs.is_empty() {
+    for &p in &topo {
+        let h = if let Some(ins) = sieve.adjacency_in.get(&p) {
+            if ins.is_empty() {
                 0
             } else {
-                1 + outs.iter().map(|(q, _)| *height.get(q).unwrap_or(&0)).max().unwrap_or(0)
+                1 + ins.iter().map(|(pred, _)| *height.get(pred).unwrap_or(&0)).max().unwrap_or(0)
             }
         } else {
             0
