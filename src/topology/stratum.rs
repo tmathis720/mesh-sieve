@@ -52,8 +52,14 @@ where
         }
     }
     fn depth_stratum(&self, k: u32) -> Box<dyn Iterator<Item=P> + '_> {
-        // Not implemented: for now, just return empty
-        Box::new(std::iter::empty())
+        let cache = self.strata_cache();
+        // Build a reverse map: depth value -> Vec<P>
+        let mut depth_map: std::collections::HashMap<u32, Vec<P>> = std::collections::HashMap::new();
+        for (&p, &d) in &cache.depth {
+            depth_map.entry(d).or_default().push(p);
+        }
+        let points = depth_map.get(&k).cloned().unwrap_or_default();
+        Box::new(points.into_iter())
     }
 }
 
@@ -118,11 +124,20 @@ where
     }
     // Compute diameter
     let diameter = max_h;
-    // Compute depth (reverse pass)
+    // Compute depth as distance to sinks (reverse‐cone pass)
     let mut depth = HashMap::new();
-    for &p in topo.iter() {
-        let d = if let Some(ins) = sieve.adjacency_in.get(&p) {
-            1 + ins.iter().map(|(q, _)| *depth.get(q).unwrap_or(&0)).max().unwrap_or(0)
+    // walk in reverse topological order so children are done before parents
+    for &p in topo.iter().rev() {
+        let d = if let Some(outs) = sieve.adjacency_out.get(&p) {
+            if outs.is_empty() {
+                0
+            } else {
+                1 + outs
+                    .iter()
+                    .map(|(child, _)| *depth.get(child).unwrap_or(&0))
+                    .max()
+                    .unwrap_or(0)
+            }
         } else {
             0
         };
@@ -193,5 +208,71 @@ mod tests {
         assert_eq!(s.diameter(), 3);
         let s3: Vec<_> = s.height_stratum(3).collect();
         assert_eq!(s3, vec![v(4)]);
+    }
+
+    #[test]
+    fn depth_stratum_on_path_returns_leaves() {
+        // Path: 1 -> 2 -> 3 -> 4
+        let mut s = InMemorySieve::<PointId, ()>::default();
+        s.add_arrow(v(1), v(2), ());
+        s.add_arrow(v(2), v(3), ());
+        s.add_arrow(v(3), v(4), ());
+        // depth_stratum should not be empty for a valid mesh
+        let d0: Vec<_> = s.depth_stratum(0).collect();
+        assert!(!d0.is_empty(), "depth_stratum(0) should not be empty");
+    }
+
+    #[test]
+    fn complex_mesh_heights_depths_strata() {
+        // Two tetrahedra sharing a face, plus a hanging vertex
+        // tets: 10, 11
+        // shared face: 20
+        // unique faces: 21, 22, 23, 24, 25
+        // edges: 30..=39
+        // verts: 1..=6 (6 is hanging)
+        let mut s = InMemorySieve::<PointId, ()>::default();
+        // Tet 10: faces 20,21,22,23
+        for f in [v(20), v(21), v(22), v(23)] { s.add_arrow(v(10), f, ()); }
+        // Tet 11: faces 20,24,25,23
+        for f in [v(20), v(24), v(25), v(23)] { s.add_arrow(v(11), f, ()); }
+        // Faces to edges (arbitrary but consistent)
+        for (f, es) in [
+            (20, [30,31,32]), (21, [32,33,34]), (22, [34,35,30]), (23, [31,35,36]),
+            (24, [36,37,38]), (25, [38,39,31])
+        ] {
+            for e in es { s.add_arrow(v(f), v(e), ()); }
+        }
+        // Edges to verts
+        for (e, vs) in [
+            (30, [1,2]), (31, [2,3]), (32, [3,4]), (33, [4,1]), (34, [1,5]),
+            (35, [5,2]), (36, [3,5]), (37, [5,6]), (38, [6,2]), (39, [6,4])
+        ] {
+            for vtx in vs { s.add_arrow(v(e), v(vtx), ()); }
+        }
+        // Heights
+        assert_eq!(s.height(v(10)), 0);
+        assert_eq!(s.height(v(11)), 0);
+        assert_eq!(s.height(v(20)), 1);
+        assert_eq!(s.height(v(21)), 1);
+        assert_eq!(s.height(v(24)), 1);
+        assert_eq!(s.height(v(39)), 2);
+        assert_eq!(s.height(v(1)), 3);
+        assert_eq!(s.height(v(6)), 3);
+        // Depths (should be 0 for leaves, increasing up)
+        assert_eq!(s.depth(v(1)), 0);
+        assert_eq!(s.depth(v(6)), 0);
+        assert!(s.depth(v(10)) > 0);
+        // Diameter
+        assert_eq!(s.diameter(), 3);
+        // Height strata
+        let s0: Vec<_> = s.height_stratum(0).collect();
+        assert!(s0.contains(&v(10)) && s0.contains(&v(11)));
+        let s3: Vec<_> = s.height_stratum(3).collect();
+        assert!(s3.contains(&v(1)) && s3.contains(&v(6)));
+        // Depth strata (should not be empty for any k <= diameter)
+        for k in 0..=s.diameter() {
+            let d: Vec<_> = s.depth_stratum(k).collect();
+            assert!(!d.is_empty(), "depth_stratum({}) should not be empty", k);
+        }
     }
 }
