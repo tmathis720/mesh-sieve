@@ -230,7 +230,10 @@ mod tests {
     }
 
     #[cfg(feature = "data_refine")]
-    impl<P, V: Clone + Default> SievedArray<P, V> {
+    impl<P, V: Clone + Default> SievedArray<P, V>
+    where
+        P: Into<crate::topology::point::PointId> + Copy + Eq,
+    {
         /// Create a new SievedArray with the given atlas, filled with default values.
         pub fn new(atlas: crate::data::atlas::Atlas) -> Self {
             let data = vec![V::default(); atlas.total_len()];
@@ -263,12 +266,53 @@ mod tests {
 
         /// Refine the data from a coarse SievedArray into this (finer) SievedArray.
         ///
-        /// This is a placeholder for the full refinement algorithm as per Knepley & Karpeev (2009).
-        /// The method will copy/interpolate data from `coarse` into `self` according to the refinement map.
-        pub fn refine(&mut self, _coarse: &SievedArray<P, V>, _refinement: &[(P, Vec<P>)]) {
-            // TODO: Implement full refinement logic
-            // For now, this is a stub.
-            unimplemented!("SievedArray::refine is not yet implemented");
+        /// For each (coarse_pt, fine_pts) in `refinement`, copies the data from the coarse point
+        /// into each fine point, respecting orientation (if provided in the Sifter).
+        ///
+        /// # Arguments
+        /// * `coarse` - The coarse SievedArray to refine from.
+        /// * `refinement` - A slice of (coarse point, Vec<(fine point, Orientation)>) pairs.
+        pub fn refine_with_sifter(
+            &mut self,
+            coarse: &SievedArray<P, V>,
+            refinement: &[(P, Vec<(P, crate::topology::arrow::Orientation)>)],
+        ) {
+            for (coarse_pt, fine_pts) in refinement.iter() {
+                let coarse_slice = coarse.get((*coarse_pt).into());
+                for (fine_pt, orient) in fine_pts.iter() {
+                    let fine_slice = self.get_mut((*fine_pt).into());
+                    assert_eq!(coarse_slice.len(), fine_slice.len(), "dof mismatch in refinement");
+                    match orient {
+                        crate::topology::arrow::Orientation::Forward => {
+                            fine_slice.clone_from_slice(coarse_slice);
+                        }
+                        crate::topology::arrow::Orientation::Reverse => {
+                            for (dst, src) in fine_slice.iter_mut().zip(coarse_slice.iter().rev()) {
+                                *dst = src.clone();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        /// Refine the data from a coarse SievedArray into this (finer) SievedArray.
+        ///
+        /// This version expects a refinement map of (coarse point, Vec<fine point>),
+        /// and assumes all orientations are positive.
+        pub fn refine(
+            &mut self,
+            coarse: &SievedArray<P, V>,
+            refinement: &[(P, Vec<P>)]
+        ) {
+            for (coarse_pt, fine_pts) in refinement.iter() {
+                let coarse_slice = coarse.get((*coarse_pt).into());
+                for fine_pt in fine_pts.iter() {
+                    let fine_slice = self.get_mut((*fine_pt).into());
+                    assert_eq!(coarse_slice.len(), fine_slice.len(), "dof mismatch in refinement");
+                    fine_slice.clone_from_slice(coarse_slice);
+                }
+            }
         }
 
         /// Assemble data from this (finer) SievedArray into a coarser SievedArray.
@@ -283,9 +327,16 @@ mod tests {
     }
 
     #[cfg(feature = "data_refine")]
-    impl<P, V: Clone + Default> crate::data::section::Map<V> for SievedArray<P, V> {
-        fn get(&self, p: crate::topology::point::PointId) -> &[V] { self.get(p) }
-        fn get_mut(&mut self, p: crate::topology::point::PointId) -> Option<&mut [V]> { Some(self.get_mut(p)) }
+    impl<P, V: Clone + Default> crate::data::section::Map<V> for SievedArray<P, V>
+        where
+        P: Into<crate::topology::point::PointId> + Copy + Eq,
+    {
+        fn get(&self, p: crate::topology::point::PointId) -> &[V] {
+            self.get(p)
+        }
+        fn get_mut(&mut self, p: crate::topology::point::PointId) -> Option<&mut [V]> {
+            Some(self.get_mut(p))
+        }
     }
 
     #[test]
@@ -320,12 +371,12 @@ mod tests {
 
     #[test]
     #[cfg(feature = "data_refine")]
-    #[should_panic(expected = "not yet implemented")]
     fn sieved_array_refine_panics() {
         use crate::topology::point::PointId;
         let mut fine = make_sieved_array();
         let coarse = make_sieved_array();
         let refinement: Vec<(PointId, Vec<PointId>)> = Vec::new();
+        // Should not panic: empty refinement is a no-op
         SievedArray::<PointId, i32>::refine(&mut fine, &coarse, &refinement);
     }
 
@@ -346,6 +397,56 @@ mod tests {
         atlas.insert(PointId::new(1), 2); // 2 dof
         atlas.insert(PointId::new(2), 1);
         SievedArray::<PointId, i32>::new(atlas)
+    }
+
+    #[test]
+    #[cfg(feature = "data_refine")]
+    fn sieved_array_refine_simple() {
+        use crate::topology::arrow::Orientation;
+        use crate::topology::point::PointId;
+        // Coarse: pt 1 (2 dof)
+        let mut coarse_atlas = crate::data::atlas::Atlas::default();
+        coarse_atlas.insert(PointId::new(1), 2); // 2 dof
+        // Fine: pt 10 (2 dof), pt 11 (2 dof)
+        let mut fine_atlas = crate::data::atlas::Atlas::default();
+        fine_atlas.insert(PointId::new(10), 2);
+        fine_atlas.insert(PointId::new(11), 2);
+        let mut coarse = SievedArray::<PointId, i32>::new(coarse_atlas);
+        let mut fine = SievedArray::<PointId, i32>::new(fine_atlas);
+        coarse.set(PointId::new(1), &[7, 8]);
+        // Refinement: 1 -> [10 (forward), 11 (reverse)]
+        let refinement = vec![
+            (PointId::new(1), vec![
+                (PointId::new(10), Orientation::Forward),
+                (PointId::new(11), Orientation::Reverse),
+            ]),
+        ];
+        fine.refine_with_sifter(&coarse, &refinement);
+        assert_eq!(fine.get(PointId::new(10)), &[7, 8]);
+        assert_eq!(fine.get(PointId::new(11)), &[8, 7]);
+    }
+
+    #[test]
+    #[cfg(feature = "data_refine")]
+    fn sieved_array_refine_positive_only() {
+        use crate::topology::point::PointId;
+        // Coarse: pt 1 (2 dof)
+        let mut coarse_atlas = crate::data::atlas::Atlas::default();
+        coarse_atlas.insert(PointId::new(1), 2); // 2 dof
+        // Fine: pt 10 (2 dof), pt 11 (2 dof)
+        let mut fine_atlas = crate::data::atlas::Atlas::default();
+        fine_atlas.insert(PointId::new(10), 2);
+        fine_atlas.insert(PointId::new(11), 2);
+        let mut coarse = SievedArray::<PointId, i32>::new(coarse_atlas);
+        let mut fine = SievedArray::<PointId, i32>::new(fine_atlas);
+        coarse.set(PointId::new(1), &[42, 99]);
+        // Refinement: 1 -> [10, 11] (all forward)
+        let refinement = vec![
+            (PointId::new(1), vec![PointId::new(10), PointId::new(11)]),
+        ];
+        fine.refine(&coarse, &refinement);
+        assert_eq!(fine.get(PointId::new(10)), &[42, 99]);
+        assert_eq!(fine.get(PointId::new(11)), &[42, 99]);
     }
 }
 
