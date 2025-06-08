@@ -2,6 +2,7 @@
 use crate::topology::point::PointId;
 use crate::topology::sieve::{InMemorySieve, Sieve};
 
+#[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Remote {
     pub rank: usize,
