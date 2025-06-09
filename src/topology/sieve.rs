@@ -111,6 +111,69 @@ pub trait Sieve {
             None
         })
     }
+
+    //── Default lattice operations (minimal separator / dual separator) ────────
+    /// The “meet” of two points: all points in closure(a) ∩ closure(b),
+    /// excluding a,b themselves’ immediate cone/support.  
+    #[inline]
+    fn meet<'s>(
+        &'s self,
+        a: Self::Point,
+        b: Self::Point
+    ) -> impl Iterator<Item = Self::Point> + 's
+    where
+        Self: 's + Sized,
+        Self::Point: Ord,
+    {
+        // 1. collect and sort closures
+        let mut ca: Vec<_> = self.closure(std::iter::once(a)).collect();
+        let mut cb: Vec<_> = self.closure(std::iter::once(b)).collect();
+        ca.sort_unstable(); cb.sort_unstable();
+        // 2. compute intersection
+        let mut inter = Vec::with_capacity(ca.len().min(cb.len()));
+        let (mut i, mut j) = (0, 0);
+        while i < ca.len() && j < cb.len() {
+            match ca[i].cmp(&cb[j]) {
+                std::cmp::Ordering::Less    => i += 1,
+                std::cmp::Ordering::Greater => j += 1,
+                std::cmp::Ordering::Equal   => { inter.push(ca[i]); i += 1; j += 1; }
+            }
+        }
+        // 3. exclude closure({a,b})
+        let mut to_rm: Vec<_> = self.closure([a,b]).collect();
+        to_rm.sort_unstable(); to_rm.dedup();
+        inter.into_iter()
+             .filter(move |x| to_rm.binary_search(x).is_err())
+    }
+
+    /// The “join” of two points: union of star(a) ∪ star(b)
+    #[inline]
+    fn join<'s>(
+        &'s self,
+        a: Self::Point,
+        b: Self::Point
+    ) -> impl Iterator<Item = Self::Point> + 's
+    where
+        Self: 's + Sized,
+        Self::Point: Ord,
+    {
+        // 1. collect & sort stars
+        let mut sa: Vec<_> = self.star(std::iter::once(a)).collect();
+        let mut sb: Vec<_> = self.star(std::iter::once(b)).collect();
+        sa.sort_unstable(); sb.sort_unstable();
+        // 2. merge union
+        let mut out = Vec::with_capacity(sa.len()+sb.len());
+        let (mut i, mut j) = (0,0);
+        while i < sa.len() && j < sb.len() {
+            match sa[i].cmp(&sb[j]) {
+                std::cmp::Ordering::Less    => { out.push(sa[i]); i+=1 }
+                std::cmp::Ordering::Greater => { out.push(sb[j]); j+=1 }
+                std::cmp::Ordering::Equal   => { out.push(sa[i]); i+=1; j+=1 }
+            }
+        }
+        out.extend_from_slice(&sa[i..]); out.extend_from_slice(&sb[j..]);
+        out.into_iter()
+    }
 }
 
 //-----------------------------------------------------------------------------
@@ -384,5 +447,41 @@ mod tests {
         // Should be [] (empty, since closure(10) ∩ closure(11) = closure({10, 11}))
         // and the shared edge 20 is in closure({10, 11}).
         assert_eq!(sep, vec![]);
+    }
+}
+
+#[cfg(test)]
+mod lattice_tests {
+    use super::*;
+    use crate::topology::sieve::InMemorySieve;
+    use crate::topology::point::PointId as P;
+
+    fn p(x: u64) -> P { P::new(x) }
+
+    /// Build the 1D chain 1→2→3→4
+    fn chain() -> InMemorySieve<P,()> {
+        let mut s = InMemorySieve::default();
+        for (u,v) in &[(1,2),(2,3),(3,4)] {
+            s.add_arrow(p(*u), p(*v), ());
+        }
+        s
+    }
+
+    #[test]
+    fn meet_chain() {
+        let s = chain();
+        // closure(2) = {2,3,4}, closure(3) = {3,4}; so meet = {3,4}
+        let mut m: Vec<_> = s.meet(p(2), p(3)).collect();
+        m.sort(); m.dedup();
+        assert_eq!(m, vec![p(3), p(4)]);
+    }
+
+    #[test]
+    fn join_chain() {
+        let s = chain();
+        // star(2) = {2,1}, star(3) = {3,2,1}, union = {1,2,3}
+        let mut j: Vec<_> = s.join(p(2), p(3)).collect();
+        j.sort(); j.dedup();
+        assert_eq!(j, vec![p(1), p(2), p(3)]);
     }
 }

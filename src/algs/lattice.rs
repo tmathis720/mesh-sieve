@@ -35,32 +35,18 @@ fn set_intersection(a: &[P], b: &[P], out: &mut Vec<P>) {
     }
 }
 
-/// meet(a,b) = closure(a) ∩ closure(b)
+/// Deprecated: Use `Sieve::meet` instead
+#[deprecated(note="Use `Sieve::meet` instead")] 
 pub fn meet<S>(sieve: &S, a: P, b: P) -> Vec<P>
-where
-    S: Sieve<Point = P>,
-{
-    let mut ca = closure(sieve, [a]);
-    let mut cb = closure(sieve, [b]);
-    ca.sort_unstable();
-    cb.sort_unstable();
-    let mut out = Vec::with_capacity(ca.len().min(cb.len()));
-    set_intersection(&ca, &cb, &mut out);
-    out
+where S: Sieve<Point = P> {
+    sieve.meet(a, b).collect()
 }
 
-/// join(a,b) = star(a) ∪ star(b)
+/// Deprecated: Use `Sieve::join` instead
+#[deprecated(note="Use `Sieve::join` instead")] 
 pub fn join<S>(sieve: &S, a: P, b: P) -> Vec<P>
-where
-    S: Sieve<Point = P>,
-{
-    let mut sa = star(sieve, [a]);
-    let mut sb = star(sieve, [b]);
-    sa.sort_unstable();
-    sb.sort_unstable();
-    let mut out = Vec::with_capacity(sa.len() + sb.len());
-    set_union(&sa, &sb, &mut out);
-    out
+where S: Sieve<Point = P> {
+    sieve.join(a, b).collect()
 }
 
 /// Cells adjacent to `p` that are **not** `p` itself.
