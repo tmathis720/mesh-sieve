@@ -85,12 +85,13 @@ impl<V: Clone + Send> Section<V> {
                         other: &[V],
                         atlas_map: &[(usize, usize)])
     {
-        // Iterate over each (offset,len) and the corresponding chunk.
-        for ((offset, len), chunk) in atlas_map.iter()
-                                                .zip(other.chunks_exact(atlas_map[0].1)) {
-            // Copy the chunk into our data buffer.
+        let mut start = 0;
+        for (offset, len) in atlas_map.iter() {
+            let end = start + *len;
+            let chunk = &other[start..end];
             self.data[*offset .. offset + *len]
                 .clone_from_slice(chunk);
+            start = end;
         }
     }
 }
@@ -126,6 +127,8 @@ mod tests {
     use super::*;
     use crate::data::atlas::Atlas;
     use crate::topology::point::PointId;
+    #[cfg(feature = "data_refine")]
+    use crate::data::refine::{restrict_closure_vec, restrict_star_vec};
 
     fn make_section() -> Section<f64> {
         let mut atlas = Atlas::default();
