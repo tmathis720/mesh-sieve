@@ -6,7 +6,13 @@ use crate::algs::communicator::Wait;
 /// post irecv for the corresponding byte length (from stage 1),
 /// then send and finally wait + `Delta::fuse` into your local section.
 pub fn exchange_data<V, D, C>(
-    links: &std::collections::HashMap<usize, Vec<(crate::topology::point::PointId, crate::topology::point::PointId)>>,
+    links: &std::collections::HashMap<
+        usize,
+        Vec<(
+            crate::topology::point::PointId,
+            crate::topology::point::PointId,
+        )>,
+    >,
     recv_counts: &std::collections::HashMap<usize, u32>,
     comm: &C,
     base_tag: u16,
@@ -54,7 +60,13 @@ pub fn exchange_data<V, D, C>(
 /// This version always posts send/recv for all neighbors, even if count is zero,
 /// to prevent deadlocks in section completion.
 pub fn exchange_data_symmetric<V, D, C>(
-    links: &std::collections::HashMap<usize, Vec<(crate::topology::point::PointId, crate::topology::point::PointId)>>,
+    links: &std::collections::HashMap<
+        usize,
+        Vec<(
+            crate::topology::point::PointId,
+            crate::topology::point::PointId,
+        )>,
+    >,
     recv_counts: &std::collections::HashMap<usize, u32>,
     comm: &C,
     base_tag: u16,
@@ -102,10 +114,10 @@ pub fn exchange_data_symmetric<V, D, C>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use crate::data::atlas::Atlas;
     use crate::data::section::Section;
     use crate::topology::point::PointId;
+    use std::collections::HashMap;
     use std::thread;
 
     #[derive(Clone, Copy, Default, Debug, PartialEq)]
@@ -115,8 +127,12 @@ mod tests {
     struct DummyDelta;
     impl crate::overlap::delta::Delta<DummyValue> for DummyDelta {
         type Part = i32;
-        fn restrict(v: &DummyValue) -> i32 { v.0 }
-        fn fuse(v: &mut DummyValue, part: i32) { v.0 += part; }
+        fn restrict(v: &DummyValue) -> i32 {
+            v.0
+        }
+        fn fuse(v: &mut DummyValue, part: i32) {
+            v.0 += part;
+        }
     }
 
     #[test]
@@ -153,12 +169,30 @@ mod tests {
 
         // Spawn threads for each rank
         let t0 = thread::spawn(move || {
-            exchange_data::<DummyValue, DummyDelta, crate::algs::communicator::RayonComm>(&links0, &recv_counts0, &comm0, base_tag, &mut section0);
-            (section0.restrict(PointId::new(10))[0], section0.restrict(PointId::new(20))[0])
+            exchange_data::<DummyValue, DummyDelta, crate::algs::communicator::RayonComm>(
+                &links0,
+                &recv_counts0,
+                &comm0,
+                base_tag,
+                &mut section0,
+            );
+            (
+                section0.restrict(PointId::new(10))[0],
+                section0.restrict(PointId::new(20))[0],
+            )
         });
         let t1 = thread::spawn(move || {
-            exchange_data::<DummyValue, DummyDelta, crate::algs::communicator::RayonComm>(&links1, &recv_counts1, &comm1, base_tag, &mut section1);
-            (section1.restrict(PointId::new(10))[0], section1.restrict(PointId::new(20))[0])
+            exchange_data::<DummyValue, DummyDelta, crate::algs::communicator::RayonComm>(
+                &links1,
+                &recv_counts1,
+                &comm1,
+                base_tag,
+                &mut section1,
+            );
+            (
+                section1.restrict(PointId::new(10))[0],
+                section1.restrict(PointId::new(20))[0],
+            )
         });
         let (s0_10, s0_20) = t0.join().unwrap();
         let (s1_10, s1_20) = t1.join().unwrap();

@@ -15,16 +15,16 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::topology::sieve::Sieve;
 use crate::algs::traversal::closure;
 use crate::topology::point::PointId;
+use crate::topology::sieve::Sieve;
 
 /// CSR triple
 #[derive(Debug, Clone)]
 pub struct DualGraph {
-    pub xadj:   Vec<usize>,
+    pub xadj: Vec<usize>,
     pub adjncy: Vec<usize>,
-    pub vwgt:   Vec<i32>,  // ParMETIS expects i32
+    pub vwgt: Vec<i32>, // ParMETIS expects i32
 }
 
 /// Build dual graph. Cell indices are assigned by *insertion order*
@@ -40,8 +40,10 @@ where
 }
 
 /// Same as `build_dual` but also returns `Vec<PointId>` mapping CSR vertex → cell id.
-pub fn build_dual_with_order<S>(sieve: &S, cells: impl IntoIterator<Item = PointId>)
-    -> (DualGraph, Vec<PointId>)
+pub fn build_dual_with_order<S>(
+    sieve: &S,
+    cells: impl IntoIterator<Item = PointId>,
+) -> (DualGraph, Vec<PointId>)
 where
     S: Sieve<Point = PointId>,
 {
@@ -100,10 +102,7 @@ where
     // 4. Simple unit vertex weights
     let vwgt = vec![1; n];
 
-    (
-        DualGraph { xadj, adjncy, vwgt },
-        cells,
-    )
+    (DualGraph { xadj, adjncy, vwgt }, cells)
 }
 
 #[cfg(test)]
@@ -117,10 +116,16 @@ mod tests {
         let t0 = v(10);
         let t1 = v(11);
         // vertices
-        let (a,b,c,d) = (v(1),v(2),v(3),v(4));
-        let mut s = InMemorySieve::<PointId,()>::default();
-        for p in [a,b,c] { s.add_arrow(t0, p, ()); s.add_arrow(p, t0, ()); }
-        for p in [b,c,d] { s.add_arrow(t1, p, ()); s.add_arrow(p, t1, ()); }
+        let (a, b, c, d) = (v(1), v(2), v(3), v(4));
+        let mut s = InMemorySieve::<PointId, ()>::default();
+        for p in [a, b, c] {
+            s.add_arrow(t0, p, ());
+            s.add_arrow(p, t0, ());
+        }
+        for p in [b, c, d] {
+            s.add_arrow(t1, p, ());
+            s.add_arrow(p, t1, ());
+        }
         (s, vec![t0, t1])
     }
 

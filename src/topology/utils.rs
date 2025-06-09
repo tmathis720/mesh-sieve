@@ -1,6 +1,6 @@
 //! Utility helpers for topology, including DAG assertion.
 use crate::topology::sieve::InMemorySieve;
-use std::collections::{HashMap, VecDeque, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Panics if the sieve contains a cycle (not a DAG).
 pub fn assert_dag<P: Copy + Eq + std::hash::Hash, T>(s: &InMemorySieve<P, T>) {
@@ -16,7 +16,11 @@ pub fn assert_dag<P: Copy + Eq + std::hash::Hash, T>(s: &InMemorySieve<P, T>) {
         }
     }
     // Add any vertices that have no outgoing edges
-    let mut queue: VecDeque<_> = in_deg.iter().filter(|&(_, &d)| d == 0).map(|(&p, _)| p).collect();
+    let mut queue: VecDeque<_> = in_deg
+        .iter()
+        .filter(|&(_, &d)| d == 0)
+        .map(|(&p, _)| p)
+        .collect();
     // If no vertices have 0 in-degree, the sieve is not a DAG
     let mut seen = HashSet::new();
     // Process vertices with 0 in-degree

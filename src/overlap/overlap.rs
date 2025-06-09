@@ -21,11 +21,19 @@ impl Overlap {
     /// Add an overlap arrow: `local_p --(rank,remote_p)--> partition(rank)`.
     pub fn add_link(&mut self, local: PointId, remote_rank: usize, remote: PointId) {
         let part_pt = partition_point(remote_rank);
-        Sieve::add_arrow(self, local, part_pt, Remote { rank: remote_rank, remote_point: remote });
+        Sieve::add_arrow(
+            self,
+            local,
+            part_pt,
+            Remote {
+                rank: remote_rank,
+                remote_point: remote,
+            },
+        );
     }
 
     /// Convenience: iterate all neighbours of the *current* rank.
-    pub fn neighbours<'a>(&'a self, my_rank: usize) -> impl Iterator<Item=usize> + 'a {
+    pub fn neighbours<'a>(&'a self, my_rank: usize) -> impl Iterator<Item = usize> + 'a {
         use std::collections::HashSet;
         Sieve::cone(self, partition_point(my_rank))
             .map(|(_, rem)| rem.rank)
@@ -34,7 +42,11 @@ impl Overlap {
     }
 
     /// Returns iterator over `(local, remote_point)` for a given neighbour rank.
-    pub fn links_to<'a>(&'a self, nbr: usize, _my_rank: usize) -> impl Iterator<Item=(PointId, PointId)> + 'a {
+    pub fn links_to<'a>(
+        &'a self,
+        nbr: usize,
+        _my_rank: usize,
+    ) -> impl Iterator<Item = (PointId, PointId)> + 'a {
         Sieve::support(self, partition_point(nbr))
             .filter(move |(_, r)| r.rank == nbr)
             .map(|(local, r)| (local, r.remote_point))

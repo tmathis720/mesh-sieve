@@ -18,8 +18,14 @@ pub struct CopyDelta;
 
 impl<V: Clone + Send> Delta<V> for CopyDelta {
     type Part = V;
-    #[inline] fn restrict(v: &V) -> V { v.clone() }
-    #[inline] fn fuse(local: &mut V, incoming: V) { *local = incoming; }
+    #[inline]
+    fn restrict(v: &V) -> V {
+        v.clone()
+    }
+    #[inline]
+    fn fuse(local: &mut V, incoming: V) {
+        *local = incoming;
+    }
 }
 
 /// Additive delta for summation/balancing fields.
@@ -27,8 +33,16 @@ impl<V: Clone + Send> Delta<V> for CopyDelta {
 pub struct AddDelta;
 
 impl<V> Delta<V> for AddDelta
-where V: std::ops::AddAssign + Copy + Send {
+where
+    V: std::ops::AddAssign + Copy + Send,
+{
     type Part = V;
-    #[inline] fn restrict(v: &V) -> V { *v }
-    #[inline] fn fuse(local: &mut V, incoming: V) { *local += incoming; }
+    #[inline]
+    fn restrict(v: &V) -> V {
+        *v
+    }
+    #[inline]
+    fn fuse(local: &mut V, incoming: V) {
+        *local += incoming;
+    }
 }

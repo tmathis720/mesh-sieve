@@ -1,8 +1,8 @@
 //! DFS/BFS traversal helpers for Sieve topologies.
 
-use std::collections::{HashSet, VecDeque};
-use crate::topology::sieve::Sieve;
 use crate::topology::point::PointId;
+use crate::topology::sieve::Sieve;
+use std::collections::{HashSet, VecDeque};
 
 /// Shorthand so callers don't have to spell the full bound.
 pub type Point = PointId;
@@ -62,8 +62,8 @@ pub fn link<S: Sieve<Point = Point>>(sieve: &S, p: Point) -> Vec<Point> {
 /// Optional BFS distance map – used by coarsening / agglomeration.
 pub fn depth_map<S: Sieve<Point = Point>>(sieve: &S, seed: Point) -> Vec<(Point, u32)> {
     let mut depths = Vec::new();
-    let mut seen   = HashSet::new();
-    let mut q      = VecDeque::from([(seed, 0)]);
+    let mut seen = HashSet::new();
+    let mut q = VecDeque::from([(seed, 0)]);
 
     while let Some((p, d)) = q.pop_front() {
         if seen.insert(p) {
@@ -95,8 +95,7 @@ mod tests {
         s.add_arrow(v(11), v(3), ());
         s.add_arrow(v(11), v(4), ());
         // reverse incidences
-        for (src, dsts) in [ (v(10), [v(1),v(2),v(3)]),
-                             (v(11), [v(2),v(3),v(4)]) ] {
+        for (src, dsts) in [(v(10), [v(1), v(2), v(3)]), (v(11), [v(2), v(3), v(4)])] {
             for d in dsts {
                 s.add_arrow(d, src, ()); // support edge
             }
@@ -118,7 +117,7 @@ mod tests {
         let p = PointId::new(10);
         let lk = link(&s, p);
         let cone: Vec<_> = s.cone(p).map(|(q, _)| q).collect();
-        let sup : Vec<_> = s.support(p).map(|(q, _)| q).collect();
+        let sup: Vec<_> = s.support(p).map(|(q, _)| q).collect();
         for x in lk {
             assert!(!cone.contains(&x));
             assert!(!sup.contains(&x));

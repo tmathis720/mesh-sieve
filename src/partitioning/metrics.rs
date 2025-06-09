@@ -1,11 +1,11 @@
 // Metrics skeleton for partitioning
 #![cfg(feature = "partitioning")]
 
-use super::{PartitionableGraph, PartitionMap};
+use super::{PartitionMap, PartitionableGraph};
+use rayon::iter::IntoParallelIterator;
+use rayon::iter::ParallelIterator;
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
-use rayon::iter::ParallelIterator;
-use rayon::iter::IntoParallelIterator;
 
 /// Returns the part ID for a given vertex.
 impl<V: Eq + Hash + Copy> PartitionMap<V> {
@@ -30,18 +30,17 @@ where
         .vertices()
         .flat_map(|u| {
             // NeighParIter is a ParallelIterator, not Iterator, so use .filter_map directly
-            g.neighbors(u)
-                .filter_map(move |v| {
-                    if u < v {
-                        if pm.part_of(u) != pm.part_of(v) {
-                            Some(1)
-                        } else {
-                            None
-                        }
+            g.neighbors(u).filter_map(move |v| {
+                if u < v {
+                    if pm.part_of(u) != pm.part_of(v) {
+                        Some(1)
                     } else {
                         None
                     }
-                })
+                } else {
+                    None
+                }
+            })
         })
         .sum();
 
@@ -64,10 +63,17 @@ where
     }
 
     // 2. Build a map from VertexId -> position index
-    let idx_map: HashMap<G::VertexId, usize> = verts.iter().copied().enumerate().map(|(i, v)| (v, i)).collect();
+    let idx_map: HashMap<G::VertexId, usize> = verts
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(i, v)| (v, i))
+        .collect();
 
     // 3. Create a Vec<HashSet<usize>> per vertex to accumulate all owning parts (thread-safe)
-    let owners: Vec<std::sync::Mutex<HashSet<usize>>> = (0..n).map(|_| std::sync::Mutex::new(HashSet::new())).collect();
+    let owners: Vec<std::sync::Mutex<HashSet<usize>>> = (0..n)
+        .map(|_| std::sync::Mutex::new(HashSet::new()))
+        .collect();
 
     // 4. For each vertex u, mark its own part, and also its part for each neighbor v (in parallel)
     verts.par_iter().for_each(|&u| {
@@ -104,15 +110,19 @@ mod tests {
             (0..self.n).collect::<Vec<_>>().into_par_iter()
         }
         fn neighbors(&self, v: usize) -> Self::NeighParIter<'_> {
-            self.edges.iter().filter_map(|&(a, b)| {
-                if a == v {
-                    Some(b)
-                } else if b == v {
-                    Some(a)
-                } else {
-                    None
-                }
-            }).collect::<Vec<_>>().into_par_iter()
+            self.edges
+                .iter()
+                .filter_map(|&(a, b)| {
+                    if a == v {
+                        Some(b)
+                    } else if b == v {
+                        Some(a)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .into_par_iter()
         }
         fn degree(&self, v: usize) -> usize {
             self.neighbors(v).count()

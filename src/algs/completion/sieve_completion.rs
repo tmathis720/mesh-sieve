@@ -1,10 +1,10 @@
 //! Complete missing sieve arrows across ranks by packing WireTriple.
 
-use crate::topology::point::PointId;
-use crate::overlap::overlap::Remote;
-use crate::algs::completion::partition_point;
-use crate::topology::sieve::Sieve;
 use crate::algs::communicator::Wait;
+use crate::algs::completion::partition_point;
+use crate::overlap::overlap::Remote;
+use crate::topology::point::PointId;
+use crate::topology::sieve::Sieve;
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -15,13 +15,17 @@ struct WireTriple {
 }
 
 pub fn complete_sieve(
-    sieve: &mut crate::topology::sieve::InMemorySieve<crate::topology::point::PointId, crate::overlap::overlap::Remote>,
+    sieve: &mut crate::topology::sieve::InMemorySieve<
+        crate::topology::point::PointId,
+        crate::overlap::overlap::Remote,
+    >,
     overlap: &crate::overlap::overlap::Overlap,
     comm: &impl crate::algs::communicator::Communicator,
     my_rank: usize,
 ) {
-        const BASE_TAG: u16 = 0xC0DE;
-    let mut nb_links: std::collections::HashMap<usize, Vec<(PointId, PointId)>> = std::collections::HashMap::new();
+    const BASE_TAG: u16 = 0xC0DE;
+    let mut nb_links: std::collections::HashMap<usize, Vec<(PointId, PointId)>> =
+        std::collections::HashMap::new();
     let me_pt = partition_point(my_rank);
     let mut has_owned = false;
     for (&p, outs) in &sieve.adjacency_out {
@@ -31,7 +35,8 @@ pub fn complete_sieve(
             // For every neighbor who has an overlap link to this point
             for (_dst2, rem) in overlap.cone(p) {
                 if rem.rank != my_rank {
-                    nb_links.entry(rem.rank)
+                    nb_links
+                        .entry(rem.rank)
                         .or_default()
                         .push((p, rem.remote_point));
                 }
@@ -41,7 +46,8 @@ pub fn complete_sieve(
     if !has_owned {
         for (src, rem) in overlap.support(me_pt) {
             if rem.rank != my_rank {
-                nb_links.entry(rem.rank)
+                nb_links
+                    .entry(rem.rank)
                     .or_default()
                     .push((rem.remote_point, src));
             }
@@ -76,7 +82,11 @@ pub fn complete_sieve(
             // Send all arrows from src, not just those matching dst
             if let Some(outs) = sieve.adjacency_out.get(&src) {
                 for (d, payload) in outs {
-                    triples.push(WireTriple { src: src.get(), dst: d.get(), rank: payload.rank });
+                    triples.push(WireTriple {
+                        src: src.get(),
+                        dst: d.get(),
+                        rank: payload.rank,
+                    });
                 }
             }
         }
@@ -92,14 +102,27 @@ pub fn complete_sieve(
         for WireTriple { src, dst, rank } in triples {
             let src_pt = PointId::new(*src);
             let dst_pt = PointId::new(*dst);
-            let payload = Remote { rank: *rank, remote_point: dst_pt };
+            let payload = Remote {
+                rank: *rank,
+                remote_point: dst_pt,
+            };
             // Only inject if this (src, dst) is not already present
             if inserted.insert((src_pt, dst_pt)) {
-                let already = sieve.adjacency_out.get(&src_pt)
+                let already = sieve
+                    .adjacency_out
+                    .get(&src_pt)
                     .map_or(false, |v| v.iter().any(|(d, _)| *d == dst_pt));
                 if !already {
-                    sieve.adjacency_out.entry(src_pt).or_default().push((dst_pt, payload));
-                    sieve.adjacency_in.entry(dst_pt).or_default().push((src_pt, payload));
+                    sieve
+                        .adjacency_out
+                        .entry(src_pt)
+                        .or_default()
+                        .push((dst_pt, payload));
+                    sieve
+                        .adjacency_in
+                        .entry(dst_pt)
+                        .or_default()
+                        .push((src_pt, payload));
                 }
             }
         }

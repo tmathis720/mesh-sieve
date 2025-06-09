@@ -2,52 +2,11 @@
 //! All output vectors are **sorted & deduplicated** for deterministic behaviour.
 
 use std::cmp::Ordering;
-
+use crate::algs::traversal::{star};
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
-use crate::algs::traversal::{closure, star};
 
 type P = PointId;
-
-fn set_union(a: &[P], b: &[P], out: &mut Vec<P>) {
-    let mut i = 0;
-    let mut j = 0;
-    while i < a.len() && j < b.len() {
-        match a[i].cmp(&b[j]) {
-            Ordering::Less    => { out.push(a[i]); i += 1; }
-            Ordering::Greater => { out.push(b[j]); j += 1; }
-            Ordering::Equal   => { out.push(a[i]); i += 1; j += 1; }
-        }
-    }
-    out.extend_from_slice(&a[i..]);
-    out.extend_from_slice(&b[j..]);
-}
-
-fn set_intersection(a: &[P], b: &[P], out: &mut Vec<P>) {
-    let mut i = 0;
-    let mut j = 0;
-    while i < a.len() && j < b.len() {
-        match a[i].cmp(&b[j]) {
-            Ordering::Less    => i += 1,
-            Ordering::Greater => j += 1,
-            Ordering::Equal   => { out.push(a[i]); i += 1; j += 1; }
-        }
-    }
-}
-
-/// Deprecated: Use `Sieve::meet` instead
-#[deprecated(note="Use `Sieve::meet` instead")] 
-pub fn meet<S>(sieve: &S, a: P, b: P) -> Vec<P>
-where S: Sieve<Point = P> {
-    sieve.meet(a, b).collect()
-}
-
-/// Deprecated: Use `Sieve::join` instead
-#[deprecated(note="Use `Sieve::join` instead")] 
-pub fn join<S>(sieve: &S, a: P, b: P) -> Vec<P>
-where S: Sieve<Point = P> {
-    sieve.join(a, b).collect()
-}
 
 /// Cells adjacent to `p` that are **not** `p` itself.
 /// Adjacent = share a face/edge (= “support” of cone items).
@@ -77,30 +36,21 @@ mod tests {
 
     fn simple_pair() -> (InMemorySieve<P, ()>, P, P) {
         // two triangles sharing an edge
-        let v  = |i| PointId::new(i);
-        let t1 = v(10); let t2 = v(11);
+        let v = |i| PointId::new(i);
+        let t1 = v(10);
+        let t2 = v(11);
         let mut s = InMemorySieve::<P, ()>::default();
         // triangle 1 cone
-        for x in [v(1), v(2), v(3)] { s.add_arrow(t1, x, ()); s.add_arrow(x, t1, ()); }
+        for x in [v(1), v(2), v(3)] {
+            s.add_arrow(t1, x, ());
+            s.add_arrow(x, t1, ());
+        }
         // triangle 2 cone
-        for x in [v(2), v(3), v(4)] { s.add_arrow(t2, x, ()); s.add_arrow(x, t2, ()); }
+        for x in [v(2), v(3), v(4)] {
+            s.add_arrow(t2, x, ());
+            s.add_arrow(x, t2, ());
+        }
         (s, t1, t2)
-    }
-
-    #[test]
-    fn meet_contains_shared_verts() {
-        let (s, a, b) = simple_pair();
-        let m = meet(&s, a, b);
-        // The intersection of closures includes both triangles and all shared cone points
-        let expected = vec![PointId::new(1), PointId::new(2), PointId::new(3), PointId::new(4), PointId::new(10), PointId::new(11)];
-        assert_eq!(m, expected);
-    }
-
-    #[test]
-    fn join_contains_both_cells() {
-        let (s, a, b) = simple_pair();
-        let j = join(&s, a, b);
-        assert!(j.contains(&a) && j.contains(&b));
     }
 
     #[test]

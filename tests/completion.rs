@@ -1,11 +1,8 @@
-use sieve_rs::algs::{
-    communicator::RayonComm,
-    completion::complete_section,
-};
+use sieve_rs::algs::{communicator::RayonComm, completion::complete_section};
 use sieve_rs::data::{atlas::Atlas, section::Section};
-use sieve_rs::topology::point::PointId;
-use sieve_rs::overlap::overlap::Overlap;
 use sieve_rs::overlap::delta::CopyDelta;
+use sieve_rs::overlap::overlap::Overlap;
+use sieve_rs::topology::point::PointId;
 
 #[test]
 fn ghost_update_self() {
@@ -17,7 +14,7 @@ fn ghost_update_self() {
     let p0 = PointId::new(1);
 
     // Add a self‐overlap: owner and ghost are the same rank (0).
-    ovlp.add_link(p0, /*remote_rank=*/0, p0);
+    ovlp.add_link(p0, /*remote_rank=*/ 0, p0);
 
     // Build a section with one value = 42
     let mut atlas = Atlas::default();
@@ -29,7 +26,7 @@ fn ghost_update_self() {
     let delta = CopyDelta;
 
     // Should complete without deadlock and leave the value intact.
-    complete_section(&mut sec, &ovlp, &comm, &delta, 0);
+    complete_section(&mut sec, &ovlp, &comm, &delta, 0, 1);
 
     assert_eq!(sec.restrict(p0)[0], 42);
 }

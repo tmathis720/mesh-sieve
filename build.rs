@@ -6,7 +6,7 @@
 //!  • Default (pkg-config):  use `pkg_config::probe("metis")`
 //!  • Manual    (env-vars):  `METIS_NO_PKG_CONFIG=1` plus `METIS_DIR` or
 //!                           (`METIS_LIB_DIR` + `METIS_INCLUDE_DIR`).
-//! 
+//!
 //! After generating `metis_bindings.rs`, we post-process it to replace
 //! every `extern "C" { … }` with `unsafe extern "C" { … }`, which Rust now requires.
 //! We also strip out any `unsafe impl Send/Sync for idx_t` lines so you won’t
@@ -14,22 +14,20 @@
 
 #[cfg(feature = "metis-support")]
 fn main() {
+    use regex::Regex;
     use std::env;
     use std::fs::{self, read_to_string, write};
     use std::path::Path;
-    use regex::Regex;
 
     // ─── 1. Find METIS include/lib directories ───────────────────────────────────
     let (include_dir, lib_dir) = if env::var_os("METIS_NO_PKG_CONFIG").is_some() {
         // -------- Manual (Option B) ----------
-        let prefix = env::var("METIS_DIR")
-            .expect("METIS_DIR must be set when METIS_NO_PKG_CONFIG=1");
+        let prefix =
+            env::var("METIS_DIR").expect("METIS_DIR must be set when METIS_NO_PKG_CONFIG=1");
 
-        let inc = env::var("METIS_INCLUDE_DIR")
-            .unwrap_or_else(|_| format!("{}/include", &prefix));
+        let inc = env::var("METIS_INCLUDE_DIR").unwrap_or_else(|_| format!("{}/include", &prefix));
 
-        let lib = env::var("METIS_LIB_DIR")
-            .unwrap_or_else(|_| format!("{}/lib", &prefix));
+        let lib = env::var("METIS_LIB_DIR").unwrap_or_else(|_| format!("{}/lib", &prefix));
 
         // Tell Cargo to look in `$lib` for both libmetis.so and libGKlib.a:
         println!("cargo:rustc-link-search=native={}", lib);
@@ -57,13 +55,15 @@ fn main() {
         // All we need to add is GKlib:
         println!("cargo:rustc-link-lib=dylib=GKlib");
 
-        let inc = lib.include_paths
+        let inc = lib
+            .include_paths
             .get(0)
             .unwrap_or_else(|| panic!("pkg-config returned no include path for METIS"))
             .display()
             .to_string();
 
-        let lib_dir = lib.link_paths
+        let lib_dir = lib
+            .link_paths
             .get(0)
             .unwrap_or_else(|| panic!("pkg-config returned no library path for METIS"))
             .display()
@@ -95,9 +95,9 @@ fn main() {
 
     let re_extern = Regex::new(r#"(?m)^(?P<prefix>\s*)(?P<block>extern\s+"C"\s*\{)"#)
         .expect("Invalid regex for extern block");
-    let re_strip_send_sync = Regex::new(
-        r#"(?m)^\s*unsafe\s+impl\s+(Send|Sync)\s+for\s+idx_t\s*\{\s*\}\s*$"#,
-    ).expect("Invalid regex for stripping Send/Sync impls");
+    let re_strip_send_sync =
+        Regex::new(r#"(?m)^\s*unsafe\s+impl\s+(Send|Sync)\s+for\s+idx_t\s*\{\s*\}\s*$"#)
+            .expect("Invalid regex for stripping Send/Sync impls");
 
     let with_unsafe_extern = re_extern.replace_all(&raw_contents, |caps: &regex::Captures| {
         format!("{}unsafe {}", &caps["prefix"], &caps["block"])

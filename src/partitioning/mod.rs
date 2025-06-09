@@ -1,21 +1,21 @@
 //! Entry-point for native graph partitioning.
 #![cfg_attr(not(feature = "partitioning"), allow(dead_code, unused_imports))]
 
-pub mod graph_traits;
-pub mod metrics;
-pub mod seed_select;
-pub mod louvain;
 pub mod binpack;
-pub mod vertex_cut;
+pub mod graph_traits;
+pub mod louvain;
+pub mod metrics;
 pub mod parallel;
+pub mod seed_select;
+pub mod vertex_cut;
 
 pub use self::metrics::*;
 
 #[cfg(feature = "partitioning")]
 use hashbrown::HashMap;
-use std::hash::Hash;
-use rayon::iter::ParallelIterator;
 use rayon::iter::IntoParallelIterator;
+use rayon::iter::ParallelIterator;
+use std::hash::Hash;
 
 #[cfg(feature = "partitioning")]
 pub type PartitionId = usize;
@@ -77,11 +77,20 @@ pub enum PartitionerError {
 }
 
 #[cfg(feature = "partitioning")]
-pub fn partition<G>(graph: &G, cfg: &PartitionerConfig) -> Result<PartitionMap<G::VertexId>, PartitionerError>
+pub fn partition<G>(
+    graph: &G,
+    cfg: &PartitionerConfig,
+) -> Result<PartitionMap<G::VertexId>, PartitionerError>
 where
     G: PartitionableGraph<VertexId = usize> + Sync,
 {
-    use crate::partitioning::{louvain::louvain_cluster, binpack::partition_clusters, binpack::Item, vertex_cut::build_vertex_cuts, metrics::{edge_cut, replication_factor}};
+    use crate::partitioning::{
+        binpack::Item,
+        binpack::partition_clusters,
+        louvain::louvain_cluster,
+        metrics::{edge_cut, replication_factor},
+        vertex_cut::build_vertex_cuts,
+    };
     use std::collections::HashMap;
 
     let verts: Vec<_> = graph.vertices().collect();
@@ -104,10 +113,17 @@ where
     }
 
     // 3. Binpack clusters into parts
-    let mut items: Vec<Item> = cluster_to_verts.iter().map(|(&cid, verts)| {
-        let load = *cluster_loads.get(&cid).unwrap_or(&1);
-        Item { cid: cid as usize, load, adj: vec![] }
-    }).collect();
+    let mut items: Vec<Item> = cluster_to_verts
+        .iter()
+        .map(|(&cid, verts)| {
+            let load = *cluster_loads.get(&cid).unwrap_or(&1);
+            Item {
+                cid: cid as usize,
+                load,
+                adj: vec![],
+            }
+        })
+        .collect();
     let cluster_part = partition_clusters(&items, cfg.n_parts, 0.05);
 
     // 4. Assign each vertex to its cluster's part
@@ -152,7 +168,10 @@ mod tests {
     #[test]
     fn trivial_partition_compiles() {
         let g = DummyGraph;
-        let cfg = PartitionerConfig { n_parts: 2, ..Default::default() };
+        let cfg = PartitionerConfig {
+            n_parts: 2,
+            ..Default::default()
+        };
         let pm = partition(&g, &cfg).expect("partition should succeed");
         assert_eq!(pm.len(), 4);
     }

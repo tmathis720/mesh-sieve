@@ -23,7 +23,7 @@ impl DualGraph {
 
         // METIS options: 0 means “use defaults”
         let mut options = [0; 40];
-        options[0] = 1;                   // turn on option processing
+        options[0] = 1; // turn on option processing
         // e.g. options[METIS_OPTION_UFACTOR] = 30;
         let mut objval: idx_t = 0;
 
@@ -34,11 +34,11 @@ impl DualGraph {
                 xadj.as_mut_ptr(),
                 adjncy.as_mut_ptr(),
                 vwgt.as_mut_ptr(),
-                std::ptr::null_mut(),              // vsize
-                std::ptr::null_mut(),              // adjwgt
+                std::ptr::null_mut(), // vsize
+                std::ptr::null_mut(), // adjwgt
                 &mut nparts,
-                std::ptr::null_mut(),              // tpwgts
-                std::ptr::null_mut(),              // ubvec
+                std::ptr::null_mut(), // tpwgts
+                std::ptr::null_mut(), // ubvec
                 options.as_mut_ptr(),
                 &mut objval,
                 part.as_mut_ptr(),

@@ -3,8 +3,9 @@
 
 #[cfg(feature = "partitioning")]
 pub use crate::partitioning::{
-    PartitionerConfig, PartitionMap, PartitionerError,
-    partition, metrics::{edge_cut, replication_factor},
+    PartitionMap, PartitionerConfig, PartitionerError,
+    metrics::{edge_cut, replication_factor},
+    partition,
 };
 
 #[cfg(feature = "partitioning")]
@@ -32,10 +33,7 @@ where
 
 /// Compute the edge cut of a partitioning.
 #[cfg(feature = "partitioning")]
-pub fn partition_edge_cut<G>(
-    graph: &G,
-    pm: &PartitionMap<G::VertexId>,
-) -> usize
+pub fn partition_edge_cut<G>(graph: &G, pm: &PartitionMap<G::VertexId>) -> usize
 where
     G: PartitionableGraph,
     G::VertexId: PartialOrd + Eq + std::hash::Hash + Copy,
@@ -45,10 +43,7 @@ where
 
 /// Compute the replication factor of a partitioning.
 #[cfg(feature = "partitioning")]
-pub fn partition_replication_factor<G>(
-    graph: &G,
-    pm: &PartitionMap<G::VertexId>,
-) -> f64
+pub fn partition_replication_factor<G>(graph: &G, pm: &PartitionMap<G::VertexId>) -> f64
 where
     G: PartitionableGraph,
     G::VertexId: Eq + std::hash::Hash + Copy,

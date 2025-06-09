@@ -58,7 +58,6 @@ where
     P: Copy + Eq + std::hash::Hash + Ord,
     T: Clone,
 {
-    
     fn height(&self, p: P) -> u32 {
         // Use the cached height if available, otherwise return 0
         self.strata_cache().height.get(&p).copied().unwrap_or(0)
@@ -71,7 +70,7 @@ where
         // Return the precomputed diameter from the cache
         self.strata_cache().diameter
     }
-    fn height_stratum(&self, k: u32) -> Box<dyn Iterator<Item=P> + '_> {
+    fn height_stratum(&self, k: u32) -> Box<dyn Iterator<Item = P> + '_> {
         // Return an iterator over points at height k
         // If k is out of bounds, return an empty iterator
         let cache = self.strata_cache();
@@ -81,11 +80,12 @@ where
             Box::new(std::iter::empty())
         }
     }
-    fn depth_stratum(&self, k: u32) -> Box<dyn Iterator<Item=P> + '_> {
+    fn depth_stratum(&self, k: u32) -> Box<dyn Iterator<Item = P> + '_> {
         // Return an iterator over points at depth k
         let cache = self.strata_cache();
         // Build a reverse map: depth value -> Vec<P>
-        let mut depth_map: std::collections::HashMap<u32, Vec<P>> = std::collections::HashMap::new();
+        let mut depth_map: std::collections::HashMap<u32, Vec<P>> =
+            std::collections::HashMap::new();
         // Populate the map with points grouped by their depth
         for (&p, &d) in &cache.depth {
             depth_map.entry(d).or_default().push(p);
@@ -136,7 +136,11 @@ where
     // and will be processed first.
     // They are the "cells" in the context of topology.
     // This is the first step in Kahn's algorithm.
-    let mut stack: Vec<P> = in_deg.iter().filter(|&(_, &d)| d == 0).map(|(&p, _)| p).collect();
+    let mut stack: Vec<P> = in_deg
+        .iter()
+        .filter(|&(_, &d)| d == 0)
+        .map(|(&p, _)| p)
+        .collect();
     let mut topo = Vec::new();
     while let Some(p) = stack.pop() {
         topo.push(p);
@@ -163,7 +167,11 @@ where
             } else {
                 // Otherwise, height is 1 + max height of predecessors
                 // This computes the height as the maximum height of incoming points plus one.
-                1 + ins.iter().map(|(pred, _)| *height.get(pred).unwrap_or(&0)).max().unwrap_or(0)
+                1 + ins
+                    .iter()
+                    .map(|(pred, _)| *height.get(pred).unwrap_or(&0))
+                    .max()
+                    .unwrap_or(0)
             }
         } else {
             0
@@ -173,9 +181,11 @@ where
     // Compute strata
     let mut max_h = 0;
     // Find the maximum height to determine the number of strata
-    for &h in height.values() { max_h = max_h.max(h); }
+    for &h in height.values() {
+        max_h = max_h.max(h);
+    }
     // Initialize strata as a vector of empty vectors, one for each height level
-    let mut strata = vec![Vec::new(); (max_h+1) as usize];
+    let mut strata = vec![Vec::new(); (max_h + 1) as usize];
     // Populate strata with points grouped by their height
     for (&p, &h) in &height {
         strata[h as usize].push(p);
@@ -205,16 +215,23 @@ where
         };
         depth.insert(p, d);
     }
-    StrataCache { height, depth, strata, diameter }
+    StrataCache {
+        height,
+        depth,
+        strata,
+        diameter,
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::topology::sieve::{InMemorySieve, Sieve};
     use crate::topology::point::PointId;
+    use crate::topology::sieve::{InMemorySieve, Sieve};
     use crate::topology::stratum::StratumHelpers;
 
-    fn v(i: u64) -> PointId { PointId::new(i) }
+    fn v(i: u64) -> PointId {
+        PointId::new(i)
+    }
 
     #[test]
     fn tetrahedral_block_heights_and_strata() {
@@ -225,25 +242,47 @@ mod tests {
         // verts: 1,2,3,4
         let mut s = InMemorySieve::<PointId, ()>::default();
         // cell -> faces
-        for f in [v(20), v(21), v(22), v(23)] { s.add_arrow(v(10), f, ()); }
+        for f in [v(20), v(21), v(22), v(23)] {
+            s.add_arrow(v(10), f, ());
+        }
         // faces -> edges
-        s.add_arrow(v(20), v(30), ()); s.add_arrow(v(20), v(31), ()); s.add_arrow(v(20), v(32), ());
-        s.add_arrow(v(21), v(32), ()); s.add_arrow(v(21), v(33), ()); s.add_arrow(v(21), v(34), ());
-        s.add_arrow(v(22), v(34), ()); s.add_arrow(v(22), v(35), ()); s.add_arrow(v(22), v(30), ());
-        s.add_arrow(v(23), v(31), ()); s.add_arrow(v(23), v(33), ()); s.add_arrow(v(23), v(35), ());
+        s.add_arrow(v(20), v(30), ());
+        s.add_arrow(v(20), v(31), ());
+        s.add_arrow(v(20), v(32), ());
+        s.add_arrow(v(21), v(32), ());
+        s.add_arrow(v(21), v(33), ());
+        s.add_arrow(v(21), v(34), ());
+        s.add_arrow(v(22), v(34), ());
+        s.add_arrow(v(22), v(35), ());
+        s.add_arrow(v(22), v(30), ());
+        s.add_arrow(v(23), v(31), ());
+        s.add_arrow(v(23), v(33), ());
+        s.add_arrow(v(23), v(35), ());
         // edges -> verts
-        s.add_arrow(v(30), v(1), ()); s.add_arrow(v(30), v(2), ());
-        s.add_arrow(v(31), v(1), ()); s.add_arrow(v(31), v(3), ());
-        s.add_arrow(v(32), v(1), ()); s.add_arrow(v(32), v(4), ());
-        s.add_arrow(v(33), v(2), ()); s.add_arrow(v(33), v(3), ());
-        s.add_arrow(v(34), v(2), ()); s.add_arrow(v(34), v(4), ());
-        s.add_arrow(v(35), v(3), ()); s.add_arrow(v(35), v(4), ());
+        s.add_arrow(v(30), v(1), ());
+        s.add_arrow(v(30), v(2), ());
+        s.add_arrow(v(31), v(1), ());
+        s.add_arrow(v(31), v(3), ());
+        s.add_arrow(v(32), v(1), ());
+        s.add_arrow(v(32), v(4), ());
+        s.add_arrow(v(33), v(2), ());
+        s.add_arrow(v(33), v(3), ());
+        s.add_arrow(v(34), v(2), ());
+        s.add_arrow(v(34), v(4), ());
+        s.add_arrow(v(35), v(3), ());
+        s.add_arrow(v(35), v(4), ());
 
         // Heights: cell=0, faces=1, edges=2, verts=3
         assert_eq!(s.height(v(10)), 0);
-        for f in [20,21,22,23] { assert_eq!(s.height(v(f)), 1); }
-        for e in [30,31,32,33,34,35] { assert_eq!(s.height(v(e)), 2); }
-        for vert in [1,2,3,4] { assert_eq!(s.height(v(vert)), 3); }
+        for f in [20, 21, 22, 23] {
+            assert_eq!(s.height(v(f)), 1);
+        }
+        for e in [30, 31, 32, 33, 34, 35] {
+            assert_eq!(s.height(v(e)), 2);
+        }
+        for vert in [1, 2, 3, 4] {
+            assert_eq!(s.height(v(vert)), 3);
+        }
         // Diameter
         assert_eq!(s.diameter(), 3);
         // Strata
@@ -293,22 +332,42 @@ mod tests {
         // verts: 1..=6 (6 is hanging)
         let mut s = InMemorySieve::<PointId, ()>::default();
         // Tet 10: faces 20,21,22,23
-        for f in [v(20), v(21), v(22), v(23)] { s.add_arrow(v(10), f, ()); }
+        for f in [v(20), v(21), v(22), v(23)] {
+            s.add_arrow(v(10), f, ());
+        }
         // Tet 11: faces 20,24,25,23
-        for f in [v(20), v(24), v(25), v(23)] { s.add_arrow(v(11), f, ()); }
+        for f in [v(20), v(24), v(25), v(23)] {
+            s.add_arrow(v(11), f, ());
+        }
         // Faces to edges (arbitrary but consistent)
         for (f, es) in [
-            (20, [30,31,32]), (21, [32,33,34]), (22, [34,35,30]), (23, [31,35,36]),
-            (24, [36,37,38]), (25, [38,39,31])
+            (20, [30, 31, 32]),
+            (21, [32, 33, 34]),
+            (22, [34, 35, 30]),
+            (23, [31, 35, 36]),
+            (24, [36, 37, 38]),
+            (25, [38, 39, 31]),
         ] {
-            for e in es { s.add_arrow(v(f), v(e), ()); }
+            for e in es {
+                s.add_arrow(v(f), v(e), ());
+            }
         }
         // Edges to verts
         for (e, vs) in [
-            (30, [1,2]), (31, [2,3]), (32, [3,4]), (33, [4,1]), (34, [1,5]),
-            (35, [5,2]), (36, [3,5]), (37, [5,6]), (38, [6,2]), (39, [6,4])
+            (30, [1, 2]),
+            (31, [2, 3]),
+            (32, [3, 4]),
+            (33, [4, 1]),
+            (34, [1, 5]),
+            (35, [5, 2]),
+            (36, [3, 5]),
+            (37, [5, 6]),
+            (38, [6, 2]),
+            (39, [6, 4]),
         ] {
-            for vtx in vs { s.add_arrow(v(e), v(vtx), ()); }
+            for vtx in vs {
+                s.add_arrow(v(e), v(vtx), ());
+            }
         }
         // Heights
         assert_eq!(s.height(v(10)), 0);

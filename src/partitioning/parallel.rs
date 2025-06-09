@@ -1,8 +1,8 @@
-use rayon::prelude::*;
-use rand::rngs::SmallRng;
-use rand::SeedableRng;
-use std::cell::RefCell;
 use ahash::AHasher;
+use rand::SeedableRng;
+use rand::rngs::SmallRng;
+use rayon::prelude::*;
+use std::cell::RefCell;
 use std::hash::Hasher;
 
 thread_local! {
@@ -28,7 +28,9 @@ where
 {
     THREAD_RNG.with(|cell| {
         let mut opt = cell.borrow_mut();
-        let rng = opt.as_mut().expect("Thread‐local RNG not initialized: call init_thread_rng() first");
+        let rng = opt
+            .as_mut()
+            .expect("Thread‐local RNG not initialized: call init_thread_rng() first");
         f(rng)
     })
 }

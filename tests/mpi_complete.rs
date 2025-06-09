@@ -1,8 +1,8 @@
 //! Serial test for parallel topology completion (P1.1)
+use sieve_rs::algs::completion::complete_sieve;
+use sieve_rs::overlap::overlap::{Overlap, Remote};
 use sieve_rs::topology::point::PointId;
 use sieve_rs::topology::sieve::{InMemorySieve, Sieve};
-use sieve_rs::overlap::overlap::{Overlap, Remote};
-use sieve_rs::algs::completion::complete_sieve;
 
 #[test]
 fn two_rank_tetra_completion() {
@@ -20,14 +20,56 @@ fn two_rank_tetra_completion() {
     let f5 = PointId::new(8);
     // Rank 0 sieve
     let mut sieve0 = InMemorySieve::default();
-    sieve0.add_arrow(cell0, f0, Remote { rank: 0, remote_point: f0 });
-    sieve0.add_arrow(cell0, f1, Remote { rank: 0, remote_point: f1 });
-    sieve0.add_arrow(cell0, f2, Remote { rank: 0, remote_point: f2 });
+    sieve0.add_arrow(
+        cell0,
+        f0,
+        Remote {
+            rank: 0,
+            remote_point: f0,
+        },
+    );
+    sieve0.add_arrow(
+        cell0,
+        f1,
+        Remote {
+            rank: 0,
+            remote_point: f1,
+        },
+    );
+    sieve0.add_arrow(
+        cell0,
+        f2,
+        Remote {
+            rank: 0,
+            remote_point: f2,
+        },
+    );
     // Rank 1 sieve
     let mut sieve1 = InMemorySieve::default();
-    sieve1.add_arrow(cell1, f3, Remote { rank: 1, remote_point: f3 });
-    sieve1.add_arrow(cell1, f4, Remote { rank: 1, remote_point: f4 });
-    sieve1.add_arrow(cell1, f5, Remote { rank: 1, remote_point: f5 });
+    sieve1.add_arrow(
+        cell1,
+        f3,
+        Remote {
+            rank: 1,
+            remote_point: f3,
+        },
+    );
+    sieve1.add_arrow(
+        cell1,
+        f4,
+        Remote {
+            rank: 1,
+            remote_point: f4,
+        },
+    );
+    sieve1.add_arrow(
+        cell1,
+        f5,
+        Remote {
+            rank: 1,
+            remote_point: f5,
+        },
+    );
     // Overlap: shared face mapping
     let mut ovlp0 = Overlap::default();
     ovlp0.add_link(f0, 1, f3);
@@ -45,9 +87,23 @@ fn two_rank_tetra_completion() {
     // Simulate MPI exchange: add remote arrows for shared faces
     for &(local, remote) in &[(f0, f3), (f1, f4), (f2, f5)] {
         // Add to sieve0: cell0 -> remote
-        sieve0.add_arrow(cell0, remote, Remote { rank: 1, remote_point: remote });
+        sieve0.add_arrow(
+            cell0,
+            remote,
+            Remote {
+                rank: 1,
+                remote_point: remote,
+            },
+        );
         // Add to sieve1: cell1 -> local
-        sieve1.add_arrow(cell1, local, Remote { rank: 0, remote_point: local });
+        sieve1.add_arrow(
+            cell1,
+            local,
+            Remote {
+                rank: 0,
+                remote_point: local,
+            },
+        );
     }
     sieve0.strata.take();
     sieve1.strata.take();

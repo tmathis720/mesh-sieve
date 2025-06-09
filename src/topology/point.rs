@@ -24,7 +24,9 @@ use std::{fmt, num::NonZeroU64};
 /// This type is `repr(transparent)`, meaning it has the same ABI and
 /// alignment as its single field (`NonZeroU64`) and can be passed to FFI
 /// exactly like a `u64`.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 #[repr(transparent)]
 pub struct PointId(NonZeroU64);
 

@@ -4,10 +4,10 @@
 //! All handles are **waitable** but non-blocking -– completion.rs calls
 //! `.wait()` before it trusts that the buffer is ready.
 
-use std::sync::{Arc, Mutex};
-use dashmap::DashMap;
 use bytes::Bytes;
+use dashmap::DashMap;
 use once_cell::sync::Lazy;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 /// Non-blocking communication interface (minimal by design).
@@ -21,7 +21,9 @@ pub trait Communicator: Send + Sync + 'static {
     fn irecv(&self, peer: usize, tag: u16, buf: &mut [u8]) -> Self::RecvHandle;
 
     /// Returns true if this communicator is NoComm (for test logic)
-    fn is_no_comm(&self) -> bool { false }
+    fn is_no_comm(&self) -> bool {
+        false
+    }
 }
 
 /// Anything that can be waited on.
@@ -35,16 +37,24 @@ pub trait Wait {
 pub struct NoComm;
 
 impl Wait for () {
-    fn wait(self) -> Option<Vec<u8>> { None }
+    fn wait(self) -> Option<Vec<u8>> {
+        None
+    }
 }
 
 impl Communicator for NoComm {
     type SendHandle = ();
     type RecvHandle = ();
 
-    fn isend(&self, _peer: usize, _tag: u16, _buf: &[u8]) -> () { () }
-    fn irecv(&self, _peer: usize, _tag: u16, _buf: &mut [u8]) -> () { () }
-    fn is_no_comm(&self) -> bool { true }
+    fn isend(&self, _peer: usize, _tag: u16, _buf: &[u8]) -> () {
+        ()
+    }
+    fn irecv(&self, _peer: usize, _tag: u16, _buf: &mut [u8]) -> () {
+        ()
+    }
+    fn is_no_comm(&self) -> bool {
+        true
+    }
 }
 
 // --- RayonComm: intra-process / multi-thread ---
@@ -73,7 +83,9 @@ pub struct RayonComm {
 }
 
 impl RayonComm {
-    pub fn new(rank: usize) -> Self { Self { rank } }
+    pub fn new(rank: usize) -> Self {
+        Self { rank }
+    }
 }
 
 impl Communicator for RayonComm {
@@ -101,18 +113,21 @@ impl Communicator for RayonComm {
                 std::thread::yield_now();
             }
         });
-        LocalHandle { buf: buf_arc, handle: Some(handle) }
+        LocalHandle {
+            buf: buf_arc,
+            handle: Some(handle),
+        }
     }
 }
 
 // --- MPI backend ---
 mod mpi_backend {
     use super::*;
-    use mpi::traits::*;
-    use mpi::topology::{SimpleCommunicator, Communicator as _};
-    use mpi::request::{StaticScope};
-    use mpi::request::Request;
     use mpi::environment::Universe;
+    use mpi::request::Request;
+    use mpi::request::StaticScope;
+    use mpi::topology::{Communicator as _, SimpleCommunicator};
+    use mpi::traits::*;
 
     pub struct MpiComm {
         _universe: Universe, // keep alive until drop
@@ -125,7 +140,11 @@ mod mpi_backend {
             let universe = mpi::initialize().unwrap();
             let world = universe.world();
             let rank = world.rank() as usize;
-            MpiComm { _universe: universe, world, rank }
+            MpiComm {
+                _universe: universe,
+                world,
+                rank,
+            }
         }
     }
 
@@ -148,8 +167,7 @@ mod mpi_backend {
         type RecvHandle = MpiHandle;
 
         fn isend(&self, peer: usize, _tag: u16, buf: &[u8]) -> () {
-            self.world.process_at_rank(peer as i32)
-                .send(buf);
+            self.world.process_at_rank(peer as i32).send(buf);
         }
 
         fn irecv(&self, peer: usize, _tag: u16, buf: &mut [u8]) -> MpiHandle {
@@ -158,7 +176,9 @@ mod mpi_backend {
             unsafe { v.set_len(len) };
             let static_buf: &'static mut [u8] = Box::leak(v.into_boxed_slice());
             let buf_ptr = static_buf as *mut [u8];
-            let req = self.world.process_at_rank(peer as i32)
+            let req = self
+                .world
+                .process_at_rank(peer as i32)
                 .immediate_receive_into(StaticScope, unsafe { &mut *buf_ptr });
             MpiHandle { req, buf: buf_ptr }
         }
@@ -184,7 +204,7 @@ mod tests {
         let recv_handle = comm1.irecv(0, 7, &mut recv_buf);
 
         // On rank 0: send the 4 bytes [1,2,3,4] to peer 1 with tag 7
-        let send_handle = comm0.isend(1, 7, &[1,2,3,4]);
+        let send_handle = comm0.isend(1, 7, &[1, 2, 3, 4]);
 
         // Wait for the send to “complete” (it's a no-op for RayonComm::SendHandle=()):
         send_handle.wait();
@@ -196,7 +216,7 @@ mod tests {
         recv_buf.copy_from_slice(&data);
 
         // Verify
-        assert_eq!(&recv_buf, &[1,2,3,4]);
+        assert_eq!(&recv_buf, &[1, 2, 3, 4]);
     }
 
     #[test]
@@ -215,6 +235,10 @@ mod tests {
         let s = comm.isend(nbr_send, 9, &[comm.rank as u8]);
         s.wait();
         r.wait();
-        assert_eq!(recv[0], nbr_recv as u8, "Rank {} expected to receive {} from {} but got {}", comm.rank, nbr_recv as u8, nbr_recv, recv[0]);
+        assert_eq!(
+            recv[0], nbr_recv as u8,
+            "Rank {} expected to receive {} from {} but got {}",
+            comm.rank, nbr_recv as u8, nbr_recv, recv[0]
+        );
     }
 }

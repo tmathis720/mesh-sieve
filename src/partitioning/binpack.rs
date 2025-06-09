@@ -1,6 +1,6 @@
+use rayon::prelude::*;
 use std::cmp::Reverse;
 use std::sync::atomic::{AtomicU64, Ordering};
-use rayon::prelude::*;
 
 // Ensure rand and ahash are available as dependencies in Cargo.toml
 // rand = { version = "0.8", features = ["std"], optional = true }
@@ -34,9 +34,7 @@ pub fn partition_clusters(items: &[Item], k: usize, epsilon: f64) -> Vec<usize> 
     order.par_sort_unstable_by_key(|&i| Reverse(items[i].load));
 
     // 3. Create `k` buckets, each with an atomic load counter initialized to 0.
-    let buckets: Vec<AtomicU64> = (0..k)
-        .map(|_| AtomicU64::new(0))
-        .collect();
+    let buckets: Vec<AtomicU64> = (0..k).map(|_| AtomicU64::new(0)).collect();
 
     // 4. Prepare the output vector: cluster_id → part_id.
     let mut cluster_to_part = vec![0; n];
@@ -93,10 +91,26 @@ mod tests {
     #[test]
     fn simple_binpack_test() {
         let items = vec![
-            Item { cid: 0, load: 10, adj: vec![] },
-            Item { cid: 1, load: 20, adj: vec![] },
-            Item { cid: 2, load: 5,  adj: vec![] },
-            Item { cid: 3, load: 15, adj: vec![] },
+            Item {
+                cid: 0,
+                load: 10,
+                adj: vec![],
+            },
+            Item {
+                cid: 1,
+                load: 20,
+                adj: vec![],
+            },
+            Item {
+                cid: 2,
+                load: 5,
+                adj: vec![],
+            },
+            Item {
+                cid: 3,
+                load: 15,
+                adj: vec![],
+            },
         ];
 
         let parts = partition_clusters(&items, 2, 0.05);
@@ -126,8 +140,16 @@ mod tests {
     #[test]
     fn many_buckets_few_items() {
         let items = vec![
-            Item { cid: 0, load: 7, adj: vec![] },
-            Item { cid: 1, load: 3, adj: vec![] },
+            Item {
+                cid: 0,
+                load: 7,
+                adj: vec![],
+            },
+            Item {
+                cid: 1,
+                load: 3,
+                adj: vec![],
+            },
         ];
 
         let parts = partition_clusters(&items, 2, 2.0); // Allow up to 3x imbalance

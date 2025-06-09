@@ -14,10 +14,12 @@ pub trait PartitionableGraph: Sync {
     type VertexId: Copy + Hash + Eq + Send + Sync;
     /// Parallel iterator over all vertices.
     type VertexParIter<'a>: IndexedParallelIterator<Item = Self::VertexId> + 'a
-    where Self: 'a;
+    where
+        Self: 'a;
     /// Parallel iterator over neighbors.
     type NeighParIter<'a>: ParallelIterator<Item = Self::VertexId> + 'a
-    where Self: 'a;
+    where
+        Self: 'a;
 
     /// Returns a parallel, indexable iterator over all vertices.
     fn vertices(&self) -> Self::VertexParIter<'_>;
@@ -46,7 +48,7 @@ pub trait PartitionableGraph: Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rayon::iter::{IntoParallelIterator};
+    use rayon::iter::IntoParallelIterator;
     use std::collections::HashMap;
 
     /// Simple in-memory undirected graph for testing.

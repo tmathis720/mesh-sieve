@@ -1,9 +1,9 @@
 #![cfg(feature = "partitioning")]
 
-use crate::partitioning::graph_traits::PartitionableGraph;
 use crate::partitioning::PartitionerConfig;
-use rayon::iter::ParallelIterator;
+use crate::partitioning::graph_traits::PartitionableGraph;
 use rayon::iter::IntoParallelIterator;
+use rayon::iter::ParallelIterator;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -24,10 +24,7 @@ impl Cluster {
     }
 }
 
-pub fn louvain_cluster<G>(
-    graph: &G,
-    cfg: &PartitionerConfig,
-) -> Vec<u32>
+pub fn louvain_cluster<G>(graph: &G, cfg: &PartitionerConfig) -> Vec<u32>
 where
     G: PartitionableGraph<VertexId = usize> + Sync,
 {
@@ -35,18 +32,18 @@ where
     if n == 0 {
         return Vec::new();
     }
-    let degrees: Vec<u64> = graph
-        .vertices()
-        .map(|u| graph.degree(u) as u64)
-        .collect();
+    let degrees: Vec<u64> = graph.vertices().map(|u| graph.degree(u) as u64).collect();
     // NOTE: PartitionableGraph does not require an edges() method, so we reconstruct edges from neighbors.
-    let all_edges: Vec<(usize, usize)> = graph.vertices().flat_map(|u| {
-        graph.neighbors(u).filter_map(move |v| if u < v { Some((u, v)) } else { None })
-    }).collect();
-    let m_f64: f64 = (all_edges.len() as u64 / 2) as f64;
-    let cluster_ids: Vec<AtomicU32> = (0..n)
-        .map(|u| AtomicU32::new(u as u32))
+    let all_edges: Vec<(usize, usize)> = graph
+        .vertices()
+        .flat_map(|u| {
+            graph
+                .neighbors(u)
+                .filter_map(move |v| if u < v { Some((u, v)) } else { None })
+        })
         .collect();
+    let m_f64: f64 = (all_edges.len() as u64 / 2) as f64;
+    let cluster_ids: Vec<AtomicU32> = (0..n).map(|u| AtomicU32::new(u as u32)).collect();
     let mut clusters: HashMap<u32, Cluster> = HashMap::with_capacity(n);
     for u in 0..n {
         let vid = u as u32;
@@ -196,8 +193,8 @@ mod tests {
         };
         let allowed = ((cfg.seed_factor * cfg.n_parts as f64).ceil() as u32).max(1);
         assert!(
-            (unique_clusters.len() as u32 <= pg.n as u32) &&
-            (unique_clusters.len() as u32 >= allowed),
+            (unique_clusters.len() as u32 <= pg.n as u32)
+                && (unique_clusters.len() as u32 >= allowed),
             "Unexpected number of clusters: {} (expected between {} and {}, clustering = {:?})",
             unique_clusters.len(),
             allowed,

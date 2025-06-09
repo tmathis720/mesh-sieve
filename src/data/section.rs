@@ -34,9 +34,8 @@ impl<V: Clone + Default> Section<V> {
     #[inline]
     pub fn restrict(&self, p: PointId) -> &[V] {
         // Look up offset and length in the atlas.
-        let (offset, len) = self.atlas.get(p)
-            .expect("PointId not found in atlas");
-        &self.data[offset .. offset + len]
+        let (offset, len) = self.atlas.get(p).expect("PointId not found in atlas");
+        &self.data[offset..offset + len]
     }
 
     /// Mutable view of the data slice for a given point `p`.
@@ -45,9 +44,8 @@ impl<V: Clone + Default> Section<V> {
     /// Panics if `p` is not registered in the atlas.
     #[inline]
     pub fn restrict_mut(&mut self, p: PointId) -> &mut [V] {
-        let (offset, len) = self.atlas.get(p)
-            .expect("PointId not found in atlas");
-        &mut self.data[offset .. offset + len]
+        let (offset, len) = self.atlas.get(p).expect("PointId not found in atlas");
+        &mut self.data[offset..offset + len]
     }
 
     /// Overwrite the data slice at point `p` with the values in `val`.
@@ -56,8 +54,11 @@ impl<V: Clone + Default> Section<V> {
     /// Panics if the length of `val` does not match the slice length for `p`.
     pub fn set(&mut self, p: PointId, val: &[V]) {
         let target = self.restrict_mut(p);
-        assert_eq!(target.len(), val.len(),
-            "Input slice length must match point's DOF count");
+        assert_eq!(
+            target.len(),
+            val.len(),
+            "Input slice length must match point's DOF count"
+        );
         // Clone values into the section's buffer.
         target.clone_from_slice(val);
     }
@@ -67,7 +68,8 @@ impl<V: Clone + Default> Section<V> {
     /// Useful for serializing or visiting all data in a deterministic order.
     pub fn iter<'s>(&'s self) -> impl Iterator<Item = (PointId, &'s [V])> {
         // Use the atlas's point order for deterministic iteration.
-        self.atlas.points()
+        self.atlas
+            .points()
             .map(move |pid| (pid, self.restrict(pid)))
     }
 }
@@ -81,16 +83,12 @@ impl<V: Clone + Send> Section<V> {
     /// # Panics
     /// Panics if `other` length does not match expected total length or if
     /// chunk sizes mismatch.
-    pub fn scatter_from(&mut self,
-                        other: &[V],
-                        atlas_map: &[(usize, usize)])
-    {
+    pub fn scatter_from(&mut self, other: &[V], atlas_map: &[(usize, usize)]) {
         let mut start = 0;
         for (offset, len) in atlas_map.iter() {
             let end = start + *len;
             let chunk = &other[start..end];
-            self.data[*offset .. offset + *len]
-                .clone_from_slice(chunk);
+            self.data[*offset..offset + *len].clone_from_slice(chunk);
             start = end;
         }
     }
@@ -126,9 +124,9 @@ impl<V: Clone + Default> Map<V> for Section<V> {
 mod tests {
     use super::*;
     use crate::data::atlas::Atlas;
-    use crate::topology::point::PointId;
     #[cfg(feature = "data_refine")]
     use crate::data::refine::{restrict_closure_vec, restrict_star_vec};
+    use crate::topology::point::PointId;
 
     fn make_section() -> Section<f64> {
         let mut atlas = Atlas::default();
@@ -140,23 +138,21 @@ mod tests {
     #[test]
     fn restrict_and_set() {
         let mut s = make_section();
-        s.set(PointId::new(1), &[1.0,2.0]);
+        s.set(PointId::new(1), &[1.0, 2.0]);
         s.set(PointId::new(2), &[3.5]);
 
-        assert_eq!(s.restrict(PointId::new(1)), &[1.0,2.0]);
+        assert_eq!(s.restrict(PointId::new(1)), &[1.0, 2.0]);
         assert_eq!(s.restrict(PointId::new(2)), &[3.5]);
     }
 
     #[test]
     fn iter_order() {
         let mut s = make_section();
-        s.set(PointId::new(1), &[9.0,8.0]);
+        s.set(PointId::new(1), &[9.0, 8.0]);
         s.set(PointId::new(2), &[7.0]);
 
-        let collected: Vec<_> = s.iter()
-                                 .map(|(_,sl)| sl[0])
-                                 .collect();
-        assert_eq!(collected, vec![9.0,7.0]); // atlas order
+        let collected: Vec<_> = s.iter().map(|(_, sl)| sl[0]).collect();
+        assert_eq!(collected, vec![9.0, 7.0]); // atlas order
     }
 
     #[cfg(feature = "data_refine")]
@@ -164,19 +160,26 @@ mod tests {
     fn map_trait_section_get_and_mut() {
         use super::Map;
         let mut s = make_section();
-        s.set(PointId::new(1), &[1.0,2.0]);
+        s.set(PointId::new(1), &[1.0, 2.0]);
         s.set(PointId::new(2), &[3.5]);
         // get == restrict
-        assert_eq!(<Section<f64> as Map<f64>>::get(&s, PointId::new(1)), s.restrict(PointId::new(1)));
+        assert_eq!(
+            <Section<f64> as Map<f64>>::get(&s, PointId::new(1)),
+            s.restrict(PointId::new(1))
+        );
         // get_mut returns Some for Section
         assert!(<Section<f64> as Map<f64>>::get_mut(&mut s, PointId::new(1)).is_some());
     }
 
     #[cfg(feature = "data_refine")]
-    struct ReadOnlyMap<'a, V: Clone + Default> { section: &'a Section<V> }
+    struct ReadOnlyMap<'a, V: Clone + Default> {
+        section: &'a Section<V>,
+    }
     #[cfg(feature = "data_refine")]
     impl<'a, V: Clone + Default> Map<V> for ReadOnlyMap<'a, V> {
-        fn get(&self, p: PointId) -> &[V] { self.section.restrict(p) }
+        fn get(&self, p: PointId) -> &[V] {
+            self.section.restrict(p)
+        }
         // get_mut left as default (None)
     }
     #[cfg(feature = "data_refine")]
@@ -232,4 +235,3 @@ mod tests {
 
 #[cfg(feature = "data_refine")]
 pub use crate::data::refine::Sifter;
-

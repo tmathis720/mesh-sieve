@@ -5,8 +5,8 @@
 //! for packing degrees‐of‐freedom (DOFs) or other per‐point data into a
 //! single contiguous `Vec` for efficient storage and communication.
 
-use std::collections::HashMap;
 use crate::topology::point::PointId;
+use std::collections::HashMap;
 
 /// `Atlas` maintains:
 /// - a lookup `map` from each `PointId` to its `(offset, len)` in the
@@ -89,7 +89,6 @@ impl Atlas {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,10 +104,10 @@ mod tests {
         let off2 = a.insert(p2, 5);
         assert_eq!(off2, 3);
 
-        assert_eq!(a.get(p1), Some((0,3)));
-        assert_eq!(a.get(p2), Some((3,5)));
+        assert_eq!(a.get(p1), Some((0, 3)));
+        assert_eq!(a.get(p2), Some((3, 5)));
         assert_eq!(a.total_len(), 8);
-        assert_eq!(a.points().collect::<Vec<_>>(), vec![p1,p2]);
+        assert_eq!(a.points().collect::<Vec<_>>(), vec![p1, p2]);
     }
 
     #[test]

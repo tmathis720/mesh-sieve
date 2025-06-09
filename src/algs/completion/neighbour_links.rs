@@ -1,10 +1,10 @@
 //! Build the peer→(my_pt, their_pt) map for section completion.
 
-use std::collections::HashMap;
 use crate::data::section::Section;
 use crate::overlap::overlap::Overlap;
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
+use std::collections::HashMap;
 
 /// Given your local section, the overlap graph, and your rank,
 /// returns for each neighbor rank the list of `(local_point, remote_point)`
@@ -20,9 +20,7 @@ pub fn neighbour_links<V: Clone + Default>(
         has_owned = true;
         for (_dst, rem) in ovlp.cone(p) {
             if rem.rank != my_rank {
-                out.entry(rem.rank)
-                   .or_default()
-                   .push((p, rem.remote_point));
+                out.entry(rem.rank).or_default().push((p, rem.remote_point));
             }
         }
     }
@@ -35,7 +33,9 @@ pub fn neighbour_links<V: Clone + Default>(
                     let mut owner_rank = None;
                     if let Some(owner_rems) = ovlp.adjacency_out.get(src) {
                         for (_dst, owner_rem) in owner_rems {
-                            if owner_rem.remote_point == rem.remote_point && owner_rem.rank != my_rank {
+                            if owner_rem.remote_point == rem.remote_point
+                                && owner_rem.rank != my_rank
+                            {
                                 owner_rank = Some(owner_rem.rank);
                                 break;
                             }
@@ -83,7 +83,14 @@ mod tests {
         let mut ovlp = InMemorySieve::<PointId, Remote>::default();
         for (&src, &dst) in owned.iter().zip(ghosted.iter()) {
             // Owner's point src is ghosted to ghost's dst
-            ovlp.add_arrow(PointId::new(src), PointId::new(dst), Remote { rank: ghost, remote_point: PointId::new(dst) });
+            ovlp.add_arrow(
+                PointId::new(src),
+                PointId::new(dst),
+                Remote {
+                    rank: ghost,
+                    remote_point: PointId::new(dst),
+                },
+            );
         }
         ovlp
     }
@@ -121,10 +128,24 @@ mod tests {
     #[test]
     fn multiple_neighbors() {
         // Rank 0 owns 1,2, ghosted to rank 1 as 101, rank 2 as 201
-        let section = make_section(&[1,2]);
+        let section = make_section(&[1, 2]);
         let mut ovlp = InMemorySieve::<PointId, Remote>::default();
-        ovlp.add_arrow(PointId::new(1), PointId::new(101), Remote { rank: 1, remote_point: PointId::new(101) });
-        ovlp.add_arrow(PointId::new(2), PointId::new(201), Remote { rank: 2, remote_point: PointId::new(201) });
+        ovlp.add_arrow(
+            PointId::new(1),
+            PointId::new(101),
+            Remote {
+                rank: 1,
+                remote_point: PointId::new(101),
+            },
+        );
+        ovlp.add_arrow(
+            PointId::new(2),
+            PointId::new(201),
+            Remote {
+                rank: 2,
+                remote_point: PointId::new(201),
+            },
+        );
         let links = neighbour_links(&section, &ovlp, 0);
         assert_eq!(links.len(), 2);
         assert_eq!(links[&1], vec![(PointId::new(1), PointId::new(101))]);

@@ -1,18 +1,14 @@
-use crate::partitioning::graph_traits::PartitionableGraph;
 use crate::partitioning::PartitionerConfig;
-use rayon::iter::ParallelIterator;
-use rayon::iter::IntoParallelIterator;
+use crate::partitioning::graph_traits::PartitionableGraph;
 use rand::Rng;
-use rand::rngs::SmallRng;
 use rand::SeedableRng;
+use rand::rngs::SmallRng;
+use rayon::iter::IntoParallelIterator;
+use rayon::iter::ParallelIterator;
 
 /// Returns a Vec<VertexId> of length `num_seeds = ceil(cfg.seed_factor * cfg.n_parts)`,
 /// chosen *without replacement*, weighted by degree.  Assumes `VertexId = usize`.
-pub fn pick_seeds<G>(
-    graph: &G,
-    degrees: &[u64],
-    cfg: &PartitionerConfig,
-) -> Vec<G::VertexId>
+pub fn pick_seeds<G>(graph: &G, degrees: &[u64], cfg: &PartitionerConfig) -> Vec<G::VertexId>
 where
     G: PartitionableGraph<VertexId = usize> + Sync,
 {
@@ -20,7 +16,9 @@ where
     if n == 0 {
         return Vec::new();
     }
-    let num_seeds = ((cfg.seed_factor * cfg.n_parts as f64).ceil() as usize).min(n).max(1);
+    let num_seeds = ((cfg.seed_factor * cfg.n_parts as f64).ceil() as usize)
+        .min(n)
+        .max(1);
 
     // ——— FIX: collect the iterator into a Vec<usize> ———
     let vertices: Vec<usize> = graph.vertices().collect();

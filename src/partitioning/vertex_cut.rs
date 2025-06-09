@@ -1,11 +1,11 @@
-use crate::partitioning::graph_traits::PartitionableGraph;
 use crate::partitioning::PartitionMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use parking_lot::Mutex;
+use crate::partitioning::graph_traits::PartitionableGraph;
 use ahash::AHasher;
-use rayon::prelude::*; // brings IntoParallelIterator, ParallelIterator, etc.
+use parking_lot::Mutex;
 use rayon::iter::IntoParallelIterator;
+use rayon::prelude::*; // brings IntoParallelIterator, ParallelIterator, etc.
 use std::hash::Hasher;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// For each edge `(u, v)` in the graph where `pm.part_of(u) != pm.part_of(v)`,
 /// choose a “primary owner” of that edge (by hashing `(u,v)` with a salt),
@@ -25,9 +25,7 @@ where
     let n = graph.vertices().count();
 
     // 2. Allocate primary_part array, default = usize::MAX
-    let mut primary_part: Vec<AtomicUsize> = (0..n)
-        .map(|_| AtomicUsize::new(usize::MAX))
-        .collect();
+    let mut primary_part: Vec<AtomicUsize> = (0..n).map(|_| AtomicUsize::new(usize::MAX)).collect();
 
     // 3. Allocate one Mutex<Vec<...>> per vertex for its replicas
     let replica_lists: Vec<Mutex<Vec<(G::VertexId, usize)>>> =
@@ -35,7 +33,7 @@ where
 
     // 4. Parallel edge sweep: for each u, for each neighbor v where u < v
     graph
-        .vertices()               // yields a parallel iterator over VertexId
+        .vertices() // yields a parallel iterator over VertexId
         .into_par_iter()
         .for_each(|u| {
             // For each neighbor v of u (owned Vec<usize>), iterate in parallel
@@ -118,15 +116,19 @@ mod tests {
             (0..self.n).collect::<Vec<_>>().into_par_iter()
         }
         fn neighbors(&self, v: usize) -> Self::NeighParIter<'_> {
-            self.edges.iter().filter_map(|&(a, b)| {
-                if a == v {
-                    Some(b)
-                } else if b == v {
-                    Some(a)
-                } else {
-                    None
-                }
-            }).collect::<Vec<_>>().into_par_iter()
+            self.edges
+                .iter()
+                .filter_map(|&(a, b)| {
+                    if a == v {
+                        Some(b)
+                    } else if b == v {
+                        Some(a)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .into_par_iter()
         }
         fn degree(&self, v: usize) -> usize {
             self.neighbors(v).count()
@@ -154,13 +156,21 @@ mod tests {
         // Edges (1–2) and (3–0) cross parts
         // Accept either direction of ghosting due to hash-based owner selection
         assert!(
-            replicas[1].iter().any(|&(n, p)| n == 2 && (p == 0 || p == 1)) ||
-            replicas[2].iter().any(|&(n, p)| n == 1 && (p == 0 || p == 1)),
+            replicas[1]
+                .iter()
+                .any(|&(n, p)| n == 2 && (p == 0 || p == 1))
+                || replicas[2]
+                    .iter()
+                    .any(|&(n, p)| n == 1 && (p == 0 || p == 1)),
             "Expected a ghost edge between 1 and 2"
         );
         assert!(
-            replicas[3].iter().any(|&(n, p)| n == 0 && (p == 0 || p == 1)) ||
-            replicas[0].iter().any(|&(n, p)| n == 3 && (p == 0 || p == 1)),
+            replicas[3]
+                .iter()
+                .any(|&(n, p)| n == 0 && (p == 0 || p == 1))
+                || replicas[0]
+                    .iter()
+                    .any(|&(n, p)| n == 3 && (p == 0 || p == 1)),
             "Expected a ghost edge between 3 and 0"
         );
     }
@@ -187,7 +197,10 @@ mod tests {
     #[test]
     fn vertex_cut_isolated() {
         // Isolated vertex 0
-        let g = TestGraph { edges: vec![], n: 1 };
+        let g = TestGraph {
+            edges: vec![],
+            n: 1,
+        };
         let mut pm = PartitionMap::with_capacity(1);
         pm.insert(0, 0);
         let (primary, replicas) = build_vertex_cuts(&g, &pm, 99);
@@ -198,7 +211,10 @@ mod tests {
     #[test]
     fn vertex_cut_two_node_owner_rule() {
         // 2‐node graph: 0–1, different parts
-        let g = TestGraph { edges: vec![(0, 1)], n: 2 };
+        let g = TestGraph {
+            edges: vec![(0, 1)],
+            n: 2,
+        };
         let mut pm = PartitionMap::with_capacity(2);
         pm.insert(0, 0);
         pm.insert(1, 1);

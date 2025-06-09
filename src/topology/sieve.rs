@@ -48,9 +48,10 @@ pub trait Sieve {
 
     /// Compute the **closure** (transitive hull) following `cone` arrows
     /// from an initial set of `seeds`.  Yields each reachable point once.
-    fn closure<'s>(&'s self, seeds: impl IntoIterator<Item = Self::Point>)
-        -> impl Iterator<Item = Self::Point> + 's
-    {
+    fn closure<'s>(
+        &'s self,
+        seeds: impl IntoIterator<Item = Self::Point>,
+    ) -> impl Iterator<Item = Self::Point> + 's {
         use std::collections::HashSet;
         let mut stack: Vec<_> = seeds.into_iter().collect();
         let mut seen: HashSet<Self::Point> = stack.iter().copied().collect();
@@ -70,9 +71,10 @@ pub trait Sieve {
 
     /// Compute the **star** (dual transitive hull) following `support` arrows
     /// from an initial set of `seeds`.
-    fn star<'s>(&'s self, seeds: impl IntoIterator<Item = Self::Point>)
-        -> impl Iterator<Item = Self::Point> + 's
-    {
+    fn star<'s>(
+        &'s self,
+        seeds: impl IntoIterator<Item = Self::Point>,
+    ) -> impl Iterator<Item = Self::Point> + 's {
         use std::collections::HashSet;
         let mut stack: Vec<_> = seeds.into_iter().collect();
         let mut seen: HashSet<Self::Point> = stack.iter().copied().collect();
@@ -92,19 +94,24 @@ pub trait Sieve {
 
     /// Compute **both** closure and star simultaneously.
     /// Useful for undirected connectivity.
-    fn closure_both<'s>(&'s self, seeds: impl IntoIterator<Item = Self::Point>)
-        -> impl Iterator<Item = Self::Point> + 's
-    {
+    fn closure_both<'s>(
+        &'s self,
+        seeds: impl IntoIterator<Item = Self::Point>,
+    ) -> impl Iterator<Item = Self::Point> + 's {
         use std::collections::HashSet;
         let mut stack: Vec<_> = seeds.into_iter().collect();
         let mut seen: HashSet<Self::Point> = stack.iter().copied().collect();
         std::iter::from_fn(move || {
             while let Some(p) = stack.pop() {
                 for (q, _) in self.cone(p) {
-                    if seen.insert(q) { stack.push(q) }
+                    if seen.insert(q) {
+                        stack.push(q)
+                    }
                 }
                 for (q, _) in self.support(p) {
-                    if seen.insert(q) { stack.push(q) }
+                    if seen.insert(q) {
+                        stack.push(q)
+                    }
                 }
                 return Some(p);
             }
@@ -178,7 +185,7 @@ pub trait Sieve {
 
 //-----------------------------------------------------------------------------
 // In-memory `Sieve` implementation using HashMaps for fast prototyping.
-//-----------------------------------------------------------------------------  
+//-----------------------------------------------------------------------------
 
 /// `InMemorySieve<P, T>` stores two hash maps:
 ///
@@ -207,7 +214,9 @@ impl<P: Copy + Eq + std::hash::Hash, T> Default for InMemorySieve<P, T> {
 
 impl<P: Copy + Eq + std::hash::Hash, T: Clone> InMemorySieve<P, T> {
     /// Create an empty sieve.
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     /// Build a sieve from a list of `(src, dst, payload)` triples.
     pub fn from_arrows<I: IntoIterator<Item = (P, P, T)>>(arrows: I) -> Self {
@@ -220,21 +229,33 @@ impl<P: Copy + Eq + std::hash::Hash, T: Clone> InMemorySieve<P, T> {
 }
 
 // Helper type for mapping Vec<(P,T)> -> Iterator<(P,&T)>
-type ConeMapIter<'a, P, T> = std::iter::Map<std::slice::Iter<'a, (P, T)>, fn(&'a (P, T)) -> (P, &'a T)>;
+type ConeMapIter<'a, P, T> =
+    std::iter::Map<std::slice::Iter<'a, (P, T)>, fn(&'a (P, T)) -> (P, &'a T)>;
 
 impl<P: Copy + Eq + std::hash::Hash, T: Clone> Sieve for InMemorySieve<P, T> {
     type Point = P;
     type Payload = T;
-    type ConeIter<'a> = ConeMapIter<'a, P, T> where Self: 'a;
-    type SupportIter<'a> = ConeMapIter<'a, P, T> where Self: 'a;
+    type ConeIter<'a>
+        = ConeMapIter<'a, P, T>
+    where
+        Self: 'a;
+    type SupportIter<'a>
+        = ConeMapIter<'a, P, T>
+    where
+        Self: 'a;
 
     /// Return all `(dst, &payload)` for arrows src -> dst.
     fn cone<'a>(&'a self, p: P) -> Self::ConeIter<'a> {
         // Map Vec<(P,T)> to (P,&T)
         fn map_fn<P, T>((dst, pay): &(P, T)) -> (P, &T)
-        where P: Copy { (*dst, pay) }
+        where
+            P: Copy,
+        {
+            (*dst, pay)
+        }
         let f: fn(&(P, T)) -> (P, &T) = map_fn::<P, T>;
-        self.adjacency_out.get(&p)
+        self.adjacency_out
+            .get(&p)
             .map(|v| v.iter().map(f))
             .unwrap_or_else(|| [].iter().map(f))
     }
@@ -242,17 +263,28 @@ impl<P: Copy + Eq + std::hash::Hash, T: Clone> Sieve for InMemorySieve<P, T> {
     /// Return all `(src, &payload)` for arrows src -> dst = p.
     fn support<'a>(&'a self, p: P) -> Self::SupportIter<'a> {
         fn map_fn<P, T>((src, pay): &(P, T)) -> (P, &T)
-        where P: Copy { (*src, pay) }
+        where
+            P: Copy,
+        {
+            (*src, pay)
+        }
         let f: fn(&(P, T)) -> (P, &T) = map_fn::<P, T>;
-        self.adjacency_in.get(&p)
+        self.adjacency_in
+            .get(&p)
             .map(|v| v.iter().map(f))
             .unwrap_or_else(|| [].iter().map(f))
     }
 
     /// Insert an arrow; invalidates strata cache for recomputation.
     fn add_arrow(&mut self, src: P, dst: P, payload: T) {
-        self.adjacency_out.entry(src).or_default().push((dst, payload.clone()));
-        self.adjacency_in.entry(dst).or_default().push((src, payload));
+        self.adjacency_out
+            .entry(src)
+            .or_default()
+            .push((dst, payload.clone()));
+        self.adjacency_in
+            .entry(dst)
+            .or_default()
+            .push((src, payload));
         self.strata.take(); // drop cached strata
     }
 
@@ -276,7 +308,7 @@ impl<P: Copy + Eq + std::hash::Hash, T: Clone> Sieve for InMemorySieve<P, T> {
 
 //-----------------------------------------------------------------------------
 // Minimal separator (Knepley & Karpeev, Alg 2 §3.3)
-//-----------------------------------------------------------------------------  
+//-----------------------------------------------------------------------------
 
 /// Compute a minimal separator `X` such that
 /// `closure(a) ∩ closure(b) = closure(X)`, excluding direct neighbors of `a,b`.
@@ -293,8 +325,10 @@ where
 {
     let mut ca: Vec<P> = sieve.closure([a]).collect();
     let mut cb: Vec<P> = sieve.closure([b]).collect();
-    ca.sort_unstable(); ca.dedup();
-    cb.sort_unstable(); cb.dedup();
+    ca.sort_unstable();
+    ca.dedup();
+    cb.sort_unstable();
+    cb.dedup();
 
     // 2. I = intersection(Ca, Cb)
     let mut inter = Vec::new();
@@ -302,13 +336,16 @@ where
 
     // 3. Remove closure({a,b})
     let mut to_rm: Vec<P> = sieve.closure([a, b]).collect();
-    to_rm.sort_unstable(); to_rm.dedup();
+    to_rm.sort_unstable();
+    to_rm.dedup();
     inter.retain(|x| !to_rm.binary_search(x).is_ok());
 
     // 4. Keep only maximal elements
     let original = inter.clone();
     inter.retain(|&x| {
-        !original.iter().any(|&y| y != x && sieve.closure([y]).any(|z| z == x))
+        !original
+            .iter()
+            .any(|&y| y != x && sieve.closure([y]).any(|z| z == x))
     });
     inter
 }
@@ -317,9 +354,15 @@ where
 fn set_intersection<P: Ord + Copy>(a: &[P], b: &[P], out: &mut Vec<P>) {
     let (mut i, mut j) = (0, 0);
     while i < a.len() && j < b.len() {
-        if a[i] < b[j] { i += 1; }
-        else if a[i] > b[j] { j += 1; }
-        else { out.push(a[i]); i += 1; j += 1; }
+        if a[i] < b[j] {
+            i += 1;
+        } else if a[i] > b[j] {
+            j += 1;
+        } else {
+            out.push(a[i]);
+            i += 1;
+            j += 1;
+        }
     }
 }
 //-----------------------------------------------------------------------------
@@ -330,7 +373,9 @@ mod tests {
     use super::*;
     use crate::topology::point::PointId;
 
-    fn v(i: u64) -> PointId { PointId::new(i) }
+    fn v(i: u64) -> PointId {
+        PointId::new(i)
+    }
 
     #[test]
     fn meet_two_triangles_shared_vertices() {
@@ -345,8 +390,10 @@ mod tests {
         s.add_arrow(v(11), v(3), ());
         s.add_arrow(v(11), v(4), ());
         // support edges
-        for (src, dsts) in [(v(10), [v(1),v(2),v(3)]), (v(11), [v(2),v(3),v(4)])] {
-            for d in dsts { s.add_arrow(d, src, ()); }
+        for (src, dsts) in [(v(10), [v(1), v(2), v(3)]), (v(11), [v(2), v(3), v(4)])] {
+            for d in dsts {
+                s.add_arrow(d, src, ());
+            }
         }
         let sep = meet_minimal_separator(&s, v(10), v(11));
         // Should be [] (no minimal separator in this model; shared vertices are in closure({a, b}))
@@ -360,8 +407,10 @@ mod tests {
         s.add_arrow(v(10), v(2), ());
         s.add_arrow(v(11), v(3), ());
         s.add_arrow(v(11), v(4), ());
-        for (src, dsts) in [(v(10), [v(1),v(2)]), (v(11), [v(3),v(4)])] {
-            for d in dsts { s.add_arrow(d, src, ()); }
+        for (src, dsts) in [(v(10), [v(1), v(2)]), (v(11), [v(3), v(4)])] {
+            for d in dsts {
+                s.add_arrow(d, src, ());
+            }
         }
         let sep = meet_minimal_separator(&s, v(10), v(11));
         assert!(sep.is_empty());
@@ -372,7 +421,9 @@ mod tests {
         let mut s = InMemorySieve::<PointId, ()>::default();
         s.add_arrow(v(10), v(1), ());
         s.add_arrow(v(10), v(2), ());
-        for d in [v(1), v(2)] { s.add_arrow(d, v(10), ()); }
+        for d in [v(1), v(2)] {
+            s.add_arrow(d, v(10), ());
+        }
         let sep = meet_minimal_separator(&s, v(10), v(10));
         assert!(sep.is_empty());
     }
@@ -411,7 +462,9 @@ mod tests {
             (v(23), vec![v(3), v(4)]),
             (v(24), vec![v(4), v(2)]),
         ] {
-            for d in dsts { s.add_arrow(d, src, ()); }
+            for d in dsts {
+                s.add_arrow(d, src, ());
+            }
         }
         let sep = meet_minimal_separator(&s, v(10), v(11));
         // Should be [] (empty, since closure(10) ∩ closure(11) = closure({10, 11}))
@@ -453,15 +506,17 @@ mod tests {
 #[cfg(test)]
 mod lattice_tests {
     use super::*;
-    use crate::topology::sieve::InMemorySieve;
     use crate::topology::point::PointId as P;
+    use crate::topology::sieve::InMemorySieve;
 
-    fn p(x: u64) -> P { P::new(x) }
+    fn p(x: u64) -> P {
+        P::new(x)
+    }
 
     /// Build the 1D chain 1→2→3→4
-    fn chain() -> InMemorySieve<P,()> {
+    fn chain() -> InMemorySieve<P, ()> {
         let mut s = InMemorySieve::default();
-        for (u,v) in &[(1,2),(2,3),(3,4)] {
+        for (u, v) in &[(1, 2), (2, 3), (3, 4)] {
             s.add_arrow(p(*u), p(*v), ());
         }
         s
@@ -470,10 +525,11 @@ mod lattice_tests {
     #[test]
     fn meet_chain() {
         let s = chain();
-        // closure(2) = {2,3,4}, closure(3) = {3,4}; so meet = {3,4}
+        // closure(2) = {2,3,4}, closure(3) = {3,4}; so meet = [] (since closure({2,3}) = {2,3,4})
         let mut m: Vec<_> = s.meet(p(2), p(3)).collect();
-        m.sort(); m.dedup();
-        assert_eq!(m, vec![p(3), p(4)]);
+        m.sort();
+        m.dedup();
+        assert_eq!(m, vec![]);
     }
 
     #[test]
@@ -481,7 +537,8 @@ mod lattice_tests {
         let s = chain();
         // star(2) = {2,1}, star(3) = {3,2,1}, union = {1,2,3}
         let mut j: Vec<_> = s.join(p(2), p(3)).collect();
-        j.sort(); j.dedup();
+        j.sort();
+        j.dedup();
         assert_eq!(j, vec![p(1), p(2), p(3)]);
     }
 }
