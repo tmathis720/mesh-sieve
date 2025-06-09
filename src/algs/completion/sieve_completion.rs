@@ -54,7 +54,7 @@ pub fn complete_sieve(
         }
     }
     let mut recv_size = std::collections::HashMap::new();
-    for (&nbr, _) in &nb_links {
+    for &nbr in nb_links.keys() {
         let buf = [0u8; 4];
         let h = comm.irecv(nbr, BASE_TAG, &mut buf.clone());
         recv_size.insert(nbr, (h, buf));
@@ -70,7 +70,7 @@ pub fn complete_sieve(
         sizes_in.insert(nbr, u32::from_le_bytes(buf) as usize);
     }
     let mut recv_data = std::collections::HashMap::new();
-    for (&nbr, _) in &nb_links {
+    for &nbr in nb_links.keys() {
         let n_items = sizes_in[&nbr];
         let mut buffer = vec![0u8; n_items * std::mem::size_of::<WireTriple>()];
         let h = comm.irecv(nbr, BASE_TAG + 1, &mut buffer);
@@ -111,7 +111,7 @@ pub fn complete_sieve(
                 let already = sieve
                     .adjacency_out
                     .get(&src_pt)
-                    .map_or(false, |v| v.iter().any(|(d, _)| *d == dst_pt));
+                    .is_some_and(|v| v.iter().any(|(d, _)| *d == dst_pt));
                 if !already {
                     sieve
                         .adjacency_out

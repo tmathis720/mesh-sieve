@@ -1,8 +1,7 @@
 //! Set-lattice helpers: meet, join, adjacency and helpers.
 //! All output vectors are **sorted & deduplicated** for deterministic behaviour.
 
-use std::cmp::Ordering;
-use crate::algs::traversal::{star};
+use crate::algs::traversal::star;
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
 

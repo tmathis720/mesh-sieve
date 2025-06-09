@@ -13,7 +13,7 @@ where
     C: crate::algs::communicator::Communicator + Sync,
 {
     let mut recv_size = std::collections::HashMap::new();
-    for (&nbr, _) in links {
+    for &nbr in links.keys() {
         let buf = [0u8; 4];
         let h = comm.irecv(nbr, base_tag, &mut buf.clone());
         recv_size.insert(nbr, (h, buf));

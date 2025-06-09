@@ -47,7 +47,7 @@ impl Atlas {
         // Reserve length must be positive.
         assert!(len > 0, "len==0 reserved");
         // Prevent inserting the same point twice.
-        assert!(self.map.get(&p).is_none(), "point already present");
+        assert!(!self.map.contains_key(&p), "point already present");
 
         // The starting offset is the current total length.
         let offset = self.total_len;

@@ -27,7 +27,7 @@ pub fn exchange_data<V, D, C>(
     use std::collections::HashMap;
     // --- Stage 2: exchange data ---
     let mut recv_data = HashMap::new();
-    for (&nbr, _links) in links {
+    for &nbr in links.keys() {
         let n_items = recv_counts[&nbr] as usize;
         let mut buffer = vec![0u8; n_items * std::mem::size_of::<D::Part>()];
         let h = comm.irecv(nbr, base_tag, &mut buffer);

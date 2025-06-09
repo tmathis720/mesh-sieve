@@ -179,7 +179,7 @@ where
     pub fn sifter(&self, base: B) -> Vec<(C, P)> {
         self.up
             .get(&base)
-            .map(|v| v.iter().cloned().collect())
+            .map(|v| v.to_vec())
             .unwrap_or_default()
     }
 }

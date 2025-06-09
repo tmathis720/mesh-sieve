@@ -46,11 +46,11 @@ impl Communicator for NoComm {
     type SendHandle = ();
     type RecvHandle = ();
 
-    fn isend(&self, _peer: usize, _tag: u16, _buf: &[u8]) -> () {
-        ()
+    fn isend(&self, _peer: usize, _tag: u16, _buf: &[u8]) {
+        // no-op
     }
-    fn irecv(&self, _peer: usize, _tag: u16, _buf: &mut [u8]) -> () {
-        ()
+    fn irecv(&self, _peer: usize, _tag: u16, _buf: &mut [u8]) {
+        // no-op
     }
     fn is_no_comm(&self) -> bool {
         true
@@ -135,6 +135,12 @@ mod mpi_backend {
         pub rank: usize,
     }
 
+    impl Default for MpiComm {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
     impl MpiComm {
         pub fn new() -> Self {
             let universe = mpi::initialize().unwrap();
@@ -166,14 +172,13 @@ mod mpi_backend {
         type SendHandle = ();
         type RecvHandle = MpiHandle;
 
-        fn isend(&self, peer: usize, _tag: u16, buf: &[u8]) -> () {
+        fn isend(&self, peer: usize, _tag: u16, buf: &[u8]) {
             self.world.process_at_rank(peer as i32).send(buf);
         }
 
         fn irecv(&self, peer: usize, _tag: u16, buf: &mut [u8]) -> MpiHandle {
             let len = buf.len();
-            let mut v = Vec::with_capacity(len);
-            unsafe { v.set_len(len) };
+            let mut v = vec![0u8; len];
             let static_buf: &'static mut [u8] = Box::leak(v.into_boxed_slice());
             let buf_ptr = static_buf as *mut [u8];
             let req = self

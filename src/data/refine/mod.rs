@@ -1,5 +1,3 @@
-// feature-gate the whole refine module
-#![cfg(feature = "data_refine")]
 pub mod delta;
 pub mod helpers;
 pub mod sieved_array;

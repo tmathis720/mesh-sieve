@@ -66,7 +66,7 @@ impl<V: Clone + Default> Section<V> {
     /// Iterate over `(PointId, &[V])` for all points in atlas order.
     ///
     /// Useful for serializing or visiting all data in a deterministic order.
-    pub fn iter<'s>(&'s self) -> impl Iterator<Item = (PointId, &'s [V])> {
+    pub fn iter(&self) -> impl Iterator<Item = (PointId, &[V])> {
         // Use the atlas's point order for deterministic iteration.
         self.atlas
             .points()
@@ -155,7 +155,6 @@ mod tests {
         assert_eq!(collected, vec![9.0, 7.0]); // atlas order
     }
 
-    #[cfg(feature = "data_refine")]
     #[test]
     fn map_trait_section_get_and_mut() {
         use super::Map;
@@ -171,18 +170,15 @@ mod tests {
         assert!(<Section<f64> as Map<f64>>::get_mut(&mut s, PointId::new(1)).is_some());
     }
 
-    #[cfg(feature = "data_refine")]
     struct ReadOnlyMap<'a, V: Clone + Default> {
         section: &'a Section<V>,
     }
-    #[cfg(feature = "data_refine")]
     impl<'a, V: Clone + Default> Map<V> for ReadOnlyMap<'a, V> {
         fn get(&self, p: PointId) -> &[V] {
             self.section.restrict(p)
         }
         // get_mut left as default (None)
     }
-    #[cfg(feature = "data_refine")]
     #[test]
     fn map_trait_readonly_get_mut_none() {
         let s = make_section();
@@ -190,7 +186,6 @@ mod tests {
         assert!(ro.get_mut(PointId::new(1)).is_none());
     }
 
-    #[cfg(feature = "data_refine")]
     #[test]
     fn restrict_closure_and_star_helpers() {
         use super::*;
@@ -208,12 +203,12 @@ mod tests {
         Sieve::add_arrow(&mut sieve, PointId::new(1), PointId::new(2), ());
         Sieve::add_arrow(&mut sieve, PointId::new(2), PointId::new(3), ());
         // Closure from 1: [1,2,3]
-        let closure = restrict_closure_vec(&sieve, &s, [PointId::new(1)]);
+        let closure = crate::data::refine::restrict_closure_vec(&sieve, &s, [PointId::new(1)]);
         let mut vals: Vec<_> = closure.iter().map(|(_, v)| v[0]).collect();
         vals.sort();
         assert_eq!(vals, vec![10, 20, 30]);
         // Star from 3: [3,2,1]
-        let star = restrict_star_vec(&sieve, &s, [PointId::new(3)]);
+        let star = crate::data::refine::restrict_star_vec(&sieve, &s, [PointId::new(3)]);
         let mut vals: Vec<_> = star.iter().map(|(_, v)| v[0]).collect();
         vals.sort();
         assert_eq!(vals, vec![10, 20, 30]);
@@ -233,5 +228,4 @@ mod tests {
     }
 }
 
-#[cfg(feature = "data_refine")]
 pub use crate::data::refine::Sifter;

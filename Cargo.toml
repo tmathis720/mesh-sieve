@@ -30,7 +30,6 @@ default = []            # keep core lean
 partitioning = ["rayon", "rand", "ahash"]
 metis-support = ["pkg-config", "bindgen"]
 topology_refine = []  # Feature gate for topology refinement and experimental algorithms
-data_refine = [] # Feature gate for data-layer refinement
 stack_refine = [] # Feature gate for stack/bundle refinement
 
 [build-dependencies]

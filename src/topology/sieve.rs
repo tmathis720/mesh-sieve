@@ -56,16 +56,17 @@ pub trait Sieve {
         let mut stack: Vec<_> = seeds.into_iter().collect();
         let mut seen: HashSet<Self::Point> = stack.iter().copied().collect();
         std::iter::from_fn(move || {
-            while let Some(p) = stack.pop() {
+            if let Some(p) = stack.pop() {
                 // Explore forward neighbors
                 for (q, _) in self.cone(p) {
                     if seen.insert(q) {
                         stack.push(q);
                     }
                 }
-                return Some(p);
+                Some(p)
+            } else {
+                None
             }
-            None
         })
     }
 
@@ -79,16 +80,17 @@ pub trait Sieve {
         let mut stack: Vec<_> = seeds.into_iter().collect();
         let mut seen: HashSet<Self::Point> = stack.iter().copied().collect();
         std::iter::from_fn(move || {
-            while let Some(p) = stack.pop() {
+            if let Some(p) = stack.pop() {
                 // Explore backward neighbors
                 for (q, _) in self.support(p) {
                     if seen.insert(q) {
                         stack.push(q);
                     }
                 }
-                return Some(p);
+                Some(p)
+            } else {
+                None
             }
-            None
         })
     }
 
@@ -102,7 +104,7 @@ pub trait Sieve {
         let mut stack: Vec<_> = seeds.into_iter().collect();
         let mut seen: HashSet<Self::Point> = stack.iter().copied().collect();
         std::iter::from_fn(move || {
-            while let Some(p) = stack.pop() {
+            if let Some(p) = stack.pop() {
                 for (q, _) in self.cone(p) {
                     if seen.insert(q) {
                         stack.push(q)
@@ -113,9 +115,10 @@ pub trait Sieve {
                         stack.push(q)
                     }
                 }
-                return Some(p);
+                Some(p)
+            } else {
+                None
             }
-            None
         })
     }
 
@@ -123,11 +126,7 @@ pub trait Sieve {
     /// The “meet” of two points: all points in closure(a) ∩ closure(b),
     /// excluding a,b themselves’ immediate cone/support.  
     #[inline]
-    fn meet<'s>(
-        &'s self,
-        a: Self::Point,
-        b: Self::Point
-    ) -> impl Iterator<Item = Self::Point> + 's
+    fn meet<'s>(&'s self, a: Self::Point, b: Self::Point) -> impl Iterator<Item = Self::Point> + 's
     where
         Self: 's + Sized,
         Self::Point: Ord,
@@ -135,31 +134,34 @@ pub trait Sieve {
         // 1. collect and sort closures
         let mut ca: Vec<_> = self.closure(std::iter::once(a)).collect();
         let mut cb: Vec<_> = self.closure(std::iter::once(b)).collect();
-        ca.sort_unstable(); cb.sort_unstable();
+        ca.sort_unstable();
+        cb.sort_unstable();
         // 2. compute intersection
         let mut inter = Vec::with_capacity(ca.len().min(cb.len()));
         let (mut i, mut j) = (0, 0);
         while i < ca.len() && j < cb.len() {
             match ca[i].cmp(&cb[j]) {
-                std::cmp::Ordering::Less    => i += 1,
+                std::cmp::Ordering::Less => i += 1,
                 std::cmp::Ordering::Greater => j += 1,
-                std::cmp::Ordering::Equal   => { inter.push(ca[i]); i += 1; j += 1; }
+                std::cmp::Ordering::Equal => {
+                    inter.push(ca[i]);
+                    i += 1;
+                    j += 1;
+                }
             }
         }
         // 3. exclude closure({a,b})
-        let mut to_rm: Vec<_> = self.closure([a,b]).collect();
-        to_rm.sort_unstable(); to_rm.dedup();
-        inter.into_iter()
-             .filter(move |x| to_rm.binary_search(x).is_err())
+        let mut to_rm: Vec<_> = self.closure([a, b]).collect();
+        to_rm.sort_unstable();
+        to_rm.dedup();
+        inter
+            .into_iter()
+            .filter(move |x| to_rm.binary_search(x).is_err())
     }
 
     /// The “join” of two points: union of star(a) ∪ star(b)
     #[inline]
-    fn join<'s>(
-        &'s self,
-        a: Self::Point,
-        b: Self::Point
-    ) -> impl Iterator<Item = Self::Point> + 's
+    fn join<'s>(&'s self, a: Self::Point, b: Self::Point) -> impl Iterator<Item = Self::Point> + 's
     where
         Self: 's + Sized,
         Self::Point: Ord,
@@ -167,18 +169,30 @@ pub trait Sieve {
         // 1. collect & sort stars
         let mut sa: Vec<_> = self.star(std::iter::once(a)).collect();
         let mut sb: Vec<_> = self.star(std::iter::once(b)).collect();
-        sa.sort_unstable(); sb.sort_unstable();
+        sa.sort_unstable();
+        sb.sort_unstable();
         // 2. merge union
-        let mut out = Vec::with_capacity(sa.len()+sb.len());
-        let (mut i, mut j) = (0,0);
+        let mut out = Vec::with_capacity(sa.len() + sb.len());
+        let (mut i, mut j) = (0, 0);
         while i < sa.len() && j < sb.len() {
             match sa[i].cmp(&sb[j]) {
-                std::cmp::Ordering::Less    => { out.push(sa[i]); i+=1 }
-                std::cmp::Ordering::Greater => { out.push(sb[j]); j+=1 }
-                std::cmp::Ordering::Equal   => { out.push(sa[i]); i+=1; j+=1 }
+                std::cmp::Ordering::Less => {
+                    out.push(sa[i]);
+                    i += 1
+                }
+                std::cmp::Ordering::Greater => {
+                    out.push(sb[j]);
+                    j += 1
+                }
+                std::cmp::Ordering::Equal => {
+                    out.push(sa[i]);
+                    i += 1;
+                    j += 1
+                }
             }
         }
-        out.extend_from_slice(&sa[i..]); out.extend_from_slice(&sb[j..]);
+        out.extend_from_slice(&sa[i..]);
+        out.extend_from_slice(&sb[j..]);
         out.into_iter()
     }
 }
@@ -338,7 +352,7 @@ where
     let mut to_rm: Vec<P> = sieve.closure([a, b]).collect();
     to_rm.sort_unstable();
     to_rm.dedup();
-    inter.retain(|x| !to_rm.binary_search(x).is_ok());
+    inter.retain(|x| to_rm.binary_search(x).is_err());
 
     // 4. Keep only maximal elements
     let original = inter.clone();

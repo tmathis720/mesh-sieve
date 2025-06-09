@@ -1,5 +1,5 @@
 //! Helpers for pulling per-point slices out along a Sieve.
-//! (Previously lived in section.rs under #[cfg(feature="data_refine")])
+//! (Previously lived in section.rs)
 
 use crate::data::section::Map;
 use crate::topology::point::PointId;
