@@ -20,6 +20,7 @@ metis = "0.2"
 metis-sys = "0.3.2"
 rand = { version = "0.8", features = ["std", "small_rng"], optional = true }
 ahash = { version = "0.8", optional = true }
+num-traits = "0.2"
 
 [dev-dependencies]
 rand = "0.8"

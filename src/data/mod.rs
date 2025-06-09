@@ -3,4 +3,5 @@
 pub mod section;
 pub mod atlas;
 
-pub mod bundle;
+#[cfg(feature = "data_refine")]
+pub mod refine;

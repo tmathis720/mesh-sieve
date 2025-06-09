@@ -95,10 +95,7 @@ impl<V: Clone + Send> Section<V> {
     }
 }
 
-/// Trait for read-only or mutable views of per-point data.
-///
-/// Provides a zero-cost abstraction over types that can supply a slice
-/// for each `PointId`. Used in data-refinement algorithms.
+/// A zero‐cost view of per‐point data, used by refine/assemble helpers.
 pub trait Map<V: Clone + Default> {
     /// Immutable access to the data slice for `p`.
     fn get(&self, p: PointId) -> &[V];
@@ -122,57 +119,6 @@ impl<V: Clone + Default> Map<V> for Section<V> {
         // Use the restrict_mut method to get a mutable slice, wrapped in Some.
         Some(self.restrict_mut(p))
     }
-}
-
-/// A one‐to‐one mapping from coarse→fine dof, carrying orientation.
-pub type Sifter = Vec<(PointId, crate::topology::arrow::Orientation)>;
-
-#[cfg(feature = "data_refine")]
-pub(crate) fn restrict_closure<'s, M, V: Clone + Default + 's>(
-    sieve: &impl crate::topology::sieve::Sieve<Point = PointId>,
-    map:   &'s M,
-    seeds: impl IntoIterator<Item = PointId>,
-) -> impl Iterator<Item = (PointId, &'s [V])>
-where
-    M: Map<V> + 's,
-{
-    sieve.closure(seeds).map(move |p| (p, map.get(p)))
-}
-
-#[cfg(feature = "data_refine")]
-pub(crate) fn restrict_star<'s, M, V: Clone + Default + 's>(
-    sieve: &impl crate::topology::sieve::Sieve<Point = PointId>,
-    map:   &'s M,
-    seeds: impl IntoIterator<Item = PointId>,
-) -> impl Iterator<Item = (PointId, &'s [V])>
-where
-    M: Map<V> + 's,
-{
-    sieve.star(seeds).map(move |p| (p, map.get(p)))
-}
-
-#[cfg(feature = "data_refine")]
-pub(crate) fn restrict_closure_vec<'s, M, V: Clone + Default + 's>(
-    sieve: &impl crate::topology::sieve::Sieve<Point = PointId>,
-    map:   &'s M,
-    seeds: impl IntoIterator<Item = PointId>,
-) -> Vec<(PointId, &'s [V])>
-where
-    M: Map<V> + 's,
-{
-    restrict_closure(sieve, map, seeds).collect()
-}
-
-#[cfg(feature = "data_refine")]
-pub(crate) fn restrict_star_vec<'s, M, V: Clone + Default + 's>(
-    sieve: &impl crate::topology::sieve::Sieve<Point = PointId>,
-    map:   &'s M,
-    seeds: impl IntoIterator<Item = PointId>,
-) -> Vec<(PointId, &'s [V])>
-where
-    M: Map<V> + 's,
-{
-    restrict_star(sieve, map, seeds).collect()
 }
 
 #[cfg(test)]
@@ -267,238 +213,20 @@ mod tests {
         assert_eq!(vals, vec![10, 20, 30]);
     }
 
-    #[cfg(feature = "data_refine")]
-    /// A generic array of values indexed by mesh points, supporting refinement/assembly.
-    ///
-    /// This is a minimal version, to be extended with refine/assemble algorithms.
-    #[derive(Clone, Debug)]
-    pub struct SievedArray<P, V> {
-        /// The underlying atlas (point -> offset, len).
-        pub(crate) atlas: crate::data::atlas::Atlas,
-        /// The data storage.
-        pub(crate) data: Vec<V>,
-        /// Phantom for point type.
-        _phantom: std::marker::PhantomData<P>,
-    }
-
-    #[cfg(feature = "data_refine")]
-    impl<P, V: Clone + Default> SievedArray<P, V>
-    where
-        P: Into<crate::topology::point::PointId> + Copy + Eq,
-    {
-        /// Create a new SievedArray with the given atlas, filled with default values.
-        pub fn new(atlas: crate::data::atlas::Atlas) -> Self {
-            let data = vec![V::default(); atlas.total_len()];
-            Self { atlas, data, _phantom: std::marker::PhantomData }
-        }
-
-        /// Get an immutable slice for a point.
-        pub fn get(&self, p: crate::topology::point::PointId) -> &[V] {
-            let (off, len) = self.atlas.get(p).expect("point not in atlas");
-            &self.data[off .. off + len]
-        }
-
-        /// Get a mutable slice for a point.
-        pub fn get_mut(&mut self, p: crate::topology::point::PointId) -> &mut [V] {
-            let (off, len) = self.atlas.get(p).expect("point not in atlas");
-            &mut self.data[off .. off + len]
-        }
-
-        /// Set the values for a point.
-        pub fn set(&mut self, p: crate::topology::point::PointId, val: &[V]) {
-            let tgt = self.get_mut(p);
-            assert_eq!(tgt.len(), val.len());
-            tgt.clone_from_slice(val);
-        }
-
-        /// Iterate over (PointId, &[V]) pairs in atlas order.
-        pub fn iter<'s>(&'s self) -> impl Iterator<Item=(crate::topology::point::PointId, &'s [V])> {
-            self.atlas.points().map(move |p| (p, self.get(p)))
-        }
-
-        /// Refine the data from a coarse SievedArray into this (finer) SievedArray.
-        ///
-        /// For each (coarse_pt, fine_pts) in `refinement`, copies the data from the coarse point
-        /// into each fine point, respecting orientation (if provided in the Sifter).
-        ///
-        /// # Arguments
-        /// * `coarse` - The coarse SievedArray to refine from.
-        /// * `refinement` - A slice of (coarse point, Vec<(fine point, Orientation)>) pairs.
-        pub fn refine_with_sifter(
-            &mut self,
-            coarse: &SievedArray<P, V>,
-            refinement: &[(P, Vec<(P, crate::topology::arrow::Orientation)>)],
-        ) {
-            for (coarse_pt, fine_pts) in refinement.iter() {
-                let coarse_slice = coarse.get((*coarse_pt).into());
-                for (fine_pt, orient) in fine_pts.iter() {
-                    let fine_slice = self.get_mut((*fine_pt).into());
-                    assert_eq!(coarse_slice.len(), fine_slice.len(), "dof mismatch in refinement");
-                    match orient {
-                        crate::topology::arrow::Orientation::Forward => {
-                            fine_slice.clone_from_slice(coarse_slice);
-                        }
-                        crate::topology::arrow::Orientation::Reverse => {
-                            for (dst, src) in fine_slice.iter_mut().zip(coarse_slice.iter().rev()) {
-                                *dst = src.clone();
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        /// Refine the data from a coarse SievedArray into this (finer) SievedArray.
-        ///
-        /// This version expects a refinement map of (coarse point, Vec<fine point>),
-        /// and assumes all orientations are positive.
-        pub fn refine(
-            &mut self,
-            coarse: &SievedArray<P, V>,
-            refinement: &[(P, Vec<P>)]
-        ) {
-            for (coarse_pt, fine_pts) in refinement.iter() {
-                let coarse_slice = coarse.get((*coarse_pt).into());
-                for fine_pt in fine_pts.iter() {
-                    let fine_slice = self.get_mut((*fine_pt).into());
-                    assert_eq!(coarse_slice.len(), fine_slice.len(), "dof mismatch in refinement");
-                    fine_slice.clone_from_slice(coarse_slice);
-                }
-            }
-        }
-
-        /// Assemble data from this (finer) SievedArray into a coarser SievedArray.
-        ///
-        /// This is a placeholder for the full assembly algorithm as per Knepley & Karpeev (2009).
-        /// The method will sum/average data from `self` into `coarse` according to the refinement map.
-        pub fn assemble(&self, _coarse: &mut SievedArray<P, V>, _refinement: &[(P, Vec<P>)]) {
-            // TODO: Implement full assembly logic
-            // For now, this is a stub.
-            unimplemented!("SievedArray::assemble is not yet implemented");
-        }
-    }
-
-    #[cfg(feature = "data_refine")]
-    impl<P, V: Clone + Default> crate::data::section::Map<V> for SievedArray<P, V>
-        where
-        P: Into<crate::topology::point::PointId> + Copy + Eq,
-    {
-        fn get(&self, p: crate::topology::point::PointId) -> &[V] {
-            self.get(p)
-        }
-        fn get_mut(&mut self, p: crate::topology::point::PointId) -> Option<&mut [V]> {
-            Some(self.get_mut(p))
-        }
-    }
-
     #[test]
-    #[cfg(feature = "data_refine")]
-    fn sieved_array_set_and_get() {
-        let mut arr = make_sieved_array();
-        arr.set(PointId::new(1), &[10, 20]);
-        arr.set(PointId::new(2), &[30]);
-        assert_eq!(arr.get(PointId::new(1)), &[10, 20]);
-        assert_eq!(arr.get(PointId::new(2)), &[30]);
-    }
+    fn scatter_from() {
+        let mut s = make_section();
+        // Initial data: [0.0, 0.0, 0.0]
+        assert_eq!(s.data, &[0.0, 0.0, 0.0]);
 
-    #[test]
-    #[cfg(feature = "data_refine")]
-    fn sieved_array_iter_order() {
-        let mut arr = make_sieved_array();
-        arr.set(PointId::new(1), &[1, 2]);
-        arr.set(PointId::new(2), &[3]);
-        let vals: Vec<_> = arr.iter().map(|(_, v)| v[0]).collect();
-        assert_eq!(vals, vec![1, 3]);
-    }
+        // Scatter in two chunks: [1.0, 2.0] and [3.5]
+        s.scatter_from(&[1.0, 2.0, 3.5], &[(0, 2), (2, 1)]);
 
-    #[test]
-    #[cfg(feature = "data_refine")]
-    fn sieved_array_map_trait() {
-        use crate::data::section::Map;
-        let mut arr = make_sieved_array();
-        arr.set(PointId::new(1), &[5, 6]);
-        assert_eq!(<SievedArray<PointId, i32> as Map<i32>>::get(&arr, PointId::new(1)), arr.get(PointId::new(1)));
-        assert!(<SievedArray<PointId, i32> as Map<i32>>::get_mut(&mut arr, PointId::new(1)).is_some());
-    }
-
-    #[test]
-    #[cfg(feature = "data_refine")]
-    fn sieved_array_refine_panics() {
-        use crate::topology::point::PointId;
-        let mut fine = make_sieved_array();
-        let coarse = make_sieved_array();
-        let refinement: Vec<(PointId, Vec<PointId>)> = Vec::new();
-        // Should not panic: empty refinement is a no-op
-        SievedArray::<PointId, i32>::refine(&mut fine, &coarse, &refinement);
-    }
-
-    #[test]
-    #[cfg(feature = "data_refine")]
-    #[should_panic(expected = "not yet implemented")]
-    fn sieved_array_assemble_panics() {
-        use crate::topology::point::PointId;
-        let fine = make_sieved_array();
-        let mut coarse = make_sieved_array();
-        let refinement: Vec<(PointId, Vec<PointId>)> = Vec::new();
-        SievedArray::<PointId, i32>::assemble(&fine, &mut coarse, &refinement);
-    }
-
-    #[cfg(feature = "data_refine")]
-    pub(super) fn make_sieved_array() -> SievedArray<PointId, i32> {
-        let mut atlas = crate::data::atlas::Atlas::default();
-        atlas.insert(PointId::new(1), 2); // 2 dof
-        atlas.insert(PointId::new(2), 1);
-        SievedArray::<PointId, i32>::new(atlas)
-    }
-
-    #[test]
-    #[cfg(feature = "data_refine")]
-    fn sieved_array_refine_simple() {
-        use crate::topology::arrow::Orientation;
-        use crate::topology::point::PointId;
-        // Coarse: pt 1 (2 dof)
-        let mut coarse_atlas = crate::data::atlas::Atlas::default();
-        coarse_atlas.insert(PointId::new(1), 2); // 2 dof
-        // Fine: pt 10 (2 dof), pt 11 (2 dof)
-        let mut fine_atlas = crate::data::atlas::Atlas::default();
-        fine_atlas.insert(PointId::new(10), 2);
-        fine_atlas.insert(PointId::new(11), 2);
-        let mut coarse = SievedArray::<PointId, i32>::new(coarse_atlas);
-        let mut fine = SievedArray::<PointId, i32>::new(fine_atlas);
-        coarse.set(PointId::new(1), &[7, 8]);
-        // Refinement: 1 -> [10 (forward), 11 (reverse)]
-        let refinement = vec![
-            (PointId::new(1), vec![
-                (PointId::new(10), Orientation::Forward),
-                (PointId::new(11), Orientation::Reverse),
-            ]),
-        ];
-        fine.refine_with_sifter(&coarse, &refinement);
-        assert_eq!(fine.get(PointId::new(10)), &[7, 8]);
-        assert_eq!(fine.get(PointId::new(11)), &[8, 7]);
-    }
-
-    #[test]
-    #[cfg(feature = "data_refine")]
-    fn sieved_array_refine_positive_only() {
-        use crate::topology::point::PointId;
-        // Coarse: pt 1 (2 dof)
-        let mut coarse_atlas = crate::data::atlas::Atlas::default();
-        coarse_atlas.insert(PointId::new(1), 2); // 2 dof
-        // Fine: pt 10 (2 dof), pt 11 (2 dof)
-        let mut fine_atlas = crate::data::atlas::Atlas::default();
-        fine_atlas.insert(PointId::new(10), 2);
-        fine_atlas.insert(PointId::new(11), 2);
-        let mut coarse = SievedArray::<PointId, i32>::new(coarse_atlas);
-        let mut fine = SievedArray::<PointId, i32>::new(fine_atlas);
-        coarse.set(PointId::new(1), &[42, 99]);
-        // Refinement: 1 -> [10, 11] (all forward)
-        let refinement = vec![
-            (PointId::new(1), vec![PointId::new(10), PointId::new(11)]),
-        ];
-        fine.refine(&coarse, &refinement);
-        assert_eq!(fine.get(PointId::new(10)), &[42, 99]);
-        assert_eq!(fine.get(PointId::new(11)), &[42, 99]);
+        // Resulting data: [1.0, 2.0, 3.5]
+        assert_eq!(s.data, &[1.0, 2.0, 3.5]);
     }
 }
+
+#[cfg(feature = "data_refine")]
+pub use crate::data::refine::Sifter;
 

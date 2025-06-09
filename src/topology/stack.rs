@@ -158,6 +158,20 @@ where
     fn cap(&self) -> &Self::CapSieve { &self.cap }
 }
 
+impl<B, C, P> InMemoryStack<B, C, P>
+where
+    B: Copy + Eq + std::hash::Hash,
+    C: Copy + Eq + std::hash::Hash,
+    P: Clone,
+{
+    /// Build a Sifter for a given base point: all (cap, payload) pairs for that base.
+    pub fn sifter(&self, base: B) -> Vec<(C, P)> {
+        self.up.get(&base)
+            .map(|v| v.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+}
+
 /// A stack composed of two existing stacks: `lower: base -> mid` and `upper: mid -> cap`.
 ///
 /// Traversal composes payloads via a `compose_payload` function.
