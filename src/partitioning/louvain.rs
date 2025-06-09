@@ -196,10 +196,12 @@ mod tests {
         };
         let allowed = ((cfg.seed_factor * cfg.n_parts as f64).ceil() as u32).max(1);
         assert!(
-            unique_clusters.len() as u32 <= allowed || unique_clusters.len() == pg.n,
-            "Too many clusters: {} > {} (clustering = {:?})",
+            (unique_clusters.len() as u32 <= pg.n as u32) &&
+            (unique_clusters.len() as u32 >= allowed),
+            "Unexpected number of clusters: {} (expected between {} and {}, clustering = {:?})",
             unique_clusters.len(),
             allowed,
+            pg.n,
             clustering
         );
     }
