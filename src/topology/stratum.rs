@@ -210,7 +210,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::topology::sieve::{InMemorySieve, Sieve};
     use crate::topology::point::PointId;
     use crate::topology::stratum::StratumHelpers;

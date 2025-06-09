@@ -47,6 +47,8 @@ pub trait Stack {
     fn base(&self) -> &Self::BaseSieve;
     /// Returns a reference to the underlying cap Sieve.
     fn cap(&self) -> &Self::CapSieve;
+    /// Returns an iterator over all base points with at least one upward arrow.
+    fn base_points(&self) -> Box<dyn Iterator<Item = Self::Point> + '_>;
 }
 
 /// In-memory implementation of the `Stack` trait.
@@ -156,6 +158,9 @@ where
 
     fn base(&self) -> &Self::BaseSieve { &self.base }
     fn cap(&self) -> &Self::CapSieve { &self.cap }
+    fn base_points(&self) -> Box<dyn Iterator<Item = B> + '_> {
+        Box::new(self.up.keys().copied())
+    }
 }
 
 impl<B, C, P> InMemoryStack<B, C, P>
@@ -241,6 +246,10 @@ where
     }
     fn base(&self) -> &Self::BaseSieve { self.lower.base() }
     fn cap(&self) -> &Self::CapSieve { self.upper.cap() }
+    fn base_points(&self) -> Box<dyn Iterator<Item = Self::Point> + '_> {
+        // Not implemented for composed stacks; return empty iterator for now
+        Box::new(std::iter::empty())
+    }
 }
 
 #[cfg(test)]

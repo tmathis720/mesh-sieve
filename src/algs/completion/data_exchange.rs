@@ -1,9 +1,6 @@
 //! Stage 2 of section completion: exchange the actual data items.
 
-use std::collections::HashMap;
-use bytemuck::{Pod, cast_slice};
-use crate::algs::communicator::{Communicator, Wait};
-use crate::overlap::delta::Delta;
+use crate::algs::communicator::Wait;
 
 /// For each neighbor, pack `Delta::restrict` from your section into a send buffer,
 /// post irecv for the corresponding byte length (from stage 1),
@@ -17,7 +14,7 @@ pub fn exchange_data<V, D, C>(
 ) where
     V: Clone + Default + Send + 'static,
     D: crate::overlap::delta::Delta<V> + Send + Sync + 'static,
-    D::Part: bytemuck::Pod,
+    D::Part: bytemuck::Pod + Default,
     C: crate::algs::communicator::Communicator + Sync,
 {
     use bytemuck::cast_slice;
@@ -51,11 +48,61 @@ pub fn exchange_data<V, D, C>(
     }
 }
 
+/// For each neighbor, pack `Delta::restrict` from your section into a send buffer,
+/// post irecv for the corresponding byte length (from stage 1),
+/// then send and finally wait + `Delta::fuse` into your local section.
+/// This version always posts send/recv for all neighbors, even if count is zero,
+/// to prevent deadlocks in section completion.
+pub fn exchange_data_symmetric<V, D, C>(
+    links: &std::collections::HashMap<usize, Vec<(crate::topology::point::PointId, crate::topology::point::PointId)>>,
+    recv_counts: &std::collections::HashMap<usize, u32>,
+    comm: &C,
+    base_tag: u16,
+    section: &mut crate::data::section::Section<V>,
+    all_neighbors: &std::collections::HashSet<usize>,
+) where
+    V: Clone + Default + Send + 'static,
+    D: crate::overlap::delta::Delta<V> + Send + Sync + 'static,
+    D::Part: bytemuck::Pod + Default,
+    C: crate::algs::communicator::Communicator + Sync,
+{
+    use bytemuck::cast_slice;
+    use bytemuck::cast_slice_mut;
+    use std::collections::HashMap;
+    let mut recv_data = HashMap::new();
+    for &nbr in all_neighbors {
+        let n_items = recv_counts.get(&nbr).copied().unwrap_or(0) as usize;
+        let mut buffer = vec![D::Part::default(); n_items];
+        let h = comm.irecv(nbr, base_tag, cast_slice_mut(&mut buffer));
+        recv_data.insert(nbr, (h, buffer));
+    }
+    for &nbr in all_neighbors {
+        let links_vec = links.get(&nbr).map_or(&[][..], |v| &v[..]);
+        let mut scratch = Vec::with_capacity(links_vec.len());
+        for &(loc, _) in links_vec {
+            let slice = section.restrict(loc);
+            scratch.push(D::restrict(&slice[0]));
+        }
+        let bytes = cast_slice(&scratch);
+        comm.isend(nbr, base_tag, bytes);
+    }
+    for (nbr, (h, mut buffer)) in recv_data {
+        let raw = h.wait().expect("data receive");
+        let buf_bytes = cast_slice_mut(&mut buffer);
+        buf_bytes.copy_from_slice(&raw);
+        let parts: &[D::Part] = &buffer;
+        let links_vec = links.get(&nbr).map_or(&[][..], |v| &v[..]);
+        for ((_, dst), part) in links_vec.iter().zip(parts) {
+            let mut_slice = section.restrict_mut(*dst);
+            D::fuse(&mut mut_slice[0], *part);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashMap;
-    use std::sync::{Arc, Mutex};
     use crate::data::atlas::Atlas;
     use crate::data::section::Section;
     use crate::topology::point::PointId;

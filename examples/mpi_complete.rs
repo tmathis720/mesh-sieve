@@ -55,7 +55,7 @@ fn main() {
 
     // 6) Perform the two-phase exchange
     let delta = CopyDelta;
-    complete_section(&mut sec, &ovlp, &comm, &delta, rank);
+    complete_section(&mut sec, &ovlp, &comm, &delta, rank, size);
 
     // 7) Check the result
     if rank == 0 {

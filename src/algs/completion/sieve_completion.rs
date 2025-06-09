@@ -1,6 +1,5 @@
 //! Complete missing sieve arrows across ranks by packing WireTriple.
 
-use crate::topology::sieve::InMemorySieve;
 use crate::topology::point::PointId;
 use crate::overlap::overlap::Remote;
 use crate::algs::completion::partition_point;
@@ -28,7 +27,7 @@ pub fn complete_sieve(
     for (&p, outs) in &sieve.adjacency_out {
         has_owned = true;
         // For every outgoing arrow from my mesh-point
-        for (dst, payload) in outs {
+        for (_dst, _payload) in outs {
             // For every neighbor who has an overlap link to this point
             for (_dst2, rem) in overlap.cone(p) {
                 if rem.rank != my_rank {
@@ -73,7 +72,7 @@ pub fn complete_sieve(
     }
     for (&nbr, links) in &nb_links {
         let mut triples = Vec::with_capacity(links.len());
-        for &(src, dst) in links {
+        for &(src, _dst) in links {
             // Send all arrows from src, not just those matching dst
             if let Some(outs) = sieve.adjacency_out.get(&src) {
                 for (d, payload) in outs {
