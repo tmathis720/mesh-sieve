@@ -20,7 +20,7 @@ fn main() {
     use std::path::Path;
 
     // ─── 1. Find METIS include/lib directories ───────────────────────────────────
-    let (include_dir, lib_dir) = if env::var_os("METIS_NO_PKG_CONFIG").is_some() {
+    let (include_dir, _lib_dir) = if env::var_os("METIS_NO_PKG_CONFIG").is_some() {
         // -------- Manual (Option B) ----------
         let prefix =
             env::var("METIS_DIR").expect("METIS_DIR must be set when METIS_NO_PKG_CONFIG=1");
@@ -57,14 +57,14 @@ fn main() {
 
         let inc = lib
             .include_paths
-            .get(0)
+            .first()
             .unwrap_or_else(|| panic!("pkg-config returned no include path for METIS"))
             .display()
             .to_string();
 
         let lib_dir = lib
             .link_paths
-            .get(0)
+            .first()
             .unwrap_or_else(|| panic!("pkg-config returned no library path for METIS"))
             .display()
             .to_string();

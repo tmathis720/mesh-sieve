@@ -177,10 +177,7 @@ where
 {
     /// Build a Sifter for a given base point: all (cap, payload) pairs for that base.
     pub fn sifter(&self, base: B) -> Vec<(C, P)> {
-        self.up
-            .get(&base)
-            .map(|v| v.to_vec())
-            .unwrap_or_default()
+        self.up.get(&base).map(|v| v.to_vec()).unwrap_or_default()
     }
 }
 

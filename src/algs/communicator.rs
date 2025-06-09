@@ -178,7 +178,7 @@ mod mpi_backend {
 
         fn irecv(&self, peer: usize, _tag: u16, buf: &mut [u8]) -> MpiHandle {
             let len = buf.len();
-            let mut v = vec![0u8; len];
+            let v = vec![0u8; len];
             let static_buf: &'static mut [u8] = Box::leak(v.into_boxed_slice());
             let buf_ptr = static_buf as *mut [u8];
             let req = self

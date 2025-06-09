@@ -16,7 +16,7 @@ use std::collections::HashMap;
 /// Users can insert and remove arrows, and benefit from default graph
 /// algorithms: `closure`, `star`, and `closure_both`.
 pub trait Sieve {
-    /// Type for mesh points (e.g., `PointId`).  Must be `Copy + Eq + Hash`.
+    /// Type for mesh points (e.g., `PointId`).  Must be `Copy + Eq + std::hash::Hash`.
     type Point: Copy + Eq + std::hash::Hash;
     /// Payload attached to each arrow; can carry orientation, weights, etc.
     type Payload;
@@ -43,6 +43,18 @@ pub trait Sieve {
 
     /// Remove one arrow `src -> dst`, returning its payload if present.
     fn remove_arrow(&mut self, src: Self::Point, dst: Self::Point) -> Option<Self::Payload>;
+
+    /// Returns an iterator over *all* points in this Sieve’s domain.
+    /// (Needed for global algorithms: topology‐wide sorts, strata, partitioning, etc.)
+    fn points<'a>(&'a self) -> Box<dyn Iterator<Item = Self::Point> + 'a>;
+
+    /// Returns the set of “base” points: those which may have outgoing arrows.
+    /// Often equals `self.adjacency_out.keys()`.
+    fn base_points<'a>(&'a self) -> Box<dyn Iterator<Item = Self::Point> + 'a>;
+
+    /// Returns the set of “cap” points: those which may have incoming arrows.
+    /// Often equals `self.adjacency_in.keys()`.
+    fn cap_points<'a>(&'a self) -> Box<dyn Iterator<Item = Self::Point> + 'a>;
 
     //=== Blanket default graph algorithms ===
 
@@ -318,9 +330,31 @@ impl<P: Copy + Eq + std::hash::Hash, T: Clone> Sieve for InMemorySieve<P, T> {
         self.strata.take();
         removed
     }
+
+    /// Returns an iterator over *all* points in this Sieve’s domain.
+    /// (Needed for global algorithms: topology‐wide sorts, strata, partitioning, etc.)
+    fn points<'a>(&'a self) -> Box<dyn Iterator<Item = Self::Point> + 'a> {
+        use std::collections::HashSet;
+        let mut keys: HashSet<P> = HashSet::new();
+        keys.extend(self.adjacency_out.keys().copied());
+        keys.extend(self.adjacency_in.keys().copied());
+        Box::new(keys.into_iter())
+    }
+
+    /// Returns the set of “base” points: those which may have outgoing arrows.
+    /// Often equals `self.adjacency_out.keys()`.
+    fn base_points<'a>(&'a self) -> Box<dyn Iterator<Item = Self::Point> + 'a> {
+        Box::new(self.adjacency_out.keys().copied())
+    }
+
+    /// Returns the set of “cap” points: those which may have incoming arrows.
+    /// Often equals `self.adjacency_in.keys()`.
+    fn cap_points<'a>(&'a self) -> Box<dyn Iterator<Item = Self::Point> + 'a> {
+        Box::new(self.adjacency_in.keys().copied())
+    }
 }
 
-//-----------------------------------------------------------------------------
+//----------------------------------------------------------------------------- 
 // Minimal separator (Knepley & Karpeev, Alg 2 §3.3)
 //-----------------------------------------------------------------------------
 
@@ -379,6 +413,7 @@ fn set_intersection<P: Ord + Copy>(a: &[P], b: &[P], out: &mut Vec<P>) {
         }
     }
 }
+
 //-----------------------------------------------------------------------------
 // Tests for minimal separator computation
 //-----------------------------------------------------------------------------
@@ -554,5 +589,39 @@ mod lattice_tests {
         j.sort();
         j.dedup();
         assert_eq!(j, vec![p(1), p(2), p(3)]);
+    }
+}
+
+#[cfg(test)]
+mod pointset_tests {
+    use super::*;
+    use crate::topology::point::PointId as P;
+    use crate::topology::sieve::InMemorySieve;
+
+    fn s() -> InMemorySieve<P, ()> {
+        let mut s = InMemorySieve::default();
+        s.add_arrow(P::new(1), P::new(2), ());
+        s.add_arrow(P::new(3), P::new(2), ());
+        s
+    }
+
+    #[test]
+    fn points_union_base_and_cap() {
+        let s = s();
+        let mut pts: Vec<_> = s.points().collect();
+        pts.sort_unstable();
+        assert_eq!(pts, vec![P::new(1), P::new(2), P::new(3)]);
+    }
+
+    #[test]
+    fn base_vs_cap_points() {
+        let s = s();
+        let mut base: Vec<_> = s.base_points().collect();
+        base.sort_unstable();
+        assert_eq!(base, vec![P::new(1), P::new(3)]);
+
+        let mut cap: Vec<_> = s.cap_points().collect();
+        cap.sort_unstable();
+        assert_eq!(cap, vec![P::new(2)]);
     }
 }

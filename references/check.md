@@ -1,3 +1,5 @@
+# Checkdown
+
 Below is a prioritized list of concrete follow-up items needed to bring the Rust Sieve-rs library into full correspondence with the design and algorithms laid out in the Knepley–Karpeev papers .
 
 1. **Enrich the Sieve API with default lattice operations**
@@ -96,7 +98,6 @@ Below is a prioritized list of concrete follow-up items needed to bring the Rust
 ---
 
 **Next steps**: pick off these items in roughly the above order.  Once the core API (items 1–4) is in place and all tests pass, we can refactor and optimize the more advanced features around hierarchical completion and non-conforming overlaps.
-
 
 Provide a critical list of action items which reflect the necessary additions to ensure that the Sieve-rs code is a feature-complete implementation of the program described in the attached papers:
 

@@ -124,8 +124,6 @@ impl<V: Clone + Default> Map<V> for Section<V> {
 mod tests {
     use super::*;
     use crate::data::atlas::Atlas;
-    #[cfg(feature = "data_refine")]
-    use crate::data::refine::{restrict_closure_vec, restrict_star_vec};
     use crate::topology::point::PointId;
 
     fn make_section() -> Section<f64> {
