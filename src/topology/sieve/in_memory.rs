@@ -58,8 +58,9 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
     fn add_arrow(&mut self, src: P, dst: P, payload: T) {
         self.adjacency_out.entry(src).or_default().push((dst, payload.clone()));
         self.adjacency_in.entry(dst).or_default().push((src, payload));
-        self.strata.take();
+        self.invalidate_cache();
     }
+
     fn remove_arrow(&mut self, src: P, dst: P) -> Option<T> {
         let mut removed = None;
         if let Some(v) = self.adjacency_out.get_mut(&src) {
@@ -72,7 +73,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
                 v.remove(pos);
             }
         }
-        self.strata.take();
+        self.invalidate_cache();
         removed
     }
     // strata helpers now provided by Sieve trait default impls

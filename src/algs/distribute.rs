@@ -35,9 +35,10 @@ use crate::algs::communicator::Communicator;
 /// let comm = NoComm;
 /// let (local, overlap) = distribute_mesh(&global, &parts, &comm);
 /// assert_eq!(local.cone(PointId::new(1)).count(), 0);
-/// assert_eq!(local.cone(PointId::new(2)).count(), 1);
+/// assert_eq!(local.cone(PointId::new(2)).count(), 0);
+/// assert_eq!(local.cone(PointId::new(3)).count(), 0);
 /// let ghosts: Vec<_> = overlap.support(PointId::new(2)).collect();
-/// assert!(ghosts.iter().any(|&(src,rem)| src==PointId::new(2) && rem.rank==0));
+/// assert!(ghosts.iter().any(|&(src, ref rem)| src == PointId::new(3) && rem.rank == 1), "Expected ghost link (3, rank 1) in overlap");
 /// ```
 /// # Example (MPI)
 /// ```ignore

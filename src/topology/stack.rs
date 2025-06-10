@@ -140,12 +140,11 @@ where
     }
 
     fn add_arrow(&mut self, base: B, cap: C, pay: P) {
-        // Insert into both up and down maps
         self.up.entry(base).or_default().push((cap, pay.clone()));
         self.down.entry(cap).or_default().push((base, pay));
         // Invalidate strata on both sieves:
-        self.base.invalidate_cache();
-        self.cap.invalidate_cache();
+        InvalidateCache::invalidate_cache(&mut self.base);
+        InvalidateCache::invalidate_cache(&mut self.cap);
     }
 
     fn remove_arrow(&mut self, base: B, cap: C) -> Option<P> {
@@ -162,8 +161,8 @@ where
                 vec.remove(pos);
             }
         }
-        self.base.invalidate_cache();
-        self.cap.invalidate_cache();
+        InvalidateCache::invalidate_cache(&mut self.base);
+        InvalidateCache::invalidate_cache(&mut self.cap);
         removed
     }
 
@@ -328,6 +327,7 @@ where
     fn invalidate_cache(&mut self) {
         self.base.invalidate_cache();
         self.cap.invalidate_cache();
+        // Add stack-specific cache clears here if needed
     }
 }
 
