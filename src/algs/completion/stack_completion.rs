@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use crate::algs::communicator::Wait;
+use crate::topology::sieve::sieve_trait::Sieve;
 
 /// A tightly-packed triple of (base, cap, payload).
 #[repr(C, packed)]
@@ -45,7 +46,7 @@ pub fn complete_stack<P, Q, Pay, C, S, O, R>(
     // 1. Find all neighbors (ranks) to communicate with
     let mut nb_links: HashMap<usize, Vec<(P, Q, Pay)>> = HashMap::new();
     // Iterate over all base points in the stack's base sieve
-    for base in stack.base_points() {
+    for base in stack.base().base_points() {
         for (cap, pay) in stack.lift(base) {
             for (_dst, rem) in overlap.cone(base) {
                 if rem.rank() != my_rank {

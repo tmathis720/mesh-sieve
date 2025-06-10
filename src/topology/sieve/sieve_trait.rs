@@ -1,8 +1,10 @@
 use crate::topology::stratum::InvalidateCache;
 
 /// Core bidirectional incidence API for mesh topology.
-pub trait Sieve: Default + InvalidateCache {
-    type Point: Copy + Eq + std::hash::Hash;
+pub trait Sieve: Default + InvalidateCache
+    where Self::Point: Ord
+{
+    type Point: Copy + Eq + std::hash::Hash + Ord;
     type Payload;
 
     type ConeIter<'a>: Iterator<Item = (Self::Point, &'a Self::Payload)> where Self: 'a;
@@ -199,37 +201,108 @@ pub trait Sieve: Default + InvalidateCache {
         Box::new(out.into_iter())
     }
 
-    // --- strata helpers ---
-    fn height(&self, p: Self::Point) -> u32;
-    fn depth(&self, p: Self::Point) -> u32;
-    fn diameter(&self) -> u32;
-    fn height_stratum(&self, k: u32) -> Box<dyn Iterator<Item=Self::Point> + '_>;
-    fn depth_stratum(&self, k: u32) -> Box<dyn Iterator<Item=Self::Point> + '_>;
+    // --- strata helpers (default impl via compute_strata) ---
+    /// Distance from any zero-in-degree “source” to `p`.
+    fn height(&self, p: Self::Point) -> u32
+    where Self::Point: Ord, Self: Sized
+    {
+        crate::topology::sieve::strata::compute_strata(self)
+            .height.get(&p).copied().unwrap_or(0)
+    }
 
+    /// Distance from `p` down to any zero-out-degree “sink”.
+    fn depth(&self, p: Self::Point) -> u32
+    where Self::Point: Ord, Self: Sized
+    {
+        crate::topology::sieve::strata::compute_strata(self)
+            .depth.get(&p).copied().unwrap_or(0)
+    }
+
+    /// Maximum height (diameter of the DAG).
+    fn diameter(&self) -> u32
+    where Self: Sized
+    {
+        crate::topology::sieve::strata::compute_strata(self).diameter
+    }
+
+    /// Iterator over all points at height `k`.
+    fn height_stratum<'a>(&'a self, k: u32) -> Box<dyn Iterator<Item=Self::Point> + 'a>
+    where Self: Sized
+    {
+        let cache = crate::topology::sieve::strata::compute_strata(self);
+        let items: Vec<_> = cache.strata.get(k as usize)
+            .map(|v| v.iter().copied().collect())
+            .unwrap_or_else(Vec::new);
+        Box::new(items.into_iter())
+    }
+
+    /// Iterator over all points at depth `k`.
+    fn depth_stratum<'a>(&'a self, k: u32) -> Box<dyn Iterator<Item=Self::Point> + 'a>
+    where Self::Point: Ord, Self: Sized
+    {
+        let cache = crate::topology::sieve::strata::compute_strata(self);
+        let pts: Vec<_> = cache.depth.into_iter()
+            .filter(|&(_,d)| d==k)
+            .map(|(p,_)| p)
+            .collect();
+        Box::new(pts.into_iter())
+    }
+
+    /// # Strata helpers example
+    /// ```rust
+    /// # use sieve_rs::topology::sieve::Sieve;
+    /// # use sieve_rs::topology::sieve::InMemorySieve;
+    /// # use sieve_rs::topology::point::PointId;
+    /// let mut s = InMemorySieve::<PointId,()>::default();
+    /// // 1→2→3→4
+    /// s.add_arrow(PointId::new(1), PointId::new(2), ());
+    /// s.add_arrow(PointId::new(2), PointId::new(3), ());
+    /// s.add_arrow(PointId::new(3), PointId::new(4), ());
+    /// assert_eq!(s.height(PointId::new(4)), 3);
+    /// assert_eq!(s.depth(PointId::new(1)), 3);
+    /// assert_eq!(s.diameter(), 3);
+    /// let h2: Vec<_> = s.height_stratum(2).collect();
+    /// let d1: Vec<_> = s.depth_stratum(1).collect();
+    /// ```
+    ///
+    /// # Panics
+    /// Strata helpers will panic if used on a Sieve that is not a DAG (directed acyclic graph).
+    /// For example, if there are cycles like `1→2→1`, or if there are bidirectional arrows like `1→2` and `2→1`.
+    ///
+    /// # Performance
+    /// These helpers are relatively expensive, as they require analyzing the entire Sieve structure.
+    /// For incremental or real-time applications, consider caching the results.
+    ///
+    /// # Example
+    /// ```
+    /// use sieve_rs::topology::sieve::{Sieve, InMemorySieve};
+    /// let mut s = InMemorySieve::<u32>::default();
+    /// s.add_arrow(1, 2, ());
+    /// s.add_arrow(2, 3, ());
+    /// s.add_arrow(3, 4, ());
+    /// s.add_arrow(4, 5, ());
+    /// s.add_arrow(2, 5, ());
+    /// // 1→2→3→4→5
+    /// //    ↘
+    /// //      ↙
+    /// assert_eq!(s.height(5), 4);
+    /// assert_eq!(s.depth(1), 4);
+    /// assert_eq!(s.diameter(), 4);
+    /// let h2: Vec<_> = s.height_stratum(2).collect();
+    /// let d1: Vec<_> = s.depth_stratum(1).collect();
+    /// ```
     /// Insert a brand-new point `p` into the domain (no arrows yet).
-    fn add_point(&mut self, p: Self::Point) where Self: InvalidateCache {
-        InvalidateCache::invalidate_cache(self);
-    }
+    fn add_point(&mut self, _p: Self::Point) where Self: InvalidateCache {}
     /// Remove point `p` and all its arrows.
-    fn remove_point(&mut self, p: Self::Point) where Self: InvalidateCache {
-        InvalidateCache::invalidate_cache(self);
-    }
+    fn remove_point(&mut self, _p: Self::Point) where Self: InvalidateCache {}
     /// Ensure `p` appears in the base (outgoing) point set, even if no arrows yet.
-    fn add_base_point(&mut self, p: Self::Point) where Self: InvalidateCache {
-        InvalidateCache::invalidate_cache(self);
-    }
+    fn add_base_point(&mut self, _p: Self::Point) where Self: InvalidateCache {}
     /// Ensure `p` appears in the cap   (incoming) point set.
-    fn add_cap_point(&mut self, p: Self::Point) where Self: InvalidateCache {
-        InvalidateCache::invalidate_cache(self);
-    }
+    fn add_cap_point(&mut self, _p: Self::Point) where Self: InvalidateCache {}
     /// Remove `p` from base_points (dropping its outgoing arrows).
-    fn remove_base_point(&mut self, p: Self::Point) where Self: InvalidateCache {
-        InvalidateCache::invalidate_cache(self);
-    }
+    fn remove_base_point(&mut self, _p: Self::Point) where Self: InvalidateCache {}
     /// Remove `p` from cap_points  (dropping its incoming arrows).
-    fn remove_cap_point(&mut self, p: Self::Point) where Self: InvalidateCache {
-        InvalidateCache::invalidate_cache(self);
-    }
+    fn remove_cap_point(&mut self, _p: Self::Point) where Self: InvalidateCache {}
     /// Replace `p`’s entire cone with the given chain (dst↦payload).
     fn set_cone(&mut self, p: Self::Point, chain: impl IntoIterator<Item=(Self::Point, Self::Payload)>) where Self: InvalidateCache {
         let dsts: Vec<_> = self.cone(p).map(|(dst,_)| dst).collect();

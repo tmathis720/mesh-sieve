@@ -1,12 +1,11 @@
 // src/algs/distribute.rs
 
-use crate::algs::communicator::Communicator;
 use crate::topology::point::PointId;
 use crate::topology::sieve::{Sieve, InMemorySieve};
 use crate::overlap::overlap::Remote;
-use crate::algs::completion::{sieve_completion, section_completion};
-use std::collections::HashMap;
-use mpi::topology::Communicator as MpiCommunicator;
+use crate::algs::completion::sieve_completion;
+use crate::algs::communicator::Communicator;
+
 
 
 /// Distribute a global mesh across MPI ranks.
@@ -30,7 +29,7 @@ where
     C: Communicator + Sync,
 {
     let my_rank = comm.rank();      // assume your Communicator exposes `rank()`
-    let n_ranks = comm.size();      // and `size()`
+    let _n_ranks = comm.size();      // and `size()`
     // 1) Build the “overlap” sieve
     let mut overlap = InMemorySieve::<PointId,Remote>::default();
     for p in mesh.points() {

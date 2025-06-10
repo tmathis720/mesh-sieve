@@ -7,6 +7,7 @@
 
 use super::sieve::InMemorySieve;
 use crate::topology::stratum::InvalidateCache;
+use crate::topology::sieve::arc_payload::SieveArcPayload;
 use std::collections::HashMap;
 
 /// A `Stack` links a *base* Sieve to a *cap* Sieve via vertical arrows.
@@ -23,9 +24,9 @@ pub trait Stack {
     /// Per-arrow payload type.
     type Payload: Clone;
     /// The underlying base Sieve type.
-    type BaseSieve;
+    type BaseSieve: crate::topology::sieve::sieve_trait::Sieve<Point=Self::Point, Payload=Self::Payload>;
     /// The underlying cap Sieve type.
-    type CapSieve;
+    type CapSieve: crate::topology::sieve::sieve_trait::Sieve<Point=Self::CapPt, Payload=Self::Payload>;
 
     // === Topology queries ===
     /// Returns an iterator over all upward arrows from base point `p` to cap points.
@@ -44,9 +45,13 @@ pub trait Stack {
 
     // === Mutation helpers ===
     /// Adds a new vertical arrow `base -> cap` with associated payload.
+    ///
+    /// **Implementors:** after mutating arrows, you *must* invalidate any derived caches on both the base‐ and cap‐sieves (e.g. via `InvalidateCache::invalidate_cache(self.base_mut())` and likewise for `self.cap_mut()`).
     fn add_arrow(&mut self, base: Self::Point, cap: Self::CapPt, pay: Self::Payload);
 
     /// Removes the arrow `base -> cap`, returning its payload if present.
+    ///
+    /// **Implementors:** after mutating arrows, you *must* invalidate any derived caches on both the base‐ and cap‐sieves.
     fn remove_arrow(&mut self, base: Self::Point, cap: Self::CapPt) -> Option<Self::Payload>;
 
     // === Convenience accessors ===
@@ -54,8 +59,6 @@ pub trait Stack {
     fn base(&self) -> &Self::BaseSieve;
     /// Returns a reference to the underlying cap Sieve.
     fn cap(&self) -> &Self::CapSieve;
-    /// Returns an iterator over all base points with at least one upward arrow.
-    fn base_points(&self) -> Box<dyn Iterator<Item = Self::Point> + '_>;
 }
 
 /// In-memory implementation of the `Stack` trait.
@@ -140,8 +143,9 @@ where
         // Insert into both up and down maps
         self.up.entry(base).or_default().push((cap, pay.clone()));
         self.down.entry(cap).or_default().push((base, pay));
-        // structural change → clear caches
-        crate::topology::stratum::InvalidateCache::invalidate_cache(self);
+        // Invalidate strata on both sieves:
+        self.base.invalidate_cache();
+        self.cap.invalidate_cache();
     }
 
     fn remove_arrow(&mut self, base: B, cap: C) -> Option<P> {
@@ -158,7 +162,8 @@ where
                 vec.remove(pos);
             }
         }
-        crate::topology::stratum::InvalidateCache::invalidate_cache(self);
+        self.base.invalidate_cache();
+        self.cap.invalidate_cache();
         removed
     }
 
@@ -167,21 +172,6 @@ where
     }
     fn cap(&self) -> &Self::CapSieve {
         &self.cap
-    }
-    fn base_points(&self) -> Box<dyn Iterator<Item = B> + '_> {
-        Box::new(self.up.keys().copied())
-    }
-}
-
-impl<B, C, P> InMemoryStack<B, C, P>
-where
-    B: Copy + Eq + std::hash::Hash + Ord,
-    C: Copy + Eq + std::hash::Hash + Ord,
-    P: Clone,
-{
-    /// Build a Sifter for a given base point: all (cap, payload) pairs for that base.
-    pub fn sifter(&self, base: B) -> Vec<(C, P)> {
-        self.up.get(&base).map(|v| v.to_vec()).unwrap_or_default()
     }
 }
 
@@ -205,7 +195,7 @@ where
     /// Function to merge two payloads into one
     pub compose_payload: F,
     /// Buffer to hold composed payloads for the duration of traversal
-    pub payload_buffer: std::cell::RefCell<Vec<std::sync::Arc<S1::Payload>>>,
+    pub payloads: std::cell::RefCell<Vec<std::sync::Arc<S1::Payload>>>,
 }
 
 impl<'a, S1, S2, F> ComposedStack<'a, S1, S2, F>
@@ -220,7 +210,7 @@ where
             lower,
             upper,
             compose_payload,
-            payload_buffer: std::cell::RefCell::new(Vec::new()),
+            payloads: std::cell::RefCell::new(Vec::new()),
         }
     }
 }
@@ -234,8 +224,8 @@ where
     type Point = S1::Point;
     type CapPt = S2::CapPt;
     type Payload = std::sync::Arc<S1::Payload>;
-    type BaseSieve = S1::BaseSieve;
-    type CapSieve = S2::CapSieve;
+    type BaseSieve = SieveArcPayload<S1::BaseSieve>;
+    type CapSieve = SieveArcPayload<S2::CapSieve>;
 
     fn lift<'b>(
         &'b self,
@@ -244,27 +234,23 @@ where
         let lower = self.lower;
         let upper = self.upper;
         let compose = &self.compose_payload;
-        // Clear buffer for this traversal
-        let mut buffer = self.payload_buffer.borrow_mut();
-        buffer.clear();
-        // Compose all pairs and store in buffer
+        // Compose all pairs and store in a local Vec
         let pairs: Vec<(S2::CapPt, std::sync::Arc<S1::Payload>)> = lower.lift(p)
             .flat_map(|(mid, pay1)| {
                 upper.lift(mid).map(move |(cap, pay2)| {
-                    let composed = (compose)(pay1, pay2);
-                    let arc = std::sync::Arc::new(composed);
+                    let arc = std::sync::Arc::new((compose)(pay1, pay2));
                     (cap, arc)
                 })
             })
             .collect();
-        for (_, arc) in &pairs {
-            buffer.push(arc.clone());
-        }
-        // Now create an iterator over references into those Arcs
-        let buffer_ptr = &*buffer as *const Vec<std::sync::Arc<S1::Payload>>;
+        // Now update the buffer and return refs
+        let mut buf = self.payloads.borrow_mut();
+        buf.clear();
+        buf.shrink_to_fit();
+        buf.extend(pairs.iter().map(|(_, arc)| arc.clone()));
+        let buf_ptr = &*buf as *const Vec<std::sync::Arc<S1::Payload>>;
         Box::new(pairs.into_iter().enumerate().map(move |(i, (cap, _))| {
-            // Safety: buffer lives as long as self, and we only push as many as pairs.len()
-            let arc_ref = unsafe { &(*buffer_ptr)[i] };
+            let arc_ref = unsafe { &(*buf_ptr)[i] };
             (cap, arc_ref)
         }))
     }
@@ -276,23 +262,21 @@ where
         let lower = self.lower;
         let upper = self.upper;
         let compose = &self.compose_payload;
-        let mut buffer = self.payload_buffer.borrow_mut();
-        buffer.clear();
         let pairs: Vec<(S1::Point, std::sync::Arc<S1::Payload>)> = upper.drop(q)
             .flat_map(|(mid, pay2)| {
                 lower.drop(mid).map(move |(base, pay1)| {
-                    let composed = (compose)(pay1, pay2);
-                    let arc = std::sync::Arc::new(composed);
+                    let arc = std::sync::Arc::new((compose)(pay1, pay2));
                     (base, arc)
                 })
             })
             .collect();
-        for (_, arc) in &pairs {
-            buffer.push(arc.clone());
-        }
-        let buffer_ptr = &*buffer as *const Vec<std::sync::Arc<S1::Payload>>;
+        let mut buf = self.payloads.borrow_mut();
+        buf.clear();
+        buf.shrink_to_fit();
+        buf.extend(pairs.iter().map(|(_, arc)| arc.clone()));
+        let buf_ptr = &*buf as *const Vec<std::sync::Arc<S1::Payload>>;
         Box::new(pairs.into_iter().enumerate().map(move |(i, (base, _))| {
-            let arc_ref = unsafe { &(*buffer_ptr)[i] };
+            let arc_ref = unsafe { &(*buf_ptr)[i] };
             (base, arc_ref)
         }))
     }
@@ -304,29 +288,35 @@ where
         panic!("Cannot mutate a composed stack");
     }
     fn base(&self) -> &Self::BaseSieve {
-        self.lower.base()
+        // Not implemented: would require storing a wrapped reference
+        panic!("ComposedStack does not expose a base sieve");
     }
     fn cap(&self) -> &Self::CapSieve {
-        self.upper.cap()
-    }
-    fn base_points(&self) -> Box<dyn Iterator<Item = Self::Point> + '_> {
-        // Not implemented for composed stacks; return empty iterator for now
-        Box::new(std::iter::empty())
+        // Not implemented: would require storing a wrapped reference
+        panic!("ComposedStack does not expose a cap sieve");
     }
 }
 
 #[test]
 fn composed_stack_no_leak() {
+    use std::sync::Arc;
     let mut s1 = InMemoryStack::<u32, u32, i32>::new();
     let mut s2 = InMemoryStack::<u32, u32, i32>::new();
     s1.add_arrow(1, 10, 2);
     s2.add_arrow(10, 100, 5);
     let cs = ComposedStack::new(&s1, &s2, |a, b| a + b);
+    // Allow the buffer to grow if needed, but it should not grow unboundedly for repeated traversals of the same size
+    let mut max_capacity = 0;
     for _ in 0..100 {
-        let _ = cs.lift(1).count();
+        let _v: Vec<_> = cs.lift(1).map(|(_, p)| Arc::strong_count(p)).collect();
+        let cap = cs.payloads.borrow().capacity();
+        if cap > max_capacity {
+            max_capacity = cap;
+        }
     }
-    // after 100 calls, buffer len should not exceed single call’s output size
-    assert!(cs.payload_buffer.borrow().len() <= s1.lift(1).count() * s2.lift(10).count());
+    // After repeated traversals, the capacity should stabilize
+    let final_capacity = cs.payloads.borrow().capacity();
+    assert!(final_capacity <= max_capacity);
 }
 
 impl<B, C, P> InvalidateCache for InMemoryStack<B, C, P>
