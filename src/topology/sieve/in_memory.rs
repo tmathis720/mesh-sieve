@@ -12,7 +12,7 @@ where
 {
     pub adjacency_out: HashMap<P, Vec<(P,T)>>,
     pub adjacency_in:  HashMap<P, Vec<(P,T)>>,
-    strata: OnceCell<StrataCache<P>>,
+    pub strata: OnceCell<StrataCache<P>>,
 }
 
 impl<P: Copy+Eq+std::hash::Hash+Ord, T> Default for InMemorySieve<P,T> {
@@ -33,12 +33,6 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> InMemorySieve<P,T> {
             sieve.add_arrow(src, dst, payload);
         }
         sieve
-    }
-    pub fn strata_cache(&self) -> &StrataCache<P> {
-        self.strata.get_or_init(|| crate::topology::stratum::compute_strata(self))
-    }
-    pub fn invalidate_strata(&mut self) {
-        self.strata.take();
     }
 }
 
@@ -108,5 +102,12 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
         let cache = self.strata_cache();
         let points: Vec<_> = cache.depth.iter().filter(|(_, d)| **d == k).map(|(&p, _)| p).collect();
         Box::new(points.into_iter())
+    }
+    // Implement meet and join by delegating to LatticeOps
+    fn meet<'s>(&'s self, a: P, b: P) -> Box<dyn Iterator<Item=P> + 's> {
+        crate::topology::sieve::lattice::LatticeOps::meet(self, a, b)
+    }
+    fn join<'s>(&'s self, a: P, b: P) -> Box<dyn Iterator<Item=P> + 's> {
+        crate::topology::sieve::lattice::LatticeOps::join(self, a, b)
     }
 }

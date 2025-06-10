@@ -4,7 +4,6 @@
 use crate::algs::traversal::star;
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
-use crate::topology::sieve::InMemorySieve;
 
 type P = PointId;
 

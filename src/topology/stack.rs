@@ -263,9 +263,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+    #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, PartialOrd, Ord)]
     struct V(u32);
-    #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+    #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, PartialOrd, Ord)]
     struct Dof(u32);
     #[test]
     fn add_and_lift_drop() {
@@ -293,11 +293,11 @@ mod tests {
     #[test]
     fn composed_stack_lift_drop() {
         use super::*;
-        #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+        #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, PartialOrd, Ord)]
         struct A(u32);
-        #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+        #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, PartialOrd, Ord)]
         struct B(u32);
-        #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+        #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, PartialOrd, Ord)]
         struct C(u32);
         // Stack1: A → B
         let mut s1 = InMemoryStack::<A, B, i32>::new();
@@ -314,7 +314,7 @@ mod tests {
             compose_payload: |p1, p2| p1 + p2,
         };
         let mut lifted: Vec<_> = composed.lift(A(1)).map(|(c, p)| (c, *p)).collect();
-        lifted.sort_by_key(|(c, _)| c.0);
+        lifted.sort_by_key(|(c, _)| (*c).0);
         assert_eq!(lifted, vec![(C(100), 7), (C(101), 10)]);
         let dropped: Vec<_> = composed.drop(C(100)).map(|(a, p)| (a, *p)).collect();
         assert_eq!(dropped, vec![(A(1), 7)]);

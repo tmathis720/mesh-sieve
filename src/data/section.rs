@@ -6,8 +6,6 @@
 
 use crate::data::atlas::Atlas;
 use crate::topology::point::PointId;
-use crate::topology::sieve::InMemorySieve;
-use crate::topology::sieve::Sieve;
 
 /// Storage for per-point field data, backed by an `Atlas`.
 #[derive(Clone, Debug)]
@@ -126,6 +124,8 @@ impl<V: Clone + Default> Map<V> for Section<V> {
 mod tests {
     use super::*;
     use crate::data::atlas::Atlas;
+    use crate::topology::sieve::Sieve;
+    use crate::topology::sieve::InMemorySieve;
     use crate::topology::point::PointId;
 
     fn make_section() -> Section<f64> {

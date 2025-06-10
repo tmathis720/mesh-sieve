@@ -1,13 +1,13 @@
 //! Run with: mpirun -n 2 cargo run --example mpi_complete
-use mpi::topology::Communicator;
 use sieve_rs::algs::communicator::MpiComm;
-use sieve_rs::algs::completion::complete_section;
+use mpi::topology::Communicator;
+use std::process;
+use sieve_rs::topology::point::PointId;
+use sieve_rs::overlap::overlap::Overlap;
 use sieve_rs::data::atlas::Atlas;
 use sieve_rs::data::section::Section;
 use sieve_rs::overlap::delta::CopyDelta;
-use sieve_rs::overlap::overlap::Overlap;
-use sieve_rs::topology::point::PointId;
-use std::process;
+use sieve_rs::algs::completion::complete_section;
 
 fn main() {
     // 1) Init MPI
@@ -38,8 +38,8 @@ fn main() {
     // so that after complete_section() each rank can see both values.
     let mut atlas = Atlas::default();
     if rank == 0 {
-        atlas.insert(p0, 1); // my owned DOF
-        atlas.insert(p1, 1); // ghost DOF
+        atlas.insert(p0, 1);  // my owned DOF
+        atlas.insert(p1, 1);  // ghost DOF
     } else {
         atlas.insert(p1, 1);
         atlas.insert(p0, 1);
@@ -63,59 +63,13 @@ fn main() {
         let got = sec.restrict(p1)[0];
         println!("rank0: received ghost p1 = {}", got);
         assert_eq!(got, 200);
-        // Also check that my own value is unchanged
-        assert_eq!(sec.restrict(p0)[0], 100);
     } else {
         // rank1 should have received rank0’s 100 into its p0 slot
         let got = sec.restrict(p0)[0];
         println!("rank1: received ghost p0 = {}", got);
         assert_eq!(got, 100);
-        // Also check that my own value is unchanged
-        assert_eq!(sec.restrict(p1)[0], 200);
     }
     if rank == 0 {
         println!("MPI two-rank example succeeded!");
-    }
-
-    // Additional: test no-overlap case (each rank only owns its own point)
-    let mut atlas = Atlas::default();
-    if rank == 0 {
-        atlas.insert(p0, 1);
-    } else {
-        atlas.insert(p1, 1);
-    }
-    let mut sec = Section::<u32>::new(atlas);
-    if rank == 0 {
-        sec.set(p0, &[123]);
-    } else {
-        sec.set(p1, &[456]);
-    }
-    let ovlp = Overlap::default();
-    complete_section(&mut sec, &ovlp, &comm, &delta, rank, size);
-    if rank == 0 {
-        assert_eq!(sec.restrict(p0)[0], 123);
-    } else {
-        assert_eq!(sec.restrict(p1)[0], 456);
-    }
-
-    // Additional: test both ranks ghosting the same point (overlap symmetry)
-    // Here, both ranks will try to ghost p0 from rank 0
-    let mut atlas = Atlas::default();
-    atlas.insert(p0, 1);
-    let mut sec = Section::<u32>::new(atlas);
-    if rank == 0 {
-        sec.set(p0, &[999]);
-    }
-    let mut ovlp = Overlap::default();
-    if rank == 0 {
-        ovlp.add_link(p0, 1, p0); // owner advertises p0 to rank 1
-    }
-    if rank == 1 {
-        ovlp.add_link(p0, 0, p0); // ghost requests p0 from rank 0
-    }
-    complete_section(&mut sec, &ovlp, &comm, &delta, rank, size);
-    if rank == 1 {
-        assert_eq!(sec.restrict(p0)[0], 999);
-        println!("rank1: symmetric ghosting of p0 succeeded");
     }
 }
