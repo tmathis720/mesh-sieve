@@ -151,3 +151,84 @@ mod tests {
         assert_eq!(set.len(), 2);
     }
 }
+
+#[cfg(test)]
+mod serde_tests {
+    use super::*;
+    #[test]
+    fn json_roundtrip() {
+        let p = PointId::new(123);
+        let s = serde_json::to_string(&p).unwrap();
+        let p2: PointId = serde_json::from_str(&s).unwrap();
+        assert_eq!(p2, p);
+    }
+    #[test]
+    fn bincode_roundtrip() {
+        let p = PointId::new(456);
+        let bytes = bincode::serialize(&p).unwrap();
+        let p2: PointId = bincode::deserialize(&bytes).unwrap();
+        assert_eq!(p2, p);
+    }
+}
+
+#[cfg(test)]
+mod abi_tests {
+    use super::*;
+    use static_assertions::{assert_eq_align, assert_eq_size};
+    #[test]
+    fn alignment_matches_u64() {
+        assert_eq_align!(PointId, u64);
+    }
+    #[test]
+    fn size_matches_u64() {
+        assert_eq_size!(PointId, u64);
+    }
+}
+
+#[cfg(test)]
+mod copy_clone_eq_tests {
+    use super::*;
+    #[test]
+    fn copy_and_clone() {
+        let p = PointId::new(5);
+        let q = p;
+        let r = p.clone();
+        assert_eq!(p, q);
+        assert_eq!(p, r);
+    }
+    #[test]
+    fn eq_and_neq() {
+        let p = PointId::new(8);
+        let q = PointId::new(8);
+        let r = PointId::new(9);
+        assert_eq!(p, p);
+        assert_eq!(p, q);
+        assert_ne!(p, r);
+    }
+}
+
+#[cfg(test)]
+mod edge_case_tests {
+    use super::*;
+    #[test]
+    fn max_value() {
+        let p = PointId::new(u64::MAX);
+        assert_eq!(p.get(), u64::MAX);
+    }
+}
+
+#[cfg(all(test, feature = "metis-support"))]
+mod mpi_equivalence_tests {
+    use super::*;
+    use mpi::datatype::Equivalence;
+    #[test]
+    fn pointid_equivalence_matches_u64() {
+        let t1 = <PointId as Equivalence>::equivalent_datatype();
+        let t2 = <u64 as Equivalence>::equivalent_datatype();
+        assert_eq!(t1, t2);
+    }
+}
+
+// Add these to dev-dependencies in Cargo.toml:
+// serde_json = "1.0"
+// bincode = "1.3"

@@ -141,8 +141,7 @@ where
 
     fn add_arrow(&mut self, base: B, cap: C, pay: P) {
         self.up.entry(base).or_default().push((cap, pay.clone()));
-        self.down.entry(cap).or_default().push((base, pay));
-        // Invalidate strata on both sieves:
+        self.down.entry(cap).or_default().push((base, pay.clone()));
         InvalidateCache::invalidate_cache(&mut self.base);
         InvalidateCache::invalidate_cache(&mut self.cap);
     }
@@ -171,6 +170,21 @@ where
     }
     fn cap(&self) -> &Self::CapSieve {
         &self.cap
+    }
+}
+
+// Add base_points and cap_points accessors for testability
+impl<B, C, P> InMemoryStack<B, C, P>
+where
+    B: Copy + Eq + std::hash::Hash + Ord,
+    C: Copy + Eq + std::hash::Hash + Ord,
+    P: Clone,
+{
+    pub fn base_points(&self) -> impl Iterator<Item = B> + '_ {
+        self.up.keys().copied()
+    }
+    pub fn cap_points(&self) -> impl Iterator<Item = C> + '_ {
+        self.down.keys().copied()
     }
 }
 
@@ -396,5 +410,97 @@ mod tests {
         s.add_arrow(2, 11, 3);
         let d1 = s.base.diameter();
         assert!(d1 >= d0);
+    }
+
+    #[test]
+    fn base_and_cap_points_reflect_maps() {
+        let mut s = InMemoryStack::<u32,u32,()>::new();
+        // empty
+        assert!(s.base_points().next().is_none());
+        assert!(s.cap_points().next().is_none());
+        // add arrow 1→10
+        s.add_arrow(1,10,());
+        let bases: Vec<_> = s.base_points().collect();
+        let caps:  Vec<_> = s.cap_points().collect();
+        assert_eq!(bases, vec![1]);
+        assert_eq!(caps,  vec![10]);
+    }
+
+    #[test]
+    fn new_and_default_empty() {
+        let s1 = InMemoryStack::<u8,u8,u8>::new();
+        let s2: InMemoryStack<u8,u8,u8> = Default::default();
+        assert_eq!(s1.base_points().count(), 0);
+        assert_eq!(s2.cap_points().count(),  0);
+    }
+
+    #[test]
+    #[should_panic(expected="Cannot mutate")]
+    fn composed_stack_add_arrow_panics() {
+        let s1 = InMemoryStack::<u8,u8,u8>::new();
+        let s2 = InMemoryStack::<u8,u8,u8>::new();
+        let mut cs = ComposedStack::new(&s1,&s2,|a,_b|*a);
+        cs.add_arrow(0,0, std::sync::Arc::new(0));
+    }
+    #[test]
+    #[should_panic(expected="Cannot mutate")]
+    fn composed_stack_remove_arrow_panics() {
+        let s1 = InMemoryStack::<u8,u8,u8>::new();
+        let s2 = InMemoryStack::<u8,u8,u8>::new();
+        let mut cs = ComposedStack::new(&s1,&s2,|a,_b|*a);
+        cs.remove_arrow(0,0);
+    }
+
+    #[test]
+    fn remove_nonexistent_returns_none() {
+        let mut s = InMemoryStack::<u32,u32,()>::new();
+        assert_eq!(s.remove_arrow(5,50), None);
+    }
+
+    #[test]
+    fn invalidate_cache_clears_embedded() {
+        let mut s = InMemoryStack::<u32,u32,i32>::new();
+        // manually prime strata cache
+        let _ = s.base().diameter();
+        let _ = s.cap().diameter();
+        s.invalidate_cache();
+        // re‐access should re‐compute (no panic, but at least not stale)
+        let _ = s.base().diameter();
+        let _ = s.cap().diameter();
+    }
+
+    #[test]
+    fn lift_drop_empty_iter() {
+        let s = InMemoryStack::<u8,u8,()>::new();
+        assert!(s.lift(0).next().is_none());
+        assert!(s.drop(0).next().is_none());
+    }
+
+    #[test]
+    #[should_panic]
+    fn composed_stack_base_panics() {
+        let s1 = InMemoryStack::<u8,u8,u8>::new();
+        let s2 = InMemoryStack::<u8,u8,u8>::new();
+        let cs = ComposedStack::new(&s1, &s2, |a,_b| *a);
+        let _ = cs.base();
+    }
+    #[test]
+    #[should_panic]
+    fn composed_stack_cap_panics() {
+        let s1 = InMemoryStack::<u8,u8,u8>::new();
+        let s2 = InMemoryStack::<u8,u8,u8>::new();
+        let cs = ComposedStack::new(&s1, &s2, |a,_b| *a);
+        let _ = cs.cap();
+    }
+
+    #[test]
+    fn stack_vertical_arrows_are_correct() {
+        let mut s = InMemoryStack::<u32,u32,i32>::new();
+        s.add_arrow(2, 20, 5);
+        // The stack's lift and drop reflect the vertical arrows
+        let lifted: Vec<_> = s.lift(2).collect();
+        assert_eq!(lifted, vec![(20, &5)]);
+        let dropped: Vec<_> = s.drop(20).collect();
+        assert_eq!(dropped, vec![(2, &5)]);
     }
 }

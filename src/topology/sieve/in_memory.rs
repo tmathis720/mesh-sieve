@@ -229,7 +229,7 @@ mod sieve_tests {
         let mut j: Vec<_> = s.join(2, 3).collect();
         j.sort();
         // Documented behavior: meet(1,2) = [], join(2,3) = [1,2,3] for this implementation
-        assert_eq!(m, vec![]);
+        assert_eq!(m, Vec::<u32>::new());
         assert_eq!(j, vec![1, 2, 3]);
     }
 

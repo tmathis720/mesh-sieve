@@ -154,8 +154,6 @@ impl<V> InvalidateCache for Section<V> {
 mod tests {
     use super::*;
     use crate::data::atlas::Atlas;
-    use crate::topology::sieve::Sieve;
-    use crate::topology::sieve::InMemorySieve;
     use crate::topology::point::PointId;
 
     fn make_section() -> Section<f64> {

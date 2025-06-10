@@ -12,7 +12,7 @@ use crate::topology::point::PointId;
 ///
 /// # Type Parameters
 /// - `P`: The type of per-arrow payload. Defaults to `()` for payload-free arrows.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Arrow<P = ()> {
     /// Source topological point (e.g., a cell or face handle).
     pub src: PointId,
@@ -147,5 +147,61 @@ mod tests {
         a1.hash(&mut h1);
         a2.hash(&mut h2);
         assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn new_stores_payload() {
+        let a = Arrow::new(PointId::new(7), PointId::new(8), "foo");
+        assert_eq!(a.src.get(), 7);
+        assert_eq!(a.dst.get(), 8);
+        assert_eq!(a.payload, "foo");
+    }
+
+    #[test]
+    fn default_is_unit_on_1() {
+        let d = Arrow::<()>::default();
+        assert_eq!(d, Arrow::unit(PointId::new(1), PointId::new(1)));
+    }
+
+    #[test]
+    fn debug_prints_struct() {
+        let a = Arrow::new(PointId::new(1), PointId::new(2), 99u8);
+        let dbg = format!("{:?}", a);
+        assert!(dbg.contains("Arrow") && dbg.contains("99"));
+    }
+
+    #[test]
+    fn clone_eqs_original() {
+        let a = Arrow::new(PointId::new(3), PointId::new(4), vec![1,2,3]);
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn orientation_traits() {
+        let f = Orientation::Forward;
+        let r = Orientation::Reverse;
+        let f2 = f;
+        assert_eq!(f, f2);
+        use std::collections::HashSet;
+        let mut s = HashSet::new();
+        s.insert(f);
+        s.insert(r);
+        assert!(s.contains(&Orientation::Forward));
+    }
+
+    #[test]
+    fn arrow_with_zero_payload() {
+        let a = Arrow::unit(PointId::new(1), PointId::new(2));
+        let b = a.clone().map(|()| ());
+        assert_eq!(b.payload, ());
+    }
+
+    #[test]
+    fn serde_arrow_roundtrip() {
+        let a = Arrow::new(PointId::new(1), PointId::new(2), vec![10]);
+        let json = serde_json::to_string(&a).unwrap();
+        let a2: Arrow<Vec<u8>> = serde_json::from_str(&json).unwrap();
+        assert_eq!(a, a2);
     }
 }

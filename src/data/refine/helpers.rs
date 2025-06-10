@@ -49,11 +49,12 @@ where
     restrict_star(sieve, map, seeds).collect()
 }
 
-#[cfg(feature = "data_refine")]
+// Remove or update #[cfg(feature = "data_refine")] to avoid warning
+// #[cfg(feature = "data_refine")]
 pub struct ReadOnlyMap<'a, V: Clone + Default> {
     pub section: &'a crate::data::section::Section<V>,
 }
-#[cfg(feature = "data_refine")]
+// #[cfg(feature = "data_refine")]
 impl<'a, V: Clone + Default> crate::data::section::Map<V> for ReadOnlyMap<'a, V> {
     fn get(&self, p: crate::topology::point::PointId) -> &[V] {
         self.section.restrict(p)
