@@ -285,14 +285,21 @@ mod sieve_strata_default_tests {
         type Point = u32;
         type Payload = ();
         type ConeIter<'a> = std::iter::Map<std::slice::Iter<'a, u32>, fn(&u32) -> (u32, &())> where Self: 'a;
-        type SupportIter<'a> = std::iter::Empty<(u32, &'a ())> where Self: 'a;
+        type SupportIter<'a> = Box<dyn Iterator<Item = (u32, &'a ())> + 'a> where Self: 'a;
         fn cone<'a>(&'a self, p: u32) -> Self::ConeIter<'a> {
             fn map_fn(x: &u32) -> (u32, &()) { (*x, &()) }
             let f: fn(&u32) -> (u32, &()) = map_fn;
             self.edges.get(&p).map(|v| v.iter().map(f)).unwrap_or_else(|| [].iter().map(f))
         }
-        fn support<'a>(&'a self, _p: u32) -> Self::SupportIter<'a> {
-            std::iter::empty()
+        fn support<'a>(&'a self, p: u32) -> Self::SupportIter<'a> {
+            // Return all nodes that have an edge to p
+            let mut preds = Vec::new();
+            for (src, dsts) in &self.edges {
+                if dsts.contains(&p) {
+                    preds.push(*src);
+                }
+            }
+            Box::new(preds.into_iter().map(|src| (src, &())))
         }
         fn add_arrow(&mut self, _src: u32, _dst: u32, _payload: ()) { unimplemented!() }
         fn remove_arrow(&mut self, _src: u32, _dst: u32) -> Option<()> { unimplemented!() }

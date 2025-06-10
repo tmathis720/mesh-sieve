@@ -36,3 +36,7 @@ stack_refine = [] # Feature gate for stack/bundle refinement
 pkg-config = { version = "0.3", optional = true }
 bindgen = { version = "0.65", optional = true }
 regex = "1.8"
+
+[[example]]
+name = "mesh_distribute_two_ranks"
+# required-features = ["mpi-support"]

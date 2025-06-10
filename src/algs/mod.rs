@@ -2,6 +2,7 @@
 
 pub mod communicator;
 pub mod completion;
+pub mod distribute;
 pub mod dual_graph;
 pub mod lattice;
 pub mod metis_partition;

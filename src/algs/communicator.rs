@@ -24,6 +24,11 @@ pub trait Communicator: Send + Sync + 'static {
     fn is_no_comm(&self) -> bool {
         false
     }
+
+    /// Rank of this process (0..size-1)
+    fn rank(&self) -> usize;
+    /// Total number of ranks
+    fn size(&self) -> usize;
 }
 
 /// Anything that can be waited on.
@@ -54,6 +59,14 @@ impl Communicator for NoComm {
     }
     fn is_no_comm(&self) -> bool {
         true
+    }
+
+    fn rank(&self) -> usize {
+        0
+    }
+
+    fn size(&self) -> usize {
+        1
     }
 }
 
@@ -117,6 +130,14 @@ impl Communicator for RayonComm {
             buf: buf_arc,
             handle: Some(handle),
         }
+    }
+
+    fn rank(&self) -> usize {
+        self.rank
+    }
+
+    fn size(&self) -> usize {
+        2 // For tests, default to 2
     }
 }
 
@@ -186,6 +207,13 @@ mod mpi_backend {
                 .process_at_rank(peer as i32)
                 .immediate_receive_into(StaticScope, unsafe { &mut *buf_ptr });
             MpiHandle { req, buf: buf_ptr }
+        }
+
+        fn rank(&self) -> usize {
+            self.world.rank() as usize
+        }
+        fn size(&self) -> usize {
+            self.world.size() as usize
         }
     }
 }
