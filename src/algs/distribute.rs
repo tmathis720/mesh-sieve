@@ -76,9 +76,11 @@ where
             }
         }
     }
-    // 3) Complete the overlap graph of arrows across ranks
-    let overlap_clone = overlap.clone();
-    sieve_completion::complete_sieve(&mut overlap, &overlap_clone, comm, my_rank);
+    // 3) Complete the overlap graph of arrows across ranks (only if parallel)
+    if comm.size() > 1 {
+        let overlap_clone = overlap.clone();
+        sieve_completion::complete_sieve(&mut overlap, &overlap_clone, comm, my_rank);
+    }
     // 4) (Optional: exchange data if needed, but for mesh topology with () payload, this is not required)
     (local, overlap)
 }
