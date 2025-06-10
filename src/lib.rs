@@ -1,4 +1,6 @@
 //! Public prelude for sieve-rs: mesh/data-management library for PDE codes
+//!
+//! All Sieve implementations provide `points()`, `base_points()`, and `cap_points()` iterators for global point set access.
 
 pub mod algs;
 pub mod data;

@@ -75,18 +75,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
         self.strata.take();
         removed
     }
-    fn points<'a>(&'a self) -> Box<dyn Iterator<Item=P> + 'a> {
-        let mut set = std::collections::HashSet::new();
-        set.extend(self.adjacency_out.keys().copied());
-        set.extend(self.adjacency_in.keys().copied());
-        Box::new(set.into_iter())
-    }
-    fn base_points<'a>(&'a self) -> Box<dyn Iterator<Item=P> + 'a> {
-        Box::new(self.adjacency_out.keys().copied())
-    }
-    fn cap_points<'a>(&'a self) -> Box<dyn Iterator<Item=P> + 'a> {
-        Box::new(self.adjacency_in.keys().copied())
-    }
+    // ...existing code...
     // override strata-helpers using `self.strata_cache()`
     fn height(&self,p:P)->u32{ self.strata_cache().height.get(&p).copied().unwrap_or(0) }
     fn depth(&self,p:P)->u32{ self.strata_cache().depth.get(&p).copied().unwrap_or(0) }
@@ -181,6 +170,12 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
             }
         }
         out
+    }
+    fn base_points<'a>(&'a self) -> Box<dyn Iterator<Item=P> + 'a> {
+        Box::new(self.adjacency_out.keys().copied())
+    }
+    fn cap_points<'a>(&'a self) -> Box<dyn Iterator<Item=P> + 'a> {
+        Box::new(self.adjacency_in.keys().copied())
     }
 }
 

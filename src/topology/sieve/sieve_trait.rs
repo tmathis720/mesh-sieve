@@ -18,12 +18,21 @@ pub trait Sieve: Default + InvalidateCache {
     /// Remove arrow `src → dst`, returning its payload.
     fn remove_arrow(&mut self, src: Self::Point, dst: Self::Point) -> Option<Self::Payload>;
 
-    /// Iterate all points in the domain (sources ∪ sinks).
-    fn points<'a>(&'a self) -> Box<dyn Iterator<Item = Self::Point> + 'a>;
     /// All “base” points (with outgoing arrows).
     fn base_points<'a>(&'a self) -> Box<dyn Iterator<Item = Self::Point> + 'a>;
     /// All “cap” points (with incoming arrows).
     fn cap_points<'a>(&'a self) -> Box<dyn Iterator<Item = Self::Point> + 'a>;
+
+    /// Return an iterator over **all** points in this Sieve’s domain
+    /// (points that appear as a source or a destination of any arrow).
+    fn points<'a>(&'a self) -> Box<dyn Iterator<Item = Self::Point> + 'a> {
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        // collect anything with outgoing or incoming arrows
+        for p in self.base_points() { set.insert(p); }
+        for p in self.cap_points()  { set.insert(p); }
+        Box::new(set.into_iter())
+    }
 
     // --- graph traversals ---
     fn closure<'s, I>(&'s self, seeds: I) -> Box<dyn Iterator<Item=Self::Point> + 's>
