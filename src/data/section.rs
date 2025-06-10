@@ -6,6 +6,8 @@
 
 use crate::data::atlas::Atlas;
 use crate::topology::point::PointId;
+use crate::topology::sieve::InMemorySieve;
+use crate::topology::sieve::Sieve;
 
 /// Storage for per-point field data, backed by an `Atlas`.
 #[derive(Clone, Debug)]
@@ -187,7 +189,6 @@ mod tests {
     #[test]
     fn restrict_closure_and_star_helpers() {
         use super::*;
-        use crate::topology::sieve::{InMemorySieve, Sieve};
         let mut atlas = Atlas::default();
         atlas.insert(PointId::new(1), 1);
         atlas.insert(PointId::new(2), 1);

@@ -65,7 +65,7 @@ pub trait Stack {
 ///
 /// Also embeds two `InMemorySieve`s to represent the base and cap topologies themselves.
 #[derive(Clone, Debug)]
-pub struct InMemoryStack<B: Copy + Eq + std::hash::Hash, C: Copy + Eq + std::hash::Hash, P = ()> {
+pub struct InMemoryStack<B: Copy + Eq + std::hash::Hash + Ord, C: Copy + Eq + std::hash::Hash + Ord, P = ()> {
     /// Underlying base sieve (e.g., mesh connectivity).
     pub base: InMemorySieve<B, P>,
     /// Underlying cap sieve (e.g., DOF connectivity).
@@ -78,8 +78,8 @@ pub struct InMemoryStack<B: Copy + Eq + std::hash::Hash, C: Copy + Eq + std::has
 
 impl<B, C, P> InMemoryStack<B, C, P>
 where
-    B: Copy + Eq + std::hash::Hash,
-    C: Copy + Eq + std::hash::Hash,
+    B: Copy + Eq + std::hash::Hash + Ord,
+    C: Copy + Eq + std::hash::Hash + Ord,
 {
     /// Creates an empty `InMemoryStack` with no arrows.
     pub fn new() -> Self {
@@ -94,8 +94,8 @@ where
 
 impl<B, C, P: Clone> Default for InMemoryStack<B, C, P>
 where
-    B: Copy + Eq + std::hash::Hash,
-    C: Copy + Eq + std::hash::Hash,
+    B: Copy + Eq + std::hash::Hash + Ord,
+    C: Copy + Eq + std::hash::Hash + Ord,
 {
     fn default() -> Self {
         Self {
@@ -109,8 +109,8 @@ where
 
 impl<B, C, P> Stack for InMemoryStack<B, C, P>
 where
-    B: Copy + Eq + std::hash::Hash,
-    C: Copy + Eq + std::hash::Hash,
+    B: Copy + Eq + std::hash::Hash + Ord,
+    C: Copy + Eq + std::hash::Hash + Ord,
     P: Clone,
 {
     type Point = B;
@@ -171,8 +171,8 @@ where
 
 impl<B, C, P> InMemoryStack<B, C, P>
 where
-    B: Copy + Eq + std::hash::Hash,
-    C: Copy + Eq + std::hash::Hash,
+    B: Copy + Eq + std::hash::Hash + Ord,
+    C: Copy + Eq + std::hash::Hash + Ord,
     P: Clone,
 {
     /// Build a Sifter for a given base point: all (cap, payload) pairs for that base.

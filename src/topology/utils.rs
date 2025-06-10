@@ -3,7 +3,7 @@ use crate::topology::sieve::InMemorySieve;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Panics if the sieve contains a cycle (not a DAG).
-pub fn assert_dag<P: Copy + Eq + std::hash::Hash, T>(s: &InMemorySieve<P, T>) {
+pub fn assert_dag<P: Copy + Eq + std::hash::Hash + Ord, T>(s: &InMemorySieve<P, T>) {
     // Kahn's algorithm: count in-degrees
     let mut in_deg = HashMap::new();
     // Initialize in-degrees to 0 for all vertices
