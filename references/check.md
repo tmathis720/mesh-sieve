@@ -1,131 +1,227 @@
 # Checkdown
 
-Below is a prioritized list of concrete follow-up items needed to bring the Rust Sieve-rs library into full correspondence with the design and algorithms laid out in the Knepley–Karpeev papers .
+## Response
 
-1. **Enrich the Sieve API with default lattice operations**
-   The papers treat `meet(p,q)` (minimal separator) and `join(p,q)` (dual separator) as first-class, default Sieve methods . While we have a standalone `meet_minimal_separator` function and a separate `algs::lattice` module, these should become default methods on the `Sieve` trait itself:
-
-   ```rust
-   fn meet<'s>(
-     &'s self,
-     a: Self::Point,
-     b: Self::Point
-   ) -> impl Iterator<Item = Self::Point> + 's { /* … */ }
-
-   fn join<'s>(
-     &'s self,
-     a: Self::Point,
-     b: Self::Point
-   ) -> impl Iterator<Item = Self::Point> + 's { /* … */ }
-   ```
-
-   This will match Table 1 of the framework paper and allow dimension-independent topology code to call these directly on *any* `Sieve` .
-
-2. **Add full point-set iteration to the Sieve trait**
-   To support generic algorithms (e.g. global partitioning, serialization, strata computation) the `Sieve` trait needs methods to iterate **all** points in its domain. For example:
-
-   ```rust
-   fn points(&self) -> Box<dyn Iterator<Item = Self::Point> + '_>;
-   fn base(&self)   -> Box<dyn Iterator<Item = Self::Point> + '_>;
-   fn cap(&self)    -> Box<dyn Iterator<Item = Self::Point> + '_>;
-   ```
-
-   Right now these exist only on `InMemorySieve`, but elevating them to the trait makes algorithms like Kahn’s topological sort, diameter, and custom traversals universally available.
-
-3. **Embed strata (height/depth) helpers directly in the Sieve trait**
-   The papers describe `height(p)`, `depth(p)`, `diameter()`, and strata-by-level queries as natural Sieve operations . While we have a separate `StratumHelpers` trait for `InMemorySieve`, we should:
-
-   * Move those methods into default implementations on `Sieve` (backed by an optional per-instance cache).
-   * Ensure that **every** conforming `Sieve` can expose its height/depth, not just the in-memory one.
-
-4. **Implement the high-level mesh-distribution algorithm**
-   The core „mesh distribution“ routine described in Sec 3 of the first paper (partition → build overlap Sieve → distribute submesh → complete overlap → assemble data) is not currently provided as a single API. We need a function akin to:
-
-   ```rust
-   fn distribute_mesh<S: Sieve<Point=PointId,Payload=()>>(
-     mesh: &S,
-     parts: &[usize],
-     comm: &impl Communicator,
-   ) -> (InMemorySieve<PointId,Remote>, InMemorySieve<PointId,()>) { … }
-   ```
-
-   That is, given an initial global mesh and a partition map:
-
-   1. Create an `Overlap` Sieve via `add_link`,
-   2. Send each local piece’s arrows to the owning rank,
-   3. Call `sieve_completion` to fill in remote cover arrows,
-   4. Return both the local submesh and its overlap, ready for parallel assembly .
-
-5. **Fix lifetime-leaks in `ComposedStack`**
-   Currently `ComposedStack::lift` and `drop` leak the composed payloads via `Box::leak`, leading to unbounded memory growth. We should replace that with either:
-
-   * A thread-local `Vec<P>` buffer that survives the scope, or
-   * An `Arc<P>`‐based approach so that the returned `&P` references remain valid without global leaks.
-
-6. **Hook cache-invalidation into all mutators**
-   Right now only arrow additions/removals clear the strata cache. Per the papers, *every* structural change (e.g., point insertion/deletion, restrictBase/Cap, setCone/Support) must also invalidate:
-
-   * StrataCache,
-   * Any Overlap-footprint caches (used during completion),
-   * Any dual/auxiliary Sieves derived by `complete_*` routines.
-
-7. **Round out test coverage**
-   The code base has `#[cfg(test)]` placeholders in modules like `data/refine/helpers`, `sieved_array`, `sieve_completion`, `section_completion`, etc.  To ensure conformance with the reference algorithms, we need:
-
-   * Unit tests for *every* basic Sieve operation (`cone`, `closure`, `support`, `star`, `meet`, `join`),
-   * Tests for `StratumHelpers` (height/depth/strata),
-   * Round-trip tests for `Section::restrict` + `assemble`,
-   * End-to-end mesh-distribution CI tests (serial & parallel NoComm).
-
-8. **Expose the “dual” (data) Sieve as a first-class concept**
-   The papers emphasize that data fields are *duals* of the topology Sieve, with arrows reversed. While `Section` and the `Map` trait cover this in part, it would be cleaner to:
-
-   * Provide an explicit `Dual<S: Sieve>` type that wraps an `S` and exposes `restrict` (data) instead of `cone`,
-   * Allow algorithms like `restrict_closure` / `restrict_star` to accept *either* a raw `Sieve` or its `Dual`.
-
-9. **Document and implement non-conforming overlaps**
-   The second paper shows how Overlap can encode non-matching meshes (e.g., hanging nodes, refinement interfaces). Our `Overlap::add_link` only models one-to-one conforming relations. We should:
-
-   * Add support for one-to-many and many-to-many overlap arrows,
-   * Enable `Delta` to carry arbitrary transformation data (permute, weights) beyond just `Orientation`.
-
-10. **Performance and spoke-and-wheel communication**
-    For very large P the all-to-all style completion may not scale. The papers hint at hierarchical or block-wise overlap exchange. We should prototype:
-
-* A pipelined / tree-structured `complete_sieve` and `complete_section`,
-* Optional bandwidth-limited exchange plans (via MPI collectives or custom point-to-point spread).
+Below is a high-level, prioritized action plan to bring Sieve-rs into full conformance with the concepts and APIs laid out in Knepley & Karpeev (2009) and follow-on work.  Each bullet maps a gap in the current code to a concrete developer task.
 
 ---
 
-**Next steps**: pick off these items in roughly the above order.  Once the core API (items 1–4) is in place and all tests pass, we can refactor and optimize the more advanced features around hierarchical completion and non-conforming overlaps.
+## 1. Round out the **Sieve** trait
 
-Provide a critical list of action items which reflect the necessary additions to ensure that the Sieve-rs code is a feature-complete implementation of the program described in the attached papers:
+**Goal**: expose the full covering interface (Sec 2.4, Table 1 )
+
+* **Add “point” mutation APIs**
+
+  * `add_point(p)`, `remove_point(p)`
+  * `add_base_point(p)`, `add_cap_point(p)`, `remove_base_point(p)`, `remove_cap_point(p)`
+* **Bulk arrow–chain operations**
+
+  * `set_cone(p, chain)`, `add_cone(p, chain)`
+  * `set_support(q, chain)`, `add_support(q, chain)`
+* **Subsetting operations**
+
+  * `restrict_base(chain)` (keep only those base points + their arrows)
+  * `restrict_cap(chain)`
+* **Wire up all of these to cache invalidation** via `InvalidateCache::invalidate_cache(self)` in default impls.
+
+---
+
+## 2. Elevate the **lattice** operations into the core trait
+
+**Goal**: allow any `Sieve` to call `.meet(a,b)`/.join directly (Table 1)
+
+* Move `LatticeOps` into `Sieve` with **default boxed-iterator impls**.
+* Remove standalone `meet_minimal_separator` and `algs::lattice` helpers (or deprecate).
+* Add trait bounds and doc examples so that `s.meet(p,q)` compiles out-of-the-box.
+
+---
+
+## 3. Full **point-set iteration** on the `Sieve` trait
+
+**Goal**: support global algorithms (Strata, partition, dual graph) uniformly
+
+* Define in `Sieve` trait:
+
+  ```rust
+  fn points(&self)      -> Box<dyn Iterator<Item=Self::Point> + '_>;
+  fn base_points(&self) -> Box<dyn Iterator<Item=Self::Point> + '_>;
+  fn cap_points(&self)  -> Box<dyn Iterator<Item=Self::Point> + '_>;
+  ```
+* Remove any per-type ad hoc implementations and default these in the trait.
+* Ensure `compute_strata` (and all global graph routines) call `s.points()` rather than special-case `InMemorySieve`.
+
+---
+
+## 4. Embed **strata** (height/depth) helpers into `Sieve`
+
+**Goal**: every mesh, not just `InMemorySieve`, can report its layers
+
+* In `Sieve` trait add default methods:
+
+  ```rust
+  fn height(&self, p: Point) -> u32 { /* call compute_strata(self) */ }
+  fn depth(&self, p: Point)  -> u32 { /* … */ }
+  fn diameter(&self)         -> u32 { /* … */ }
+  fn height_stratum(&self,k:u32) -> Box<dyn Iterator<Item=Point> + '_> { /* … */ }
+  fn depth_stratum(&self,k:u32)  -> Box<dyn Iterator<Item=Point> + '_> { /* … */ }
+  ```
+* Factor out the shared caching/invalidation machinery into a small sub-module so any `Sieve` impl can opt in (e.g. via an associated `OnceCell`), but defaulting to on-the-fly `compute_strata`.
+
+---
+
+## 5. Flesh out the **Stack** API and fix leaks
+
+**Goal**: match Sec 2.4 “Stack” semantics and remove `Box::leak`
+
+* **API refinements**
+
+  * Add `stack.points()` (all base ↔ cap pairs) or `stack.base_points()` on trait.
+  * Document that `add_arrow` on a stack should also invalidate the base & cap sieves’ caches.
+* **Memory-safety**
+
+  * Replace `Box::leak` in `ComposedStack` with an `Arc`-backed or thread-local buffer strategy that does *not* leak on each call.
+  * Provide tests to prove no unbounded memory growth in repeated `.lift()`.
+
+---
+
+## 6. Complete the **Section**/ **Atlas** / **SievedArray** story
+
+**Goal**: full fiber-bundle semantics of Sec 3, data refinement/assembly
+
+* **Section**
+
+  * Hook `InvalidateCache` into `.set()`, `.scatter_from()`, and all structural mutators.
+  * Add `remove_point(p)` to `Atlas` + bump caches in `Section`.
+* **SievedArray**
+
+  * Fill in `assemble()` (currently `unimplemented!()`) per § 3 of Knepley–Karpeev (average, max, min examples).
+  * Add a parallel `refine_with_sifter_parallel` under `rayon` feature.
+* **Map**
+
+  * Clarify `Map` trait docs, and ensure any ad hoc implementations (e.g. `ReadOnlyMap`) live in `data/refine/helpers.rs`.
+
+---
+
+## 7. Build a one-stop **mesh‐distribution** API
+
+**Goal**: implement Sec 3’s “mesh distribution” as a single function + integration test
+
+* Write `fn distribute_mesh<S,C>(mesh:&S, parts:&[usize], comm:&C) -> (InMemorySieve<PointId,()>, InMemorySieve<PointId,Remote>)` that:
+
+  1. Builds the `Overlap` sieve by `add_link` for each point→owner.
+  2. Extracts the local submesh via `mesh.base_points()/.cone()/.filter()`.
+  3. Calls `complete_sieve` on it.
+  4. Returns `(local, overlap)`.
+* Add an end-to-end MPI integration test (as in the example) under `/tests/`, guarded by `#[cfg(mpi)]`.
+* Provide a pure-NoComm unit test for serial CI.
+
+---
+
+## 8. Hook **cache invalidation** into all structural mutators
+
+**Goal**: ensure every change to topology or data clears all dependent caches
+
+* For each `impl InvalidateCache for …`, ensure any method that mutates structure—
+
+  * `add_arrow`, `remove_arrow`, `insert` in `Atlas`, `Section::new_atlas` changes, `InMemoryStack::add_arrow/remove_arrow`—
+    also calls `invalidate_cache`.
+* Identify and invalidate:
+
+  * **StrataCache**
+  * **Overlap/footprint caches** (if any)
+  * **Dual graphs**, **partition maps**, etc.
+
+---
+
+## 9. Expand **test coverage**
+
+**Goal**: prove conformance to both papers and our API requirements
+
+* **Unit tests** for every core Sieve operation on a tiny toy DAG:
+
+  * `cone`, `support`, `closure`, `star`, `closure_both`, `meet`, `join`.
+* **StrataHelpers** tests: heights/depths/diameter/strata on e.g. a tetrahedron & chain.
+* **Section round-trip**: `restrict + set + scatter_from + assemble` yields identity under CopyDelta.
+* **Bundle**: refine→assemble idempotence on e.g. 1D mesh split.
+* **Stack**: ComposedStack round-trip correct, no leaks after many calls.
+* **Distribute\_mesh**: serial (NoComm) & two-rank MPI examples.
+
+---
+
+## 10. Performance & polishing
+
+**Goal**: prepare for production use
+
+* Audit algorithmic complexity of default methods (e.g. `points()` builds a `HashSet`). Consider caching or explicit storage of point lists.
+* Document feature-gates (`data_refine`, `partitioning`, `mpi`).
+* Write cookbook-style examples in `docs/`.
+
+---
+
+By tackling these ten buckets in priority order—core API completion first, then data, distribution, cache correctness, and heavy testing—you’ll systematically close the gap between the reference design in Knepley & Karpeev and a rock-solid, production-quality Rust implementation.
+
+
+## Prompt
+
+Here is the current source code for Sieve-rs. Review the attached papers and provide a critical review of Sieve-rs based on the papers. Sieve-rs is intended to be a feature-complete implementation of the concepts expressed in the papers. Provide a detailed list of to-do's to get the development team focused on delivery.
 
 `src/topology/point.rs`
 
 ```rust
-
 use std::{fmt, num::NonZeroU64};
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+/// A unique, nonzero identifier for a mesh point (cell, face, edge, vertex, …).
+///
+/// Internally, `PointId` holds a `NonZeroU64`, ensuring at compile time
+/// that the value cannot be zero. This makes `PointId` safe to use in
+/// contexts where zero is reserved as "invalid" or "none".
+///
+/// # Memory layout
+/// This type is `repr(transparent)`, meaning it has the same ABI and
+/// alignment as its single field (`NonZeroU64`) and can be passed to FFI
+/// exactly like a `u64`.
+#[derive(
+    Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 #[repr(transparent)]
 pub struct PointId(NonZeroU64);
 
 impl PointId {
-
+    /// Creates a new `PointId` from a raw `u64` value.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `raw == 0`. We reserve 0 as an invalid or sentinel value.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use sieve_rs::topology::point::PointId;
+    /// let p = PointId::new(1);
+    /// assert_eq!(p.get(), 1);
+    /// ```
     #[inline]
     pub fn new(raw: u64) -> Self {
+        // NonZeroU64::new returns Option; `expect` panics if raw == 0
         PointId(NonZeroU64::new(raw).expect("PointId must be non-zero"))
     }
 
-
+    /// Returns the inner `u64` value of this `PointId`.
+    ///
+    /// This is a cheap, const-time getter. Use it when you need to inspect
+    /// or print the raw integer, but prefer to work with `PointId` otherwise
+    /// for type safety.
     #[inline]
     pub const fn get(self) -> u64 {
         self.0.get()
     }
 }
 
+// -----------------------------------------------------------------------------
+// Formatting traits
+// -----------------------------------------------------------------------------
 
+/// Custom `Debug` implementation to display as `PointId(raw_value)`.
 impl fmt::Debug for PointId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Use tuple debug formatting for clarity
@@ -133,14 +229,23 @@ impl fmt::Debug for PointId {
     }
 }
 
-
+/// Custom `Display` implementation to print only the raw integer.
+///
+/// Prints the numeric ID without any wrapper text.
 impl fmt::Display for PointId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.get())
     }
 }
 
+// -----------------------------------------------------------------------------
+// FFI and layout guarantees
+// -----------------------------------------------------------------------------
 
+/// Provide MPI compatibility: `PointId` can be sent over MPI as a `u64`.
+///
+/// We declare that `PointId` has the same MPI datatype as `u64`, ensuring
+/// zero-cost, layout-safe interop.
 unsafe impl mpi::datatype::Equivalence for PointId {
     type Out = <u64 as mpi::datatype::Equivalence>::Out;
 
@@ -149,17 +254,17 @@ unsafe impl mpi::datatype::Equivalence for PointId {
         u64::equivalent_datatype()
     }
 }
-
 ```
 
 `src/topology/arrow.rs`
 
 ```rust
-
-
 use crate::topology::point::PointId;
 
-
+/// A directed connection from `src` to `dst` carrying an arbitrary `payload`.
+///
+/// # Type Parameters
+/// - `P`: The type of per-arrow payload. Defaults to `()` for payload-free arrows.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Arrow<P = ()> {
     /// Source topological point (e.g., a cell or face handle).
@@ -171,7 +276,18 @@ pub struct Arrow<P = ()> {
 }
 
 impl<P> Arrow<P> {
-
+    /// Construct a new `Arrow` from `src` → `dst` with given `payload`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use sieve_rs::topology::arrow::Arrow;
+    /// use sieve_rs::topology::point::PointId;
+    /// let a = Arrow::new(PointId::new(1), PointId::new(2), 3u32);
+    /// assert_eq!(a.src.get(), 1);
+    /// assert_eq!(a.dst.get(), 2);
+    /// assert_eq!(a.payload, 3);
+    /// ```
     #[inline]
     pub fn new(src: PointId, dst: PointId, payload: P) -> Self {
         Arrow { src, dst, payload }
@@ -185,22 +301,45 @@ impl<P> Arrow<P> {
         (self.src, self.dst)
     }
 
+    /// Transform the payload `P` to a new type `Q` by applying `f`.
+    ///
+    /// The source and destination remain unchanged. This is handy for
+    /// deriving new arrow views without mutating the original.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use sieve_rs::topology::arrow::Arrow;
+    /// use sieve_rs::topology::point::PointId;
+    /// let a = Arrow::new(PointId::new(1), PointId::new(2), 10);
+    /// // Double the payload
+    /// let b = a.clone().map(|v| v * 2);
+    /// assert_eq!(b.payload, 20);
+    /// assert_eq!(b.src, a.src);
+    /// assert_eq!(b.dst, a.dst);
+    /// ```
     pub fn map<Q>(self, f: impl FnOnce(P) -> Q) -> Arrow<Q> {
         Arrow::new(self.src, self.dst, f(self.payload))
     }
 }
 
-
+//------------------------------------------------------------------------------
+// Convenience for empty-payload arrows
+//------------------------------------------------------------------------------
 
 impl Arrow<()> {
-
+    /// Create an arrow with no payload (`()`), i.e., a bare connectivity edge.
+    ///
+    /// This is equivalent to `Arrow::new(src, dst, ())`.
     #[inline]
     pub fn unit(src: PointId, dst: PointId) -> Self {
         Arrow::new(src, dst, ())
     }
 }
 
-
+/// Provide a default only for `Arrow<()>` so you can write `Arrow::default()`.
+///
+/// The default arrow points from PointId(1) → PointId(1) and carries `()`.
 impl Default for Arrow<()> {
     fn default() -> Self {
         // We pick a dummy sentinel id `1` for default; users should override.
@@ -208,7 +347,13 @@ impl Default for Arrow<()> {
     }
 }
 
+//------------------------------------------------------------------------------
+// Orientation: for vertical arrows in a Stack
+//------------------------------------------------------------------------------
 
+/// Sign or permutation for vertical incidence arrows in a `Stack`.
+///
+/// Used to record orientation when lifting/pulling degrees-of-freedom.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Orientation {
     /// No change in orientation (e.g., aligned sign +1).
@@ -216,264 +361,21 @@ pub enum Orientation {
     /// Opposite orientation (e.g., sign flip -1).
     Reverse,
 }
-
-
-```
-
-`src/topology/sieve.rs`
-
-```rust
-
-
-use std::collections::HashMap;
-
-
-pub trait Sieve {
-    /// Type for mesh points (e.g., `PointId`).  Must be `Copy + Eq + Hash`.
-    type Point: Copy + Eq + std::hash::Hash;
-    /// Payload attached to each arrow; can carry orientation, weights, etc.
-    type Payload;
-    /// Iterator over `(dst, &payload)` for each arrow `p -> dst`.
-    type ConeIter<'a>: Iterator<Item = (Self::Point, &'a Self::Payload)>
-    where
-        Self: 'a;
-
-    /// Iterator over `(src, &payload)` for each arrow `src -> p`.
-    type SupportIter<'a>: Iterator<Item = (Self::Point, &'a Self::Payload)>
-    where
-        Self: 'a;
-
-    //=== Required methods ===
-
-    /// Return all outgoing arrows from `p`.
-    fn cone<'a>(&'a self, p: Self::Point) -> Self::ConeIter<'a>;
-
-    /// Return all incoming arrows to `p`.
-    fn support<'a>(&'a self, p: Self::Point) -> Self::SupportIter<'a>;
-
-    /// Insert a new arrow `src -> dst` with given payload.
-    fn add_arrow(&mut self, src: Self::Point, dst: Self::Point, payload: Self::Payload);
-
-    /// Remove one arrow `src -> dst`, returning its payload if present.
-    fn remove_arrow(&mut self, src: Self::Point, dst: Self::Point) -> Option<Self::Payload>;
-
-    //=== Blanket default graph algorithms ===
-
-    /// Compute the **closure** (transitive hull) following `cone` arrows
-    /// from an initial set of `seeds`.  Yields each reachable point once.
-    fn closure<'s>(&'s self, seeds: impl IntoIterator<Item = Self::Point>)
-        -> impl Iterator<Item = Self::Point> + 's
-    {
-        use std::collections::HashSet;
-        let mut stack: Vec<_> = seeds.into_iter().collect();
-        let mut seen: HashSet<Self::Point> = stack.iter().copied().collect();
-        std::iter::from_fn(move || {
-            while let Some(p) = stack.pop() {
-                // Explore forward neighbors
-                for (q, _) in self.cone(p) {
-                    if seen.insert(q) {
-                        stack.push(q);
-                    }
-                }
-                return Some(p);
-            }
-            None
-        })
-    }
-
-    /// Compute the **star** (dual transitive hull) following `support` arrows
-    /// from an initial set of `seeds`.
-    fn star<'s>(&'s self, seeds: impl IntoIterator<Item = Self::Point>)
-        -> impl Iterator<Item = Self::Point> + 's
-    {
-        use std::collections::HashSet;
-        let mut stack: Vec<_> = seeds.into_iter().collect();
-        let mut seen: HashSet<Self::Point> = stack.iter().copied().collect();
-        std::iter::from_fn(move || {
-            while let Some(p) = stack.pop() {
-                // Explore backward neighbors
-                for (q, _) in self.support(p) {
-                    if seen.insert(q) {
-                        stack.push(q);
-                    }
-                }
-                return Some(p);
-            }
-            None
-        })
-    }
-
-    /// Compute **both** closure and star simultaneously.
-    /// Useful for undirected connectivity.
-    fn closure_both<'s>(&'s self, seeds: impl IntoIterator<Item = Self::Point>)
-        -> impl Iterator<Item = Self::Point> + 's
-    {
-        use std::collections::HashSet;
-        let mut stack: Vec<_> = seeds.into_iter().collect();
-        let mut seen: HashSet<Self::Point> = stack.iter().copied().collect();
-        std::iter::from_fn(move || {
-            while let Some(p) = stack.pop() {
-                for (q, _) in self.cone(p) {
-                    if seen.insert(q) { stack.push(q) }
-                }
-                for (q, _) in self.support(p) {
-                    if seen.insert(q) { stack.push(q) }
-                }
-                return Some(p);
-            }
-            None
-        })
-    }
-}
-
-
-#[derive(Clone, Debug)]
-pub struct InMemorySieve<P, T = ()> {
-    /// Outgoing edges: src -> [(dst, payload), ...]
-    pub adjacency_out: HashMap<P, Vec<(P, T)>>,
-    /// Incoming edges: dst -> [(src, payload), ...]
-    pub adjacency_in: HashMap<P, Vec<(P, T)>>,
-    /// Cached stratification (height/depth).  Invalidated on mutation.
-    pub strata: once_cell::sync::OnceCell<crate::topology::stratum::StrataCache<P>>,
-}
-
-impl<P: Copy + Eq + std::hash::Hash, T> Default for InMemorySieve<P, T> {
-    fn default() -> Self {
-        Self {
-            adjacency_out: HashMap::new(),
-            adjacency_in: HashMap::new(),
-            strata: once_cell::sync::OnceCell::new(),
-        }
-    }
-}
-
-impl<P: Copy + Eq + std::hash::Hash, T: Clone> InMemorySieve<P, T> {
-    /// Create an empty sieve.
-    pub fn new() -> Self { Self::default() }
-
-    /// Build a sieve from a list of `(src, dst, payload)` triples.
-    pub fn from_arrows<I: IntoIterator<Item = (P, P, T)>>(arrows: I) -> Self {
-        let mut sieve = Self::default();
-        for (src, dst, payload) in arrows {
-            sieve.add_arrow(src, dst, payload);
-        }
-        sieve
-    }
-}
-
-// Helper type for mapping Vec<(P,T)> -> Iterator<(P,&T)>
-type ConeMapIter<'a, P, T> = std::iter::Map<std::slice::Iter<'a, (P, T)>, fn(&'a (P, T)) -> (P, &'a T)>;
-
-impl<P: Copy + Eq + std::hash::Hash, T: Clone> Sieve for InMemorySieve<P, T> {
-    type Point = P;
-    type Payload = T;
-    type ConeIter<'a> = ConeMapIter<'a, P, T> where Self: 'a;
-    type SupportIter<'a> = ConeMapIter<'a, P, T> where Self: 'a;
-
-    /// Return all `(dst, &payload)` for arrows src -> dst.
-    fn cone<'a>(&'a self, p: P) -> Self::ConeIter<'a> {
-        // Map Vec<(P,T)> to (P,&T)
-        fn map_fn<P, T>((dst, pay): &(P, T)) -> (P, &T)
-        where P: Copy { (*dst, pay) }
-        let f: fn(&(P, T)) -> (P, &T) = map_fn::<P, T>;
-        self.adjacency_out.get(&p)
-            .map(|v| v.iter().map(f))
-            .unwrap_or_else(|| [].iter().map(f))
-    }
-
-    /// Return all `(src, &payload)` for arrows src -> dst = p.
-    fn support<'a>(&'a self, p: P) -> Self::SupportIter<'a> {
-        fn map_fn<P, T>((src, pay): &(P, T)) -> (P, &T)
-        where P: Copy { (*src, pay) }
-        let f: fn(&(P, T)) -> (P, &T) = map_fn::<P, T>;
-        self.adjacency_in.get(&p)
-            .map(|v| v.iter().map(f))
-            .unwrap_or_else(|| [].iter().map(f))
-    }
-
-    /// Insert an arrow; invalidates strata cache for recomputation.
-    fn add_arrow(&mut self, src: P, dst: P, payload: T) {
-        self.adjacency_out.entry(src).or_default().push((dst, payload.clone()));
-        self.adjacency_in.entry(dst).or_default().push((src, payload));
-        self.strata.take(); // drop cached strata
-    }
-
-    /// Remove one arrow, if exists, and return its payload; also invalidate strata.
-    fn remove_arrow(&mut self, src: P, dst: P) -> Option<T> {
-        let mut removed = None;
-        if let Some(v) = self.adjacency_out.get_mut(&src) {
-            if let Some(pos) = v.iter().position(|(d, _)| *d == dst) {
-                removed = Some(v.remove(pos).1);
-            }
-        }
-        if let Some(v) = self.adjacency_in.get_mut(&dst) {
-            if let Some(pos) = v.iter().position(|(s, _)| *s == src) {
-                v.remove(pos);
-            }
-        }
-        self.strata.take();
-        removed
-    }
-}
-
-//-----------------------------------------------------------------------------
-// Minimal separator (Knepley & Karpeev, Alg 2 §3.3)
-//-----------------------------------------------------------------------------  
-
-/// Compute a minimal separator `X` such that
-/// `closure(a) ∩ closure(b) = closure(X)`, excluding direct neighbors of `a,b`.
-///
-/// Steps:
-/// 1. Build closure sets `Ca`, `Cb`.
-/// 2. Intersect `I = Ca ∩ Cb`.
-/// 3. Remove `closure({a,b})` from `I`.
-/// 4. Keep only maximal elements (no deeper closure relation).
-pub fn meet_minimal_separator<S, P>(sieve: &S, a: P, b: P) -> Vec<P>
-where
-    S: Sieve<Point = P>,
-    P: Copy + Ord + Eq + std::hash::Hash,
-{
-    let mut ca: Vec<P> = sieve.closure([a]).collect();
-    let mut cb: Vec<P> = sieve.closure([b]).collect();
-    ca.sort_unstable(); ca.dedup();
-    cb.sort_unstable(); cb.dedup();
-
-    // 2. I = intersection(Ca, Cb)
-    let mut inter = Vec::new();
-    set_intersection(&ca, &cb, &mut inter);
-
-    // 3. Remove closure({a,b})
-    let mut to_rm: Vec<P> = sieve.closure([a, b]).collect();
-    to_rm.sort_unstable(); to_rm.dedup();
-    inter.retain(|x| !to_rm.binary_search(x).is_ok());
-
-    // 4. Keep only maximal elements
-    let original = inter.clone();
-    inter.retain(|&x| {
-        !original.iter().any(|&y| y != x && sieve.closure([y]).any(|z| z == x))
-    });
-    inter
-}
-
-/// Helper: intersect two sorted, deduplicated slices into `out`.
-fn set_intersection<P: Ord + Copy>(a: &[P], b: &[P], out: &mut Vec<P>) {
-    let (mut i, mut j) = (0, 0);
-    while i < a.len() && j < b.len() {
-        if a[i] < b[j] { i += 1; }
-        else if a[i] > b[j] { j += 1; }
-        else { out.push(a[i]); i += 1; j += 1; }
-    }
-}
-
 ```
 
 `src/topology/stack.rs`
 
 ```rust
-
-use std::collections::HashMap;
 use super::sieve::InMemorySieve;
+use crate::topology::stratum::InvalidateCache;
+use std::collections::HashMap;
 
+/// A `Stack` links a *base* Sieve to a *cap* Sieve via vertical arrows.
+/// Each arrow carries a payload (e.g., orientation or permutation).
+///
+/// - `Point`:   The point type in the base mesh (commonly `PointId`).
+/// - `CapPt`:   The point type in the cap mesh (commonly `PointId`).
+/// - `Payload`: Data attached to each arrow (e.g., `Orientation`).
 pub trait Stack {
     /// Base mesh point identifier.
     type Point: Copy + Eq + std::hash::Hash;
@@ -489,11 +391,17 @@ pub trait Stack {
     // === Topology queries ===
     /// Returns an iterator over all upward arrows from base point `p` to cap points.
     /// Each item is `(cap_point, &payload)`.
-    fn lift<'a>(&'a self, p: Self::Point) -> Box<dyn Iterator<Item = (Self::CapPt, &'a Self::Payload)> + 'a>;
+    fn lift<'a>(
+        &'a self,
+        p: Self::Point,
+    ) -> Box<dyn Iterator<Item = (Self::CapPt, &'a Self::Payload)> + 'a>;
 
     /// Returns an iterator over all downward arrows from cap point `q` to base points.
     /// Each item is `(base_point, &payload)`.
-    fn drop<'a>(&'a self, q: Self::CapPt) -> Box<dyn Iterator<Item = (Self::Point, &'a Self::Payload)> + 'a>;
+    fn drop<'a>(
+        &'a self,
+        q: Self::CapPt,
+    ) -> Box<dyn Iterator<Item = (Self::Point, &'a Self::Payload)> + 'a>;
 
     // === Mutation helpers ===
     /// Adds a new vertical arrow `base -> cap` with associated payload.
@@ -511,13 +419,15 @@ pub trait Stack {
     fn base_points(&self) -> Box<dyn Iterator<Item = Self::Point> + '_>;
 }
 
-
+/// In-memory implementation of the `Stack` trait.
+///
+/// Stores vertical arrows in two hash maps:
+/// - `up`   maps base points to a list of `(cap_point, payload)`.
+/// - `down` maps cap points to a list of `(base_point, payload)`.
+///
+/// Also embeds two `InMemorySieve`s to represent the base and cap topologies themselves.
 #[derive(Clone, Debug)]
-pub struct InMemoryStack<
-    B: Copy + Eq + std::hash::Hash,
-    C: Copy + Eq + std::hash::Hash,
-    P = (),
-> {
+pub struct InMemoryStack<B: Copy + Eq + std::hash::Hash + Ord, C: Copy + Eq + std::hash::Hash + Ord, P = ()> {
     /// Underlying base sieve (e.g., mesh connectivity).
     pub base: InMemorySieve<B, P>,
     /// Underlying cap sieve (e.g., DOF connectivity).
@@ -530,8 +440,8 @@ pub struct InMemoryStack<
 
 impl<B, C, P> InMemoryStack<B, C, P>
 where
-    B: Copy + Eq + std::hash::Hash,
-    C: Copy + Eq + std::hash::Hash,
+    B: Copy + Eq + std::hash::Hash + Ord,
+    C: Copy + Eq + std::hash::Hash + Ord,
 {
     /// Creates an empty `InMemoryStack` with no arrows.
     pub fn new() -> Self {
@@ -546,8 +456,8 @@ where
 
 impl<B, C, P: Clone> Default for InMemoryStack<B, C, P>
 where
-    B: Copy + Eq + std::hash::Hash,
-    C: Copy + Eq + std::hash::Hash,
+    B: Copy + Eq + std::hash::Hash + Ord,
+    C: Copy + Eq + std::hash::Hash + Ord,
 {
     fn default() -> Self {
         Self {
@@ -561,8 +471,8 @@ where
 
 impl<B, C, P> Stack for InMemoryStack<B, C, P>
 where
-    B: Copy + Eq + std::hash::Hash,
-    C: Copy + Eq + std::hash::Hash,
+    B: Copy + Eq + std::hash::Hash + Ord,
+    C: Copy + Eq + std::hash::Hash + Ord,
     P: Clone,
 {
     type Point = B;
@@ -591,6 +501,8 @@ where
         // Insert into both up and down maps
         self.up.entry(base).or_default().push((cap, pay.clone()));
         self.down.entry(cap).or_default().push((base, pay));
+        // structural change → clear caches
+        crate::topology::stratum::InvalidateCache::invalidate_cache(self);
     }
 
     fn remove_arrow(&mut self, base: B, cap: C) -> Option<P> {
@@ -607,11 +519,16 @@ where
                 vec.remove(pos);
             }
         }
+        crate::topology::stratum::InvalidateCache::invalidate_cache(self);
         removed
     }
 
-    fn base(&self) -> &Self::BaseSieve { &self.base }
-    fn cap(&self) -> &Self::CapSieve { &self.cap }
+    fn base(&self) -> &Self::BaseSieve {
+        &self.base
+    }
+    fn cap(&self) -> &Self::CapSieve {
+        &self.cap
+    }
     fn base_points(&self) -> Box<dyn Iterator<Item = B> + '_> {
         Box::new(self.up.keys().copied())
     }
@@ -619,21 +536,23 @@ where
 
 impl<B, C, P> InMemoryStack<B, C, P>
 where
-    B: Copy + Eq + std::hash::Hash,
-    C: Copy + Eq + std::hash::Hash,
+    B: Copy + Eq + std::hash::Hash + Ord,
+    C: Copy + Eq + std::hash::Hash + Ord,
     P: Clone,
 {
     /// Build a Sifter for a given base point: all (cap, payload) pairs for that base.
     pub fn sifter(&self, base: B) -> Vec<(C, P)> {
-        self.up.get(&base)
-            .map(|v| v.iter().cloned().collect())
-            .unwrap_or_default()
+        self.up.get(&base).map(|v| v.to_vec()).unwrap_or_default()
     }
 }
 
 /// A stack composed of two existing stacks: `lower: base -> mid` and `upper: mid -> cap`.
 ///
 /// Traversal composes payloads via a `compose_payload` function.
+///
+/// This implementation uses an `Arc<P>` buffer to safely store composed payloads for the duration
+/// of each traversal, avoiding leaks and ensuring memory safety. The buffer is cleared on each call
+/// to `lift` or `drop`, and references returned are valid for the lifetime of the iterator.
 pub struct ComposedStack<'a, S1, S2, F>
 where
     S1: Stack,
@@ -646,6 +565,25 @@ where
     pub upper: &'a S2,
     /// Function to merge two payloads into one
     pub compose_payload: F,
+    /// Buffer to hold composed payloads for the duration of traversal
+    pub payload_buffer: std::cell::RefCell<Vec<std::sync::Arc<S1::Payload>>>,
+}
+
+impl<'a, S1, S2, F> ComposedStack<'a, S1, S2, F>
+where
+    S1: Stack,
+    S2: Stack<Point = S1::CapPt, Payload = S1::Payload>,
+    F: Fn(&S1::Payload, &S2::Payload) -> S1::Payload,
+{
+    /// Create a new composed stack with an empty buffer
+    pub fn new(lower: &'a S1, upper: &'a S2, compose_payload: F) -> Self {
+        Self {
+            lower,
+            upper,
+            compose_payload,
+            payload_buffer: std::cell::RefCell::new(Vec::new()),
+        }
+    }
 }
 
 impl<'a, S1, S2, F> Stack for ComposedStack<'a, S1, S2, F>
@@ -656,65 +594,108 @@ where
 {
     type Point = S1::Point;
     type CapPt = S2::CapPt;
-    type Payload = S1::Payload;
+    type Payload = std::sync::Arc<S1::Payload>;
     type BaseSieve = S1::BaseSieve;
     type CapSieve = S2::CapSieve;
 
-    fn lift<'b>(&'b self, p: S1::Point) -> Box<dyn Iterator<Item = (S2::CapPt, &'b S1::Payload)> + 'b> {
+    fn lift<'b>(
+        &'b self,
+        p: S1::Point,
+    ) -> Box<dyn Iterator<Item = (S2::CapPt, &'b Self::Payload)> + 'b> {
         let lower = self.lower;
         let upper = self.upper;
         let compose = &self.compose_payload;
-        // First lift through lower, then through upper, composing payloads
-        Box::new(
-            lower.lift(p)
-                .flat_map(move |(mid, pay1)| {
-                    upper.lift(mid).map(move |(cap, pay2)| {
-                        // Leak a composed payload to extend its lifetime
-                        let payload: &'b S1::Payload = Box::leak(Box::new((compose)(pay1, pay2)));
-                        (cap, payload)
-                    })
+        // Clear buffer for this traversal
+        let mut buffer = self.payload_buffer.borrow_mut();
+        buffer.clear();
+        // Compose all pairs and store in buffer
+        let pairs: Vec<(S2::CapPt, std::sync::Arc<S1::Payload>)> = lower.lift(p)
+            .flat_map(|(mid, pay1)| {
+                upper.lift(mid).map(move |(cap, pay2)| {
+                    let composed = (compose)(pay1, pay2);
+                    let arc = std::sync::Arc::new(composed);
+                    (cap, arc)
                 })
-        )
+            })
+            .collect();
+        for (_, arc) in &pairs {
+            buffer.push(arc.clone());
+        }
+        // Now create an iterator over references into those Arcs
+        let buffer_ptr = &*buffer as *const Vec<std::sync::Arc<S1::Payload>>;
+        Box::new(pairs.into_iter().enumerate().map(move |(i, (cap, _))| {
+            // Safety: buffer lives as long as self, and we only push as many as pairs.len()
+            let arc_ref = unsafe { &(*buffer_ptr)[i] };
+            (cap, arc_ref)
+        }))
     }
 
-    fn drop<'b>(&'b self, q: S2::CapPt) -> Box<dyn Iterator<Item = (S1::Point, &'b S1::Payload)> + 'b> {
+    fn drop<'b>(
+        &'b self,
+        q: S2::CapPt,
+    ) -> Box<dyn Iterator<Item = (S1::Point, &'b Self::Payload)> + 'b> {
         let lower = self.lower;
         let upper = self.upper;
         let compose = &self.compose_payload;
-        Box::new(
-            upper.drop(q)
-                .flat_map(move |(mid, pay2)| {
-                    lower.drop(mid).map(move |(base, pay1)| {
-                        let payload: &'b S1::Payload = Box::leak(Box::new((compose)(pay1, pay2)));
-                        (base, payload)
-                    })
+        let mut buffer = self.payload_buffer.borrow_mut();
+        buffer.clear();
+        let pairs: Vec<(S1::Point, std::sync::Arc<S1::Payload>)> = upper.drop(q)
+            .flat_map(|(mid, pay2)| {
+                lower.drop(mid).map(move |(base, pay1)| {
+                    let composed = (compose)(pay1, pay2);
+                    let arc = std::sync::Arc::new(composed);
+                    (base, arc)
                 })
-        )
+            })
+            .collect();
+        for (_, arc) in &pairs {
+            buffer.push(arc.clone());
+        }
+        let buffer_ptr = &*buffer as *const Vec<std::sync::Arc<S1::Payload>>;
+        Box::new(pairs.into_iter().enumerate().map(move |(i, (base, _))| {
+            let arc_ref = unsafe { &(*buffer_ptr)[i] };
+            (base, arc_ref)
+        }))
     }
 
-    fn add_arrow(&mut self, _base: S1::Point, _cap: S2::CapPt, _pay: S1::Payload) {
+    fn add_arrow(&mut self, _base: S1::Point, _cap: S2::CapPt, _pay: std::sync::Arc<S1::Payload>) {
         panic!("Cannot mutate a composed stack");
     }
-    fn remove_arrow(&mut self, _base: S1::Point, _cap: S2::CapPt) -> Option<S1::Payload> {
+    fn remove_arrow(&mut self, _base: S1::Point, _cap: S2::CapPt) -> Option<std::sync::Arc<S1::Payload>> {
         panic!("Cannot mutate a composed stack");
     }
-    fn base(&self) -> &Self::BaseSieve { self.lower.base() }
-    fn cap(&self) -> &Self::CapSieve { self.upper.cap() }
+    fn base(&self) -> &Self::BaseSieve {
+        self.lower.base()
+    }
+    fn cap(&self) -> &Self::CapSieve {
+        self.upper.cap()
+    }
     fn base_points(&self) -> Box<dyn Iterator<Item = Self::Point> + '_> {
         // Not implemented for composed stacks; return empty iterator for now
         Box::new(std::iter::empty())
     }
 }
-
 ```
 
 `src/topology/stratum.rs`
 
 ```rust
-
-
 use std::collections::HashMap;
+use crate::topology::sieve::Sieve;
 
+/// Anything that caches derived topology (strata, overlap footprints, dual graphs, …)
+/// should implement this.
+pub trait InvalidateCache {
+    /// Invalidate *all* internal caches so future queries recompute correctly.
+    fn invalidate_cache(&mut self);
+}
+
+/// Precomputed stratum information for a DAG of points `P`.
+///
+/// - `height[p]` = distance from sources (points with no incoming arrows).
+/// - `depth[p]`  = distance to sinks   (points with no outgoing arrows).
+/// - `strata[k]` = all points at height `k` (zero‐based).
+/// - `diameter`  = maximum height over all points.
 #[derive(Clone, Debug)]
 pub struct StrataCache<P> {
     /// Mapping from point to its height (levels above sources).
@@ -739,173 +720,78 @@ impl<P: Copy + Eq + std::hash::Hash + Ord> StrataCache<P> {
     }
 }
 
-pub trait StratumHelpers: crate::topology::sieve::Sieve {
-    /// Return the height (distance from sources) of point `p`.
-    fn height(&self, p: Self::Point) -> u32;
-    /// Return the depth  (distance to sinks)   of point `p`.
-    fn depth(&self, p: Self::Point) -> u32;
-    /// Return the diameter (maximum height) of the entire topology.
-    fn diameter(&self) -> u32;
-    /// Iterate over all points at given height `k`.
-    fn height_stratum(&self, k: u32) -> Box<dyn Iterator<Item = Self::Point> + '_>;
-    /// Iterate over all points at given depth `k`.
-    fn depth_stratum(&self, k: u32) -> Box<dyn Iterator<Item = Self::Point> + '_>;
-}
-
-// Implement StratumHelpers for InMemorySieve
-impl<P, T> StratumHelpers for crate::topology::sieve::InMemorySieve<P, T>
-where
-    P: Copy + Eq + std::hash::Hash + Ord,
-    T: Clone,
-{
-    
-    fn height(&self, p: P) -> u32 {
-        // Use the cached height if available, otherwise return 0
-        self.strata_cache().height.get(&p).copied().unwrap_or(0)
-    }
-    fn depth(&self, p: P) -> u32 {
-        // Use the cached depth if available, otherwise return 0
-        self.strata_cache().depth.get(&p).copied().unwrap_or(0)
-    }
-    fn diameter(&self) -> u32 {
-        // Return the precomputed diameter from the cache
-        self.strata_cache().diameter
-    }
-    fn height_stratum(&self, k: u32) -> Box<dyn Iterator<Item=P> + '_> {
-        // Return an iterator over points at height k
-        // If k is out of bounds, return an empty iterator
-        let cache = self.strata_cache();
-        if (k as usize) < cache.strata.len() {
-            Box::new(cache.strata[k as usize].iter().copied())
-        } else {
-            Box::new(std::iter::empty())
-        }
-    }
-    fn depth_stratum(&self, k: u32) -> Box<dyn Iterator<Item=P> + '_> {
-        // Return an iterator over points at depth k
-        let cache = self.strata_cache();
-        // Build a reverse map: depth value -> Vec<P>
-        let mut depth_map: std::collections::HashMap<u32, Vec<P>> = std::collections::HashMap::new();
-        // Populate the map with points grouped by their depth
-        for (&p, &d) in &cache.depth {
-            depth_map.entry(d).or_default().push(p);
-        }
-        // Return the iterator for the requested depth k, or an empty iterator if k is not found
-        let points = depth_map.get(&k).cloned().unwrap_or_default();
-        // Convert Vec<P> into an iterator
-        // Use Box to return a trait object for dynamic dispatch
-        Box::new(points.into_iter())
-    }
-}
-
 // --- Strata cache population and invalidation ---
 use crate::topology::sieve::InMemorySieve;
 impl<P: Copy + Eq + std::hash::Hash + Ord, T: Clone> InMemorySieve<P, T> {
-    /// Lazily compute and cache the strata information.
-    fn strata_cache(&self) -> &StrataCache<P> {
+    pub fn strata_cache(&self) -> &StrataCache<P> {
         self.strata.get_or_init(|| compute_strata(self))
     }
-    /// Invalidate the cached strata information.
-    /// This should be called whenever the sieve structure changes (e.g., arrows added/removed).
-    fn invalidate_strata(&mut self) {
+    pub fn invalidate_strata(&mut self) {
         self.strata.take();
     }
 }
 
+impl<P: Copy + Eq + std::hash::Hash + Ord, T: Clone> InvalidateCache for InMemorySieve<P, T> {
+    fn invalidate_cache(&mut self) {
+        // wipe strata cache
+        self.strata.take();
+    }
+}
 
-fn compute_strata<P, T>(sieve: &InMemorySieve<P, T>) -> StrataCache<P>
+// Blanket impl for Box<T>
+impl<T: InvalidateCache> InvalidateCache for Box<T> {
+    fn invalidate_cache(&mut self) { (**self).invalidate_cache(); }
+}
+
+/// Build heights, depths, strata layers and diameter for *any* Sieve.
+pub fn compute_strata<S>(sieve: &S) -> StrataCache<S::Point>
 where
-    P: Copy + Eq + std::hash::Hash + Ord,
-    T: Clone,
+    S: Sieve + ?Sized,
+    S::Point: Copy + Eq + std::hash::Hash + Ord,
 {
-    // Kahn's algorithm for topological sort
-    let mut in_deg = HashMap::new();
-    // Count in-degrees for each point
-    for (&p, outs) in &sieve.adjacency_out {
-        // Initialize in-degree for point `p`
+    // 1) collect the full point set
+    let mut in_deg = std::collections::HashMap::new();
+    for p in sieve.points() {
         in_deg.entry(p).or_insert(0);
-        // For each outgoing arrow from `p`, increment the in-degree of the target point
-        for (q, _) in outs {
-            *in_deg.entry(*q).or_insert(0) += 1;
+        for (q, _) in sieve.cone(p) {
+            *in_deg.entry(q).or_insert(0) += 1;
         }
     }
-    // Initialize stack with all points that have in-degree 0 (sources)
-    // These are the starting points for the topological sort
-    // and will be processed first.
-    // They are the "cells" in the context of topology.
-    // This is the first step in Kahn's algorithm.
-    let mut stack: Vec<P> = in_deg.iter().filter(|&(_, &d)| d == 0).map(|(&p, _)| p).collect();
+    // 2) topological sort
+    let mut stack: Vec<_> = in_deg.iter()
+        .filter(|&(_, &d)| d == 0)
+        .map(|(&p, _)| p).collect();
     let mut topo = Vec::new();
     while let Some(p) = stack.pop() {
         topo.push(p);
-        if let Some(outs) = sieve.adjacency_out.get(&p) {
-            for (q, _) in outs {
-                let deg = in_deg.get_mut(q).unwrap();
-                *deg -= 1;
-                if *deg == 0 {
-                    stack.push(*q);
-                }
-            }
+        for (q, _) in sieve.cone(p) {
+            let deg = in_deg.get_mut(&q).unwrap();
+            *deg -= 1;
+            if *deg == 0 { stack.push(q) }
         }
     }
-    // Compute height as distance from sources (cells) using adjacency_in
-    let mut height = HashMap::new();
-    // walk in topological order so parents are done before children
-    // This ensures that when we compute the height of a point,
-    // all its predecessors have already been processed.
+    // 3) compute `height[p] = 1+max(height[pred])` in topo order
+    let mut height = std::collections::HashMap::new();
     for &p in &topo {
-        // If there are no incoming arrows, height is 0 (source)
-        let h = if let Some(ins) = sieve.adjacency_in.get(&p) {
-            if ins.is_empty() {
-                0
-            } else {
-                // Otherwise, height is 1 + max height of predecessors
-                // This computes the height as the maximum height of incoming points plus one.
-                1 + ins.iter().map(|(pred, _)| *height.get(pred).unwrap_or(&0)).max().unwrap_or(0)
-            }
-        } else {
-            0
-        };
+        let h = sieve.support(p)
+                     .map(|(pred,_)| height.get(&pred).copied().unwrap_or(0))
+                     .max().map_or(0, |m| m+1);
         height.insert(p, h);
     }
-    // Compute strata
-    let mut max_h = 0;
-    // Find the maximum height to determine the number of strata
-    for &h in height.values() { max_h = max_h.max(h); }
-    // Initialize strata as a vector of empty vectors, one for each height level
+    // 4) group into strata layers
+    let max_h = *height.values().max().unwrap_or(&0);
     let mut strata = vec![Vec::new(); (max_h+1) as usize];
-    // Populate strata with points grouped by their height
-    for (&p, &h) in &height {
-        strata[h as usize].push(p);
-    }
-    // Compute diameter
-    let diameter = max_h;
-    // Compute depth as distance to sinks (reverse‐cone pass)
-    let mut depth = HashMap::new();
-    // walk in reverse topological order so children are done before parents
+    for (&p,&h) in &height { strata[h as usize].push(p) }
+    // 5) compute `depth[p]` by reversing topsort
+    let mut depth = std::collections::HashMap::new();
     for &p in topo.iter().rev() {
-        // If there are no outgoing arrows, depth is 0 (sink)
-        // This computes the depth as the maximum depth of outgoing points plus one.
-        // This ensures that when we compute the depth of a point,
-        // all its successors have already been processed.
-        let d = if let Some(outs) = sieve.adjacency_out.get(&p) {
-            if outs.is_empty() {
-                0
-            } else {
-                1 + outs
-                    .iter()
-                    .map(|(child, _)| *depth.get(child).unwrap_or(&0))
-                    .max()
-                    .unwrap_or(0)
-            }
-        } else {
-            0
-        };
+        let d = sieve.cone(p)
+                     .map(|(succ,_)| depth.get(&succ).copied().unwrap_or(0))
+                     .max().map_or(0, |m| m+1);
         depth.insert(p, d);
     }
-    StrataCache { height, depth, strata, diameter }
+    StrataCache { height, depth, strata, diameter: max_h }
 }
-
 ```
 
 `src/topology/utils.rs`
@@ -913,10 +799,10 @@ where
 ```rust
 //! Utility helpers for topology, including DAG assertion.
 use crate::topology::sieve::InMemorySieve;
-use std::collections::{HashMap, VecDeque, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Panics if the sieve contains a cycle (not a DAG).
-pub fn assert_dag<P: Copy + Eq + std::hash::Hash, T>(s: &InMemorySieve<P, T>) {
+pub fn assert_dag<P: Copy + Eq + std::hash::Hash + Ord, T>(s: &InMemorySieve<P, T>) {
     // Kahn's algorithm: count in-degrees
     let mut in_deg = HashMap::new();
     // Initialize in-degrees to 0 for all vertices
@@ -929,7 +815,11 @@ pub fn assert_dag<P: Copy + Eq + std::hash::Hash, T>(s: &InMemorySieve<P, T>) {
         }
     }
     // Add any vertices that have no outgoing edges
-    let mut queue: VecDeque<_> = in_deg.iter().filter(|&(_, &d)| d == 0).map(|(&p, _)| p).collect();
+    let mut queue: VecDeque<_> = in_deg
+        .iter()
+        .filter(|&(_, &d)| d == 0)
+        .map(|(&p, _)| p)
+        .collect();
     // If no vertices have 0 in-degree, the sieve is not a DAG
     let mut seen = HashSet::new();
     // Process vertices with 0 in-degree
@@ -954,14 +844,326 @@ pub fn assert_dag<P: Copy + Eq + std::hash::Hash, T>(s: &InMemorySieve<P, T>) {
 }
 ```
 
+`src/topology/sieve/sieve_trait.rs`
+
+```rust
+// src/topology/sieve/trait.rs
+
+/// Core bidirectional incidence API for mesh topology.
+pub trait Sieve {
+    type Point: Copy + Eq + std::hash::Hash;
+    type Payload;
+
+    type ConeIter<'a>: Iterator<Item = (Self::Point, &'a Self::Payload)> where Self: 'a;
+    type SupportIter<'a>: Iterator<Item = (Self::Point, &'a Self::Payload)> where Self: 'a;
+
+    /// Outgoing arrows from `p`.
+    fn cone<'a>(&'a self, p: Self::Point) -> Self::ConeIter<'a>;
+    /// Incoming arrows to `p`.
+    fn support<'a>(&'a self, p: Self::Point) -> Self::SupportIter<'a>;
+
+    /// Insert arrow `src → dst`.
+    fn add_arrow(&mut self, src: Self::Point, dst: Self::Point, payload: Self::Payload);
+    /// Remove arrow `src → dst`, returning its payload.
+    fn remove_arrow(&mut self, src: Self::Point, dst: Self::Point) -> Option<Self::Payload>;
+
+    /// Iterate all points in the domain (sources ∪ sinks).
+    fn points<'a>(&'a self) -> Box<dyn Iterator<Item = Self::Point> + 'a>;
+    /// All “base” points (with outgoing arrows).
+    fn base_points<'a>(&'a self) -> Box<dyn Iterator<Item = Self::Point> + 'a>;
+    /// All “cap” points (with incoming arrows).
+    fn cap_points<'a>(&'a self) -> Box<dyn Iterator<Item = Self::Point> + 'a>;
+
+    // --- graph traversals ---
+    fn closure<'s, I>(&'s self, seeds: I) -> Box<dyn Iterator<Item=Self::Point> + 's>
+    where
+        I: IntoIterator<Item=Self::Point>,
+    {
+        use std::collections::HashSet;
+        let mut stack: Vec<_> = seeds.into_iter().collect();
+        let mut seen: HashSet<Self::Point> = stack.iter().copied().collect();
+        Box::new(std::iter::from_fn(move || {
+            if let Some(p) = stack.pop() {
+                for (q, _) in self.cone(p) {
+                    if seen.insert(q) {
+                        stack.push(q);
+                    }
+                }
+                Some(p)
+            } else {
+                None
+            }
+        }))
+    }
+    fn star<'s, I>(&'s self, seeds: I) -> Box<dyn Iterator<Item=Self::Point> + 's>
+    where
+        I: IntoIterator<Item=Self::Point>,
+    {
+        use std::collections::HashSet;
+        let mut stack: Vec<_> = seeds.into_iter().collect();
+        let mut seen: HashSet<Self::Point> = stack.iter().copied().collect();
+        Box::new(std::iter::from_fn(move || {
+            if let Some(p) = stack.pop() {
+                for (q, _) in self.support(p) {
+                    if seen.insert(q) {
+                        stack.push(q);
+                    }
+                }
+                Some(p)
+            } else {
+                None
+            }
+        }))
+    }
+    fn closure_both<'s, I>(&'s self, seeds: I) -> Box<dyn Iterator<Item=Self::Point> + 's>
+    where
+        I: IntoIterator<Item=Self::Point>,
+    {
+        use std::collections::HashSet;
+        let mut stack: Vec<_> = seeds.into_iter().collect();
+        let mut seen: HashSet<Self::Point> = stack.iter().copied().collect();
+        Box::new(std::iter::from_fn(move || {
+            if let Some(p) = stack.pop() {
+                for (q, _) in self.cone(p) {
+                    if seen.insert(q) {
+                        stack.push(q)
+                    }
+                }
+                for (q, _) in self.support(p) {
+                    if seen.insert(q) {
+                        stack.push(q)
+                    }
+                }
+                Some(p)
+            } else {
+                None
+            }
+        }))
+    }
+
+    // --- lattice ops ---
+    fn meet<'s>(&'s self, a: Self::Point, b: Self::Point) -> Box<dyn Iterator<Item=Self::Point> + 's>;
+    fn join<'s>(&'s self, a: Self::Point, b: Self::Point) -> Box<dyn Iterator<Item=Self::Point> + 's>;
+
+    // --- strata helpers ---
+    fn height(&self, p: Self::Point) -> u32;
+    fn depth(&self, p: Self::Point) -> u32;
+    fn diameter(&self) -> u32;
+    fn height_stratum(&self, k: u32) -> Box<dyn Iterator<Item=Self::Point> + '_>;
+    fn depth_stratum(&self, k: u32) -> Box<dyn Iterator<Item=Self::Point> + '_>;
+}
+```
+
+`src/topology/sieve/lattice.rs`
+
+```rust
+// src/topology/sieve/lattice.rs
+
+use crate::topology::sieve::sieve_trait::Sieve;
+
+/// Minimal separator (meet) & dual separator (join) for any `Sieve`.
+pub trait LatticeOps: Sieve {
+    fn meet<'s>(&'s self, a: Self::Point, b: Self::Point) -> Box<dyn Iterator<Item=Self::Point> + 's>;
+    fn join<'s>(&'s self, a: Self::Point, b: Self::Point) -> Box<dyn Iterator<Item=Self::Point> + 's>;
+}
+
+impl<S> LatticeOps for S
+where
+    S: Sieve + Sized,
+    S::Point: Ord,
+{
+    fn meet<'s>(&'s self, a: Self::Point, b: Self::Point) -> Box<dyn Iterator<Item=Self::Point> + 's> {
+        let mut ca: Vec<_> = self.closure(std::iter::once(a)).collect();
+        let mut cb: Vec<_> = self.closure(std::iter::once(b)).collect();
+        ca.sort_unstable();
+        cb.sort_unstable();
+        let mut inter = Vec::with_capacity(ca.len().min(cb.len()));
+        let (mut i, mut j) = (0, 0);
+        while i < ca.len() && j < cb.len() {
+            match ca[i].cmp(&cb[j]) {
+                std::cmp::Ordering::Less => i += 1,
+                std::cmp::Ordering::Greater => j += 1,
+                std::cmp::Ordering::Equal => {
+                    inter.push(ca[i]);
+                    i += 1;
+                    j += 1;
+                }
+            }
+        }
+        let mut to_rm: Vec<_> = self.closure([a, b]).collect();
+        to_rm.sort_unstable();
+        to_rm.dedup();
+        let filtered = inter.into_iter().filter(move |x| to_rm.binary_search(x).is_err());
+        Box::new(filtered)
+    }
+    fn join<'s>(&'s self, a: Self::Point, b: Self::Point) -> Box<dyn Iterator<Item=Self::Point> + 's> {
+        let mut sa: Vec<_> = self.star(std::iter::once(a)).collect();
+        let mut sb: Vec<_> = self.star(std::iter::once(b)).collect();
+        sa.sort_unstable();
+        sb.sort_unstable();
+        let mut out = Vec::with_capacity(sa.len() + sb.len());
+        let (mut i, mut j) = (0, 0);
+        while i < sa.len() && j < sb.len() {
+            match sa[i].cmp(&sb[j]) {
+                std::cmp::Ordering::Less => {
+                    out.push(sa[i]);
+                    i += 1
+                }
+                std::cmp::Ordering::Greater => {
+                    out.push(sb[j]);
+                    j += 1
+                }
+                std::cmp::Ordering::Equal => {
+                    out.push(sa[i]);
+                    i += 1;
+                    j += 1
+                }
+            }
+        }
+        out.extend_from_slice(&sa[i..]);
+        out.extend_from_slice(&sb[j..]);
+        Box::new(out.into_iter())
+    }
+}
+```
+
+`src/topology/sieve/in_memory.rs`
+
+```rust
+// src/topology/sieve/in_memory.rs
+
+use super::sieve_trait::Sieve;
+use once_cell::sync::OnceCell;
+use std::collections::HashMap;
+use crate::topology::stratum::StrataCache;
+
+#[derive(Clone, Debug)]
+pub struct InMemorySieve<P, T=()>
+where
+    P: Ord,
+{
+    pub adjacency_out: HashMap<P, Vec<(P,T)>>,
+    pub adjacency_in:  HashMap<P, Vec<(P,T)>>,
+    pub strata: OnceCell<StrataCache<P>>,
+}
+
+impl<P: Copy+Eq+std::hash::Hash+Ord, T> Default for InMemorySieve<P,T> {
+    fn default() -> Self {
+        Self {
+            adjacency_out: HashMap::new(),
+            adjacency_in: HashMap::new(),
+            strata: OnceCell::new(),
+        }
+    }
+}
+
+impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> InMemorySieve<P,T> {
+    pub fn new() -> Self { Self::default() }
+    pub fn from_arrows<I:IntoIterator<Item=(P,P,T)>>(arrows:I) -> Self {
+        let mut sieve = Self::default();
+        for (src, dst, payload) in arrows {
+            sieve.add_arrow(src, dst, payload);
+        }
+        sieve
+    }
+}
+
+type ConeMapIter<'a, P, T> = std::iter::Map<std::slice::Iter<'a, (P, T)>, fn(&'a (P, T)) -> (P, &'a T)>;
+
+impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
+    type Point = P;
+    type Payload = T;
+    type ConeIter<'a> = ConeMapIter<'a, P, T> where Self: 'a;
+    type SupportIter<'a> = ConeMapIter<'a, P, T> where Self: 'a;
+
+    fn cone<'a>(&'a self, p: P) -> Self::ConeIter<'a> {
+        fn map_fn<P, T>((dst, pay): &(P, T)) -> (P, &T) where P: Copy { (*dst, pay) }
+        let f: fn(&(P, T)) -> (P, &T) = map_fn::<P, T>;
+        self.adjacency_out.get(&p).map(|v| v.iter().map(f)).unwrap_or_else(|| [].iter().map(f))
+    }
+    fn support<'a>(&'a self, p: P) -> Self::SupportIter<'a> {
+        fn map_fn<P, T>((src, pay): &(P, T)) -> (P, &T) where P: Copy { (*src, pay) }
+        let f: fn(&(P, T)) -> (P, &T) = map_fn::<P, T>;
+        self.adjacency_in.get(&p).map(|v| v.iter().map(f)).unwrap_or_else(|| [].iter().map(f))
+    }
+    fn add_arrow(&mut self, src: P, dst: P, payload: T) {
+        self.adjacency_out.entry(src).or_default().push((dst, payload.clone()));
+        self.adjacency_in.entry(dst).or_default().push((src, payload));
+        self.strata.take();
+    }
+    fn remove_arrow(&mut self, src: P, dst: P) -> Option<T> {
+        let mut removed = None;
+        if let Some(v) = self.adjacency_out.get_mut(&src) {
+            if let Some(pos) = v.iter().position(|(d, _)| *d == dst) {
+                removed = Some(v.remove(pos).1);
+            }
+        }
+        if let Some(v) = self.adjacency_in.get_mut(&dst) {
+            if let Some(pos) = v.iter().position(|(s, _)| *s == src) {
+                v.remove(pos);
+            }
+        }
+        self.strata.take();
+        removed
+    }
+    fn points<'a>(&'a self) -> Box<dyn Iterator<Item=P> + 'a> {
+        let mut set = std::collections::HashSet::new();
+        set.extend(self.adjacency_out.keys().copied());
+        set.extend(self.adjacency_in.keys().copied());
+        Box::new(set.into_iter())
+    }
+    fn base_points<'a>(&'a self) -> Box<dyn Iterator<Item=P> + 'a> {
+        Box::new(self.adjacency_out.keys().copied())
+    }
+    fn cap_points<'a>(&'a self) -> Box<dyn Iterator<Item=P> + 'a> {
+        Box::new(self.adjacency_in.keys().copied())
+    }
+    // override strata‐helpers using `self.strata_cache()`
+    fn height(&self,p:P)->u32{ self.strata_cache().height.get(&p).copied().unwrap_or(0) }
+    fn depth(&self,p:P)->u32{ self.strata_cache().depth.get(&p).copied().unwrap_or(0) }
+    fn diameter(&self)->u32{ self.strata_cache().diameter }
+    fn height_stratum(&self,k:u32)->Box<dyn Iterator<Item=P> + '_> {
+        let cache = self.strata_cache();
+        if let Some(v) = cache.strata.get(k as usize) {
+            Box::new(v.iter().copied())
+        } else {
+            Box::new(std::iter::empty())
+        }
+    }
+    fn depth_stratum(&self,k:u32)->Box<dyn Iterator<Item=P> + '_> {
+        let cache = self.strata_cache();
+        let points: Vec<_> = cache.depth.iter().filter(|(_, d)| **d == k).map(|(&p, _)| p).collect();
+        Box::new(points.into_iter())
+    }
+    // Implement meet and join by delegating to LatticeOps
+    fn meet<'s>(&'s self, a: P, b: P) -> Box<dyn Iterator<Item=P> + 's> {
+        crate::topology::sieve::lattice::LatticeOps::meet(self, a, b)
+    }
+    fn join<'s>(&'s self, a: P, b: P) -> Box<dyn Iterator<Item=P> + 's> {
+        crate::topology::sieve::lattice::LatticeOps::join(self, a, b)
+    }
+}
+```
+
 `src/data/atlas.rs`
 
 ```rust
+//! Atlas: Mapping mesh points to contiguous slices in a global data array.
+//!
+//! The `Atlas` struct provides a bijective mapping between topological
+//! points (`PointId`) and sub-slices of a flat data buffer. This is useful
+//! for packing degrees‐of‐freedom (DOFs) or other per‐point data into a
+//! single contiguous `Vec` for efficient storage and communication.
 
-
-use std::collections::HashMap;
 use crate::topology::point::PointId;
+use crate::topology::stratum::InvalidateCache;
+use std::collections::HashMap;
 
+/// `Atlas` maintains:
+/// - a lookup `map` from each `PointId` to its `(offset, len)` in the
+///   global data buffer,
+/// - an `order` vector to preserve insertion order for deterministic I/O,
+/// - and `total_len` to track the next free offset.
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct Atlas {
     /// Maps each point to its slice descriptor: (starting offset, length).
@@ -972,13 +1174,37 @@ pub struct Atlas {
     total_len: usize,
 }
 
-impl Atlas {
+impl InvalidateCache for Atlas {
+    fn invalidate_cache(&mut self) {
+        // Atlas itself does not cache derived structures, but if you add any, clear them here.
+    }
+}
 
+impl Atlas {
+    /// Insert a brand-new point `p` with a slice of length `len`.
+    ///
+    /// Returns the starting `offset` of this point’s slice in the
+    /// underlying data buffer.
+    ///
+    /// # Panics
+    /// - if `len == 0`, since zero‐length slices are reserved/invalid.
+    /// - if `p` has already been inserted.
+    ///
+    /// # Example
+    /// ```rust
+    /// # use sieve_rs::data::atlas::Atlas;
+    /// # use sieve_rs::topology::point::PointId;
+    /// let mut atlas = Atlas::default();
+    /// let p = PointId::new(7);
+    /// let offset = atlas.insert(p, 3);
+    /// assert_eq!(offset, 0);
+    /// assert_eq!(atlas.total_len(), 3);
+    /// ```
     pub fn insert(&mut self, p: PointId, len: usize) -> usize {
         // Reserve length must be positive.
         assert!(len > 0, "len==0 reserved");
         // Prevent inserting the same point twice.
-        assert!(self.map.get(&p).is_none(), "point already present");
+        assert!(!self.map.contains_key(&p), "point already present");
 
         // The starting offset is the current total length.
         let offset = self.total_len;
@@ -990,32 +1216,52 @@ impl Atlas {
         // Advance total length by this slice’s length.
         self.total_len += len;
 
+        // Invalidate caches in any structure built on this Atlas (e.g., Section, SievedArray, etc.)
+        InvalidateCache::invalidate_cache(self);
+
         offset
     }
 
+    /// Look up the slice descriptor `(offset, len)` for point `p`.
+    ///
+    /// Returns `Some((offset,len))` if `p` was previously inserted,
+    /// or `None` otherwise.
     #[inline]
     pub fn get(&self, p: PointId) -> Option<(usize, usize)> {
         self.map.get(&p).copied()
     }
 
+    /// Total length of all registered slices.
+    ///
+    /// This is equal to the sum of lengths of each point’s slice,
+    /// and is the size of the global data buffer needed.
     #[inline]
     pub fn total_len(&self) -> usize {
         self.total_len
     }
 
+    /// Iterator over all registered points in insertion (deterministic) order.
+    ///
+    /// Useful for serializing or iterating through slices in a stable order.
     #[inline]
     pub fn points<'a>(&'a self) -> impl Iterator<Item = PointId> + 'a {
         self.order.iter().copied()
     }
 }
-
-
 ```
 
 `src/data/bundle.rs`
 
 ```rust
-
+//! Bundle: Combines mesh topology, DOF storage, and data transfer rules.
+//!
+//! A `Bundle` ties together:
+//! 1. A **vertical stack** of mesh points → DOF points (`stack`),  
+//! 2. A **field section** storing per-point data (`section`),  
+//! 3. A **delta** strategy (`delta`) for refining/assembling data.
+//!
+//! This abstraction supports push (refine) and pull (assemble) of data
+//! across mesh hierarchy levels, as described in Knepley & Karpeev (2009).
 
 use crate::topology::point::PointId;
 use crate::topology::stack::{InMemoryStack, Stack};
@@ -1023,7 +1269,16 @@ use crate::data::section::Section;
 use crate::overlap::delta::CopyDelta;
 use crate::topology::sieve::Sieve;
 
-
+/// `Bundle<V, D>` packages a mesh‐to‐DOF stack, a data section, and a `Delta`-type.
+///
+/// - `V`: underlying data type stored at each DOF (e.g., `f64`, `i32`, …).
+/// - `D`: `Delta<V>` implementation guiding how data moves (defaults to `CopyDelta`).
+///
+/// # Fields
+/// - `stack`: vertical arrows from base mesh points → cap (DOF) points,
+///    carrying an `Orientation` payload if needed.
+/// - `section`: contiguous storage of data `V` for each point in the atlas.
+/// - `delta`: rules for extracting (`restrict`) and merging (`fuse`) values.
 pub struct Bundle<V, D = CopyDelta> {
     /// Vertical connectivity: base points → cap (DOF) points.
     pub stack: InMemoryStack<PointId, PointId, crate::topology::arrow::Orientation>,
@@ -1039,7 +1294,19 @@ where
     // `D` must implement the Delta trait for `V`, with `Part = V`.
     D: crate::overlap::delta::Delta<V, Part = V>,
 {
-
+    /// **Refine**: push data *down* the stack (base → cap).
+    ///
+    /// For each base point in the transitive closure of `bases`:
+    /// 1. Read its current value slice (`restrict`) → `base_vals`.
+    /// 2. Lift to each cap point (DOF) via `stack.lift`.
+    /// 3. Call `D::restrict` to extract the part to send.
+    /// 4. Overwrite the cap’s slice with that part.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Propagate coarse solution values to refined DOF points.
+    /// bundle.refine(mesh_cells_iter);
+    /// ```
     pub fn refine(&mut self, bases: impl IntoIterator<Item = PointId>) {
         // Collect actions first to avoid mutable aliasing on `section`.
         let mut actions = Vec::new();
@@ -1064,7 +1331,19 @@ where
         }
     }
 
-
+    /// **Assemble**: pull data *up* the stack (cap → base) using `delta`.
+    ///
+    /// For each base point in the closure of `bases`:
+    /// 1. Gather all cap points via `stack.lift`.
+    /// 2. Read each cap’s slice (`restrict`) → `cap_vals`.
+    /// 3. Accumulate back into the base slice:
+    ///    `D::fuse(&mut base_vals[0], incoming_part)`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Gather refined DOF contributions back to coarse mesh.
+    /// bundle.assemble(mesh_cells_iter);
+    /// ```
     pub fn assemble(&mut self, bases: impl IntoIterator<Item = PointId>) {
         // Collect actions first to avoid borrow conflicts on `section`.
         let mut actions = Vec::new();
@@ -1091,7 +1370,16 @@ where
         }
     }
 
-
+    /// Iterate over `(cap_point, &[V])` pairs for all DOFs attached to base `p`.
+    ///
+    /// Yields each cap point and an immutable view into its data slice.
+    ///
+    /// # Example
+    /// ```ignore
+    /// for (dof_pt, values) in bundle.dofs(cell_pt) {
+    ///     // use values[..] for computation…
+    /// }
+    /// ```
     pub fn dofs<'a>(
         &'a self,
         p: PointId
@@ -1101,13 +1389,16 @@ where
             .map(move |(cap, _)| (cap, self.section.restrict(cap)))
     }
 }
-
-
 ```
 
 `src/data/section.rs`
 
 ```rust
+//! Section: Field data storage over a topology atlas.
+//!
+//! The `Section<V>` type couples an `Atlas` (mapping points to slices in a
+//! contiguous array) with a `Vec<V>` to hold the actual data. It provides
+//! methods for inserting, accessing, and iterating per-point data slices.
 
 use crate::data::atlas::Atlas;
 use crate::topology::point::PointId;
@@ -1122,33 +1413,48 @@ pub struct Section<V> {
 }
 
 impl<V: Clone + Default> Section<V> {
-
+    /// Construct a new `Section` given an existing `Atlas`.
+    ///
+    /// Initializes the data buffer with `V::default()` repeated for each
+    /// degree of freedom in the atlas.
     pub fn new(atlas: Atlas) -> Self {
         // Fill `data` with default values up to total_len from atlas.
         let data = vec![V::default(); atlas.total_len()];
         Section { atlas, data }
     }
 
+    /// Read-only view of the data slice for a given point `p`.
+    ///
+    /// # Panics
+    /// Panics if `p` is not registered in the atlas.
     #[inline]
     pub fn restrict(&self, p: PointId) -> &[V] {
         // Look up offset and length in the atlas.
-        let (offset, len) = self.atlas.get(p)
-            .expect("PointId not found in atlas");
-        &self.data[offset .. offset + len]
+        let (offset, len) = self.atlas.get(p).expect("PointId not found in atlas");
+        &self.data[offset..offset + len]
     }
 
+    /// Mutable view of the data slice for a given point `p`.
+    ///
+    /// # Panics
+    /// Panics if `p` is not registered in the atlas.
     #[inline]
     pub fn restrict_mut(&mut self, p: PointId) -> &mut [V] {
-        let (offset, len) = self.atlas.get(p)
-            .expect("PointId not found in atlas");
-        &mut self.data[offset .. offset + len]
+        let (offset, len) = self.atlas.get(p).expect("PointId not found in atlas");
+        &mut self.data[offset..offset + len]
     }
 
-
+    /// Overwrite the data slice at point `p` with the values in `val`.
+    ///
+    /// # Panics
+    /// Panics if the length of `val` does not match the slice length for `p`.
     pub fn set(&mut self, p: PointId, val: &[V]) {
         let target = self.restrict_mut(p);
-        assert_eq!(target.len(), val.len(),
-            "Input slice length must match point's DOF count");
+        assert_eq!(
+            target.len(),
+            val.len(),
+            "Input slice length must match point's DOF count"
+        );
         // Clone values into the section's buffer.
         target.clone_from_slice(val);
     }
@@ -1156,25 +1462,29 @@ impl<V: Clone + Default> Section<V> {
     /// Iterate over `(PointId, &[V])` for all points in atlas order.
     ///
     /// Useful for serializing or visiting all data in a deterministic order.
-    pub fn iter<'s>(&'s self) -> impl Iterator<Item = (PointId, &'s [V])> {
+    pub fn iter(&self) -> impl Iterator<Item = (PointId, &[V])> {
         // Use the atlas's point order for deterministic iteration.
-        self.atlas.points()
+        self.atlas
+            .points()
             .map(move |pid| (pid, self.restrict(pid)))
     }
 }
 
 impl<V: Clone + Send> Section<V> {
-
-    pub fn scatter_from(&mut self,
-                        other: &[V],
-                        atlas_map: &[(usize, usize)])
-    {
+    /// Scatter values from an external buffer `other` into this section.
+    ///
+    /// `atlas_map` provides a list of (offset, length) pairs corresponding to
+    /// where each chunk of `other` should be copied in.
+    ///
+    /// # Panics
+    /// Panics if `other` length does not match expected total length or if
+    /// chunk sizes mismatch.
+    pub fn scatter_from(&mut self, other: &[V], atlas_map: &[(usize, usize)]) {
         let mut start = 0;
         for (offset, len) in atlas_map.iter() {
             let end = start + *len;
             let chunk = &other[start..end];
-            self.data[*offset .. offset + *len]
-                .clone_from_slice(chunk);
+            self.data[*offset..offset + *len].clone_from_slice(chunk);
             start = end;
         }
     }
@@ -1205,10 +1515,6 @@ impl<V: Clone + Default> Map<V> for Section<V> {
         Some(self.restrict_mut(p))
     }
 }
-
-
-#[cfg(feature = "data_refine")]
-pub use crate::data::refine::Sifter;
 ```
 
 `src/data/refine/delta.rs`
@@ -1241,18 +1547,19 @@ impl<V: Clone + Default> Delta<V> for Orientation {
 
 ```rust
 //! Helpers for pulling per-point slices out along a Sieve.
-//! (Previously lived in section.rs under #[cfg(feature="data_refine")])
+//! (Previously lived in section.rs)
 
+use crate::data::section::Map;
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
-use crate::data::section::Map;
 
 pub fn restrict_closure<'s, M, V: Clone + Default + 's>(
     sieve: &impl Sieve<Point = PointId>,
     map: &'s M,
     seeds: impl IntoIterator<Item = PointId>,
 ) -> impl Iterator<Item = (PointId, &'s [V])>
-where M: Map<V> + 's
+where
+    M: Map<V> + 's,
 {
     sieve.closure(seeds).map(move |p| (p, map.get(p)))
 }
@@ -1262,7 +1569,8 @@ pub fn restrict_star<'s, M, V: Clone + Default + 's>(
     map: &'s M,
     seeds: impl IntoIterator<Item = PointId>,
 ) -> impl Iterator<Item = (PointId, &'s [V])>
-where M: Map<V> + 's
+where
+    M: Map<V> + 's,
 {
     sieve.star(seeds).map(move |p| (p, map.get(p)))
 }
@@ -1272,7 +1580,8 @@ pub fn restrict_closure_vec<'s, M, V: Clone + Default + 's>(
     map: &'s M,
     seeds: impl IntoIterator<Item = PointId>,
 ) -> Vec<(PointId, &'s [V])>
-where M: Map<V> + 's
+where
+    M: Map<V> + 's,
 {
     restrict_closure(sieve, map, seeds).collect()
 }
@@ -1282,7 +1591,8 @@ pub fn restrict_star_vec<'s, M, V: Clone + Default + 's>(
     map: &'s M,
     seeds: impl IntoIterator<Item = PointId>,
 ) -> Vec<(PointId, &'s [V])>
-where M: Map<V> + 's
+where
+    M: Map<V> + 's,
 {
     restrict_star(sieve, map, seeds).collect()
 }
@@ -1297,9 +1607,9 @@ where M: Map<V> + 's
 //! (Extracted from section.rs)
 
 use crate::data::atlas::Atlas;
-use crate::topology::point::PointId;
-use crate::topology::arrow::Orientation;
 use crate::data::refine::delta::Delta;
+use crate::topology::arrow::Orientation;
+use crate::topology::point::PointId;
 
 #[derive(Clone, Debug)]
 pub struct SievedArray<P, V> {
@@ -1314,15 +1624,19 @@ where
 {
     pub fn new(atlas: Atlas) -> Self {
         let data = vec![V::default(); atlas.total_len()];
-        Self { atlas, data, _phantom: std::marker::PhantomData }
+        Self {
+            atlas,
+            data,
+            _phantom: std::marker::PhantomData,
+        }
     }
     pub fn get(&self, p: PointId) -> &[V] {
         let (off, len) = self.atlas.get(p).expect("point not in atlas");
-        &self.data[off .. off + len]
+        &self.data[off..off + len]
     }
     pub fn get_mut(&mut self, p: PointId) -> &mut [V] {
         let (off, len) = self.atlas.get(p).expect("point not in atlas");
-        &mut self.data[off .. off + len]
+        &mut self.data[off..off + len]
     }
     pub fn set(&mut self, p: PointId, val: &[V]) {
         let tgt = self.get_mut(p);
@@ -1341,19 +1655,20 @@ where
             let coarse_slice = coarse.get((*coarse_pt).into());
             for (fine_pt, orient) in fine_pts.iter() {
                 let fine_slice = self.get_mut((*fine_pt).into());
-                assert_eq!(coarse_slice.len(), fine_slice.len(), "dof mismatch in refinement");
+                assert_eq!(
+                    coarse_slice.len(),
+                    fine_slice.len(),
+                    "dof mismatch in refinement"
+                );
                 orient.apply(coarse_slice, fine_slice);
             }
         }
     }
-    pub fn refine(
-        &mut self,
-        coarse: &SievedArray<P, V>,
-        refinement: &[(P, Vec<P>)]
-    ) {
-        let sifter: Vec<_> = refinement.iter().map(|(c, fs)| {
-            (*c, fs.iter().map(|f| (*f, Orientation::Forward)).collect())
-        }).collect();
+    pub fn refine(&mut self, coarse: &SievedArray<P, V>, refinement: &[(P, Vec<P>)]) {
+        let sifter: Vec<_> = refinement
+            .iter()
+            .map(|(c, fs)| (*c, fs.iter().map(|f| (*f, Orientation::Forward)).collect()))
+            .collect();
         self.refine_with_sifter(coarse, &sifter);
     }
     pub fn assemble(&self, _coarse: &mut SievedArray<P, V>, _ref: &[(P, Vec<P>)]) {
@@ -1387,8 +1702,14 @@ pub struct CopyDelta;
 
 impl<V: Clone + Send> Delta<V> for CopyDelta {
     type Part = V;
-    #[inline] fn restrict(v: &V) -> V { v.clone() }
-    #[inline] fn fuse(local: &mut V, incoming: V) { *local = incoming; }
+    #[inline]
+    fn restrict(v: &V) -> V {
+        v.clone()
+    }
+    #[inline]
+    fn fuse(local: &mut V, incoming: V) {
+        *local = incoming;
+    }
 }
 
 /// Additive delta for summation/balancing fields.
@@ -1396,10 +1717,18 @@ impl<V: Clone + Send> Delta<V> for CopyDelta {
 pub struct AddDelta;
 
 impl<V> Delta<V> for AddDelta
-where V: std::ops::AddAssign + Copy + Send {
+where
+    V: std::ops::AddAssign + Copy + Send,
+{
     type Part = V;
-    #[inline] fn restrict(v: &V) -> V { *v }
-    #[inline] fn fuse(local: &mut V, incoming: V) { *local += incoming; }
+    #[inline]
+    fn restrict(v: &V) -> V {
+        *v
+    }
+    #[inline]
+    fn fuse(local: &mut V, incoming: V) {
+        *local += incoming;
+    }
 }
 ```
 
@@ -1429,11 +1758,21 @@ impl Overlap {
     /// Add an overlap arrow: `local_p --(rank,remote_p)--> partition(rank)`.
     pub fn add_link(&mut self, local: PointId, remote_rank: usize, remote: PointId) {
         let part_pt = partition_point(remote_rank);
-        Sieve::add_arrow(self, local, part_pt, Remote { rank: remote_rank, remote_point: remote });
+        Sieve::add_arrow(
+            self,
+            local,
+            part_pt,
+            Remote {
+                rank: remote_rank,
+                remote_point: remote,
+            },
+        );
+        // Invalidate caches after mutation
+        //InvalidateCache::invalidate_cache(self);
     }
 
     /// Convenience: iterate all neighbours of the *current* rank.
-    pub fn neighbours<'a>(&'a self, my_rank: usize) -> impl Iterator<Item=usize> + 'a {
+    pub fn neighbours<'a>(&'a self, my_rank: usize) -> impl Iterator<Item = usize> + 'a {
         use std::collections::HashSet;
         Sieve::cone(self, partition_point(my_rank))
             .map(|(_, rem)| rem.rank)
@@ -1442,7 +1781,11 @@ impl Overlap {
     }
 
     /// Returns iterator over `(local, remote_point)` for a given neighbour rank.
-    pub fn links_to<'a>(&'a self, nbr: usize, _my_rank: usize) -> impl Iterator<Item=(PointId, PointId)> + 'a {
+    pub fn links_to<'a>(
+        &'a self,
+        nbr: usize,
+        _my_rank: usize,
+    ) -> impl Iterator<Item = (PointId, PointId)> + 'a {
         Sieve::support(self, partition_point(nbr))
             .filter(move |(_, r)| r.rank == nbr)
             .map(|(local, r)| (local, r.remote_point))
@@ -1453,9 +1796,9 @@ impl Overlap {
 `src/partitioning/binpack.rs`
 
 ```rust
+use rayon::prelude::*;
 use std::cmp::Reverse;
 use std::sync::atomic::{AtomicU64, Ordering};
-use rayon::prelude::*;
 
 // Ensure rand and ahash are available as dependencies in Cargo.toml
 // rand = { version = "0.8", features = ["std"], optional = true }
@@ -1489,9 +1832,7 @@ pub fn partition_clusters(items: &[Item], k: usize, epsilon: f64) -> Vec<usize> 
     order.par_sort_unstable_by_key(|&i| Reverse(items[i].load));
 
     // 3. Create `k` buckets, each with an atomic load counter initialized to 0.
-    let buckets: Vec<AtomicU64> = (0..k)
-        .map(|_| AtomicU64::new(0))
-        .collect();
+    let buckets: Vec<AtomicU64> = (0..k).map(|_| AtomicU64::new(0)).collect();
 
     // 4. Prepare the output vector: cluster_id → part_id.
     let mut cluster_to_part = vec![0; n];
@@ -1540,7 +1881,6 @@ pub fn partition_clusters(items: &[Item], k: usize, epsilon: f64) -> Vec<usize> 
 
     cluster_to_part
 }
-
 ```
 
 `src/partitioning/graph_traits.rs`
@@ -1562,10 +1902,12 @@ pub trait PartitionableGraph: Sync {
     type VertexId: Copy + Hash + Eq + Send + Sync;
     /// Parallel iterator over all vertices.
     type VertexParIter<'a>: IndexedParallelIterator<Item = Self::VertexId> + 'a
-    where Self: 'a;
+    where
+        Self: 'a;
     /// Parallel iterator over neighbors.
     type NeighParIter<'a>: ParallelIterator<Item = Self::VertexId> + 'a
-    where Self: 'a;
+    where
+        Self: 'a;
 
     /// Returns a parallel, indexable iterator over all vertices.
     fn vertices(&self) -> Self::VertexParIter<'_>;
@@ -1590,7 +1932,6 @@ pub trait PartitionableGraph: Sync {
         })
     }
 }
-
 ```
 
 `src/partitioning/louvain.rs`
@@ -1598,10 +1939,10 @@ pub trait PartitionableGraph: Sync {
 ```rust
 #![cfg(feature = "partitioning")]
 
-use crate::partitioning::graph_traits::PartitionableGraph;
 use crate::partitioning::PartitionerConfig;
-use rayon::iter::ParallelIterator;
+use crate::partitioning::graph_traits::PartitionableGraph;
 use rayon::iter::IntoParallelIterator;
+use rayon::iter::ParallelIterator;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -1622,10 +1963,7 @@ impl Cluster {
     }
 }
 
-pub fn louvain_cluster<G>(
-    graph: &G,
-    cfg: &PartitionerConfig,
-) -> Vec<u32>
+pub fn louvain_cluster<G>(graph: &G, cfg: &PartitionerConfig) -> Vec<u32>
 where
     G: PartitionableGraph<VertexId = usize> + Sync,
 {
@@ -1633,18 +1971,18 @@ where
     if n == 0 {
         return Vec::new();
     }
-    let degrees: Vec<u64> = graph
-        .vertices()
-        .map(|u| graph.degree(u) as u64)
-        .collect();
+    let degrees: Vec<u64> = graph.vertices().map(|u| graph.degree(u) as u64).collect();
     // NOTE: PartitionableGraph does not require an edges() method, so we reconstruct edges from neighbors.
-    let all_edges: Vec<(usize, usize)> = graph.vertices().flat_map(|u| {
-        graph.neighbors(u).filter_map(move |v| if u < v { Some((u, v)) } else { None })
-    }).collect();
-    let m_f64: f64 = (all_edges.len() as u64 / 2) as f64;
-    let cluster_ids: Vec<AtomicU32> = (0..n)
-        .map(|u| AtomicU32::new(u as u32))
+    let all_edges: Vec<(usize, usize)> = graph
+        .vertices()
+        .flat_map(|u| {
+            graph
+                .neighbors(u)
+                .filter_map(move |v| if u < v { Some((u, v)) } else { None })
+        })
         .collect();
+    let m_f64: f64 = (all_edges.len() as u64 / 2) as f64;
+    let cluster_ids: Vec<AtomicU32> = (0..n).map(|u| AtomicU32::new(u as u32)).collect();
     let mut clusters: HashMap<u32, Cluster> = HashMap::with_capacity(n);
     for u in 0..n {
         let vid = u as u32;
@@ -1727,7 +2065,6 @@ where
         .collect();
     final_clusters
 }
-
 ```
 
 `src/partitioning/metrics.rs`
@@ -1736,11 +2073,11 @@ where
 // Metrics skeleton for partitioning
 #![cfg(feature = "partitioning")]
 
-use super::{PartitionableGraph, PartitionMap};
+use super::{PartitionMap, PartitionableGraph};
+use rayon::iter::IntoParallelIterator;
+use rayon::iter::ParallelIterator;
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
-use rayon::iter::ParallelIterator;
-use rayon::iter::IntoParallelIterator;
 
 /// Returns the part ID for a given vertex.
 impl<V: Eq + Hash + Copy> PartitionMap<V> {
@@ -1765,18 +2102,17 @@ where
         .vertices()
         .flat_map(|u| {
             // NeighParIter is a ParallelIterator, not Iterator, so use .filter_map directly
-            g.neighbors(u)
-                .filter_map(move |v| {
-                    if u < v {
-                        if pm.part_of(u) != pm.part_of(v) {
-                            Some(1)
-                        } else {
-                            None
-                        }
+            g.neighbors(u).filter_map(move |v| {
+                if u < v {
+                    if pm.part_of(u) != pm.part_of(v) {
+                        Some(1)
                     } else {
                         None
                     }
-                })
+                } else {
+                    None
+                }
+            })
         })
         .sum();
 
@@ -1799,10 +2135,17 @@ where
     }
 
     // 2. Build a map from VertexId -> position index
-    let idx_map: HashMap<G::VertexId, usize> = verts.iter().copied().enumerate().map(|(i, v)| (v, i)).collect();
+    let idx_map: HashMap<G::VertexId, usize> = verts
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(i, v)| (v, i))
+        .collect();
 
     // 3. Create a Vec<HashSet<usize>> per vertex to accumulate all owning parts (thread-safe)
-    let owners: Vec<std::sync::Mutex<HashSet<usize>>> = (0..n).map(|_| std::sync::Mutex::new(HashSet::new())).collect();
+    let owners: Vec<std::sync::Mutex<HashSet<usize>>> = (0..n)
+        .map(|_| std::sync::Mutex::new(HashSet::new()))
+        .collect();
 
     // 4. For each vertex u, mark its own part, and also its part for each neighbor v (in parallel)
     verts.par_iter().for_each(|&u| {
@@ -1821,17 +2164,16 @@ where
     // 6. Return average = total / n
     total_owned as f64 / n as f64
 }
-
 ```
 
 `src/partitioning/parallel.rs`
 
 ```rust
-use rayon::prelude::*;
-use rand::rngs::SmallRng;
-use rand::SeedableRng;
-use std::cell::RefCell;
 use ahash::AHasher;
+use rand::SeedableRng;
+use rand::rngs::SmallRng;
+use rayon::prelude::*;
+use std::cell::RefCell;
 use std::hash::Hasher;
 
 thread_local! {
@@ -1857,7 +2199,9 @@ where
 {
     THREAD_RNG.with(|cell| {
         let mut opt = cell.borrow_mut();
-        let rng = opt.as_mut().expect("Thread‐local RNG not initialized: call init_thread_rng() first");
+        let rng = opt
+            .as_mut()
+            .expect("Thread‐local RNG not initialized: call init_thread_rng() first");
         f(rng)
     })
 }
@@ -1880,26 +2224,23 @@ where
         func(i, item);
     });
 }
+
 ```
 
 `src/partitioning/seed_select.rs`
 
 ```rust
-use crate::partitioning::graph_traits::PartitionableGraph;
 use crate::partitioning::PartitionerConfig;
-use rayon::iter::ParallelIterator;
-use rayon::iter::IntoParallelIterator;
+use crate::partitioning::graph_traits::PartitionableGraph;
 use rand::Rng;
-use rand::rngs::SmallRng;
 use rand::SeedableRng;
+use rand::rngs::SmallRng;
+use rayon::iter::IntoParallelIterator;
+use rayon::iter::ParallelIterator;
 
 /// Returns a Vec<VertexId> of length `num_seeds = ceil(cfg.seed_factor * cfg.n_parts)`,
 /// chosen *without replacement*, weighted by degree.  Assumes `VertexId = usize`.
-pub fn pick_seeds<G>(
-    graph: &G,
-    degrees: &[u64],
-    cfg: &PartitionerConfig,
-) -> Vec<G::VertexId>
+pub fn pick_seeds<G>(graph: &G, degrees: &[u64], cfg: &PartitionerConfig) -> Vec<G::VertexId>
 where
     G: PartitionableGraph<VertexId = usize> + Sync,
 {
@@ -1907,7 +2248,9 @@ where
     if n == 0 {
         return Vec::new();
     }
-    let num_seeds = ((cfg.seed_factor * cfg.n_parts as f64).ceil() as usize).min(n).max(1);
+    let num_seeds = ((cfg.seed_factor * cfg.n_parts as f64).ceil() as usize)
+        .min(n)
+        .max(1);
 
     // ——— FIX: collect the iterator into a Vec<usize> ———
     let vertices: Vec<usize> = graph.vertices().collect();
@@ -1961,7 +2304,6 @@ where
     }
     chosen
 }
-
 ```
 
 `src/partitioning/state.rs`
@@ -2020,20 +2362,19 @@ impl ClusterIds {
         }
     }
 }
-
 ```
 
-`src/partitioning/vertex_cuts.rs`
+`src/partitioning/vertex_cut.rs`
 
 ```rust
-use crate::partitioning::graph_traits::PartitionableGraph;
 use crate::partitioning::PartitionMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use parking_lot::Mutex;
+use crate::partitioning::graph_traits::PartitionableGraph;
 use ahash::AHasher;
-use rayon::prelude::*; // brings IntoParallelIterator, ParallelIterator, etc.
+use parking_lot::Mutex;
 use rayon::iter::IntoParallelIterator;
+use rayon::prelude::*; // brings IntoParallelIterator, ParallelIterator, etc.
 use std::hash::Hasher;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// For each edge `(u, v)` in the graph where `pm.part_of(u) != pm.part_of(v)`,
 /// choose a “primary owner” of that edge (by hashing `(u,v)` with a salt),
@@ -2053,9 +2394,7 @@ where
     let n = graph.vertices().count();
 
     // 2. Allocate primary_part array, default = usize::MAX
-    let mut primary_part: Vec<AtomicUsize> = (0..n)
-        .map(|_| AtomicUsize::new(usize::MAX))
-        .collect();
+    let mut primary_part: Vec<AtomicUsize> = (0..n).map(|_| AtomicUsize::new(usize::MAX)).collect();
 
     // 3. Allocate one Mutex<Vec<...>> per vertex for its replicas
     let replica_lists: Vec<Mutex<Vec<(G::VertexId, usize)>>> =
@@ -2063,7 +2402,7 @@ where
 
     // 4. Parallel edge sweep: for each u, for each neighbor v where u < v
     graph
-        .vertices()               // yields a parallel iterator over VertexId
+        .vertices() // yields a parallel iterator over VertexId
         .into_par_iter()
         .for_each(|u| {
             // For each neighbor v of u (owned Vec<usize>), iterate in parallel
@@ -2128,17 +2467,21 @@ where
 
     (primary_owner, replicas)
 }
-
 ```
 
 `src/algs/communicator.rs`
 
 ```rust
+//! Thin façade over intra-process (Rayon) or inter-process (MPI) message passing.
+//!
+//! Messages are *contiguous byte slices* (no zero-copy guarantees).
+//! All handles are **waitable** but non-blocking -– completion.rs calls
+//! `.wait()` before it trusts that the buffer is ready.
 
-use std::sync::{Arc, Mutex};
-use dashmap::DashMap;
 use bytes::Bytes;
+use dashmap::DashMap;
 use once_cell::sync::Lazy;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 /// Non-blocking communication interface (minimal by design).
@@ -2152,7 +2495,14 @@ pub trait Communicator: Send + Sync + 'static {
     fn irecv(&self, peer: usize, tag: u16, buf: &mut [u8]) -> Self::RecvHandle;
 
     /// Returns true if this communicator is NoComm (for test logic)
-    fn is_no_comm(&self) -> bool { false }
+    fn is_no_comm(&self) -> bool {
+        false
+    }
+
+    /// Rank of this process (0..size-1)
+    fn rank(&self) -> usize;
+    /// Total number of ranks
+    fn size(&self) -> usize;
 }
 
 /// Anything that can be waited on.
@@ -2166,16 +2516,32 @@ pub trait Wait {
 pub struct NoComm;
 
 impl Wait for () {
-    fn wait(self) -> Option<Vec<u8>> { None }
+    fn wait(self) -> Option<Vec<u8>> {
+        None
+    }
 }
 
 impl Communicator for NoComm {
     type SendHandle = ();
     type RecvHandle = ();
 
-    fn isend(&self, _peer: usize, _tag: u16, _buf: &[u8]) -> () { () }
-    fn irecv(&self, _peer: usize, _tag: u16, _buf: &mut [u8]) -> () { () }
-    fn is_no_comm(&self) -> bool { true }
+    fn isend(&self, _peer: usize, _tag: u16, _buf: &[u8]) {
+        // no-op
+    }
+    fn irecv(&self, _peer: usize, _tag: u16, _buf: &mut [u8]) {
+        // no-op
+    }
+    fn is_no_comm(&self) -> bool {
+        true
+    }
+
+    fn rank(&self) -> usize {
+        0
+    }
+
+    fn size(&self) -> usize {
+        1
+    }
 }
 
 // --- RayonComm: intra-process / multi-thread ---
@@ -2204,7 +2570,9 @@ pub struct RayonComm {
 }
 
 impl RayonComm {
-    pub fn new(rank: usize) -> Self { Self { rank } }
+    pub fn new(rank: usize) -> Self {
+        Self { rank }
+    }
 }
 
 impl Communicator for RayonComm {
@@ -2232,18 +2600,29 @@ impl Communicator for RayonComm {
                 std::thread::yield_now();
             }
         });
-        LocalHandle { buf: buf_arc, handle: Some(handle) }
+        LocalHandle {
+            buf: buf_arc,
+            handle: Some(handle),
+        }
+    }
+
+    fn rank(&self) -> usize {
+        self.rank
+    }
+
+    fn size(&self) -> usize {
+        2 // For tests, default to 2
     }
 }
 
 // --- MPI backend ---
 mod mpi_backend {
     use super::*;
-    use mpi::traits::*;
-    use mpi::topology::{SimpleCommunicator, Communicator as _};
-    use mpi::request::{StaticScope};
-    use mpi::request::Request;
     use mpi::environment::Universe;
+    use mpi::request::Request;
+    use mpi::request::StaticScope;
+    use mpi::topology::{Communicator as _, SimpleCommunicator};
+    use mpi::traits::*;
 
     pub struct MpiComm {
         _universe: Universe, // keep alive until drop
@@ -2251,12 +2630,22 @@ mod mpi_backend {
         pub rank: usize,
     }
 
+    impl Default for MpiComm {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
     impl MpiComm {
         pub fn new() -> Self {
             let universe = mpi::initialize().unwrap();
             let world = universe.world();
             let rank = world.rank() as usize;
-            MpiComm { _universe: universe, world, rank }
+            MpiComm {
+                _universe: universe,
+                world,
+                rank,
+            }
         }
     }
 
@@ -2278,20 +2667,27 @@ mod mpi_backend {
         type SendHandle = ();
         type RecvHandle = MpiHandle;
 
-        fn isend(&self, peer: usize, _tag: u16, buf: &[u8]) -> () {
-            self.world.process_at_rank(peer as i32)
-                .send(buf);
+        fn isend(&self, peer: usize, _tag: u16, buf: &[u8]) {
+            self.world.process_at_rank(peer as i32).send(buf);
         }
 
         fn irecv(&self, peer: usize, _tag: u16, buf: &mut [u8]) -> MpiHandle {
             let len = buf.len();
-            let mut v = Vec::with_capacity(len);
-            unsafe { v.set_len(len) };
+            let v = vec![0u8; len];
             let static_buf: &'static mut [u8] = Box::leak(v.into_boxed_slice());
             let buf_ptr = static_buf as *mut [u8];
-            let req = self.world.process_at_rank(peer as i32)
+            let req = self
+                .world
+                .process_at_rank(peer as i32)
                 .immediate_receive_into(StaticScope, unsafe { &mut *buf_ptr });
             MpiHandle { req, buf: buf_ptr }
+        }
+
+        fn rank(&self) -> usize {
+            self.world.rank() as usize
+        }
+        fn size(&self) -> usize {
+            self.world.size() as usize
         }
     }
 }
@@ -2299,24 +2695,111 @@ mod mpi_backend {
 pub use mpi_backend::MpiComm;
 ```
 
+`src/algs/distribute.rs`
+
+```rust
+// src/algs/distribute.rs
+
+use crate::algs::communicator::Communicator;
+use crate::topology::point::PointId;
+use crate::topology::sieve::{Sieve, InMemorySieve};
+use crate::overlap::overlap::Remote;
+use crate::algs::completion::{sieve_completion, section_completion};
+use std::collections::HashMap;
+use mpi::topology::Communicator as MpiCommunicator;
+
+
+/// Distribute a global mesh across MPI ranks.
+///
+/// # Arguments
+/// - `mesh`: the full global mesh (arrows of type `Payload=()`)  
+/// - `parts`: a slice of length `mesh.points().count()`, mapping each `PointId.get() as usize` to a rank  
+/// - `comm`: your communicator (MPI or Rayon)
+///
+/// # Returns
+/// `(local_mesh, overlap)` where:
+/// - `local_mesh`: only those arrows owned by this rank  
+/// - `overlap`: the overlap Sieve (arrows `PointId→partition_pt(rank)`) for ghost‐exchange  
+pub fn distribute_mesh<M, C>(
+    mesh: &M,
+    parts: &[usize],
+    comm: &C,
+) -> (InMemorySieve<PointId,()>, InMemorySieve<PointId,Remote>)
+where
+    M: Sieve<Point = PointId, Payload = ()>,
+    C: Communicator + Sync,
+{
+    let my_rank = comm.rank();      // assume your Communicator exposes `rank()`
+    let n_ranks = comm.size();      // and `size()`
+    // 1) Build the “overlap” sieve
+    let mut overlap = InMemorySieve::<PointId,Remote>::default();
+    for p in mesh.points() {
+        let owner = parts[p.get() as usize];
+        let part_pt = PointId::new((owner as u64)+1);
+        if p != part_pt {
+            overlap.add_arrow(p, part_pt, Remote { rank: owner, remote_point: p });
+        }
+    }
+
+    // 2) Extract local submesh: only arrows whose src→dst are both owned here
+    let mut local = InMemorySieve::<PointId,()>::default();
+    for p in mesh.base_points() {
+        if parts[p.get() as usize] == my_rank {
+            for (dst, _) in mesh.cone(p) {
+                if parts[dst.get() as usize] == my_rank {
+                    local.add_arrow(p, dst, ());
+                }
+            }
+        }
+    }
+
+    // 3) Complete the overlap graph of arrows across ranks
+    let overlap_clone = overlap.clone();
+    sieve_completion::complete_sieve(&mut overlap, &overlap_clone, comm, my_rank);
+
+    // 4) (Optional: exchange data if needed, but for mesh topology with () payload, this is not required)
+
+    (local, overlap)
+}
+```
+
 `src/algs/dual_graph.rs`
 
 ```rust
+//! Build a CSR (compressed-sparse-row) *dual graph* of a mesh.
+//
+// Each *cell* is a vertex; an undirected edge is added between any two
+// cells that share at least one lower-dimensional entity (face / edge / vertex),
+// exactly following Knepley & Karpeev, 2009 §3.
+//
+// Returned in ParMETIS-ready CSR triples:
+//
+// * `xadj[i] .. xadj[i+1]`   = neighbour list of cell *i*
+// * `adjncy`                 = concatenated neighbour vertices
+// * `vwgt[i]`                = (optional) vertex weight, default = 1
+//
+// The dual graph is **symmetrised** (i↔j appear in both lists) and
+// **self-free** (no loops).
 
 use std::collections::{HashMap, HashSet};
 
-use crate::topology::sieve::Sieve;
 use crate::algs::traversal::closure;
 use crate::topology::point::PointId;
+use crate::topology::sieve::Sieve;
 
 /// CSR triple
 #[derive(Debug, Clone)]
 pub struct DualGraph {
-    pub xadj:   Vec<usize>,
+    pub xadj: Vec<usize>,
     pub adjncy: Vec<usize>,
-    pub vwgt:   Vec<i32>,  // ParMETIS expects i32
+    pub vwgt: Vec<i32>, // ParMETIS expects i32
 }
 
+/// Build dual graph. Cell indices are assigned by *insertion order*
+/// of the `cells` iterator passed in.
+///
+/// If you want a specific ordering (e.g. global id array), call
+/// `build_dual_with_order` variant below.
 pub fn build_dual<S>(sieve: &S, cells: impl IntoIterator<Item = PointId>) -> DualGraph
 where
     S: Sieve<Point = PointId>,
@@ -2325,15 +2808,19 @@ where
 }
 
 /// Same as `build_dual` but also returns `Vec<PointId>` mapping CSR vertex → cell id.
-pub fn build_dual_with_order<S>(sieve: &S, cells: impl IntoIterator<Item = PointId>)
-    -> (DualGraph, Vec<PointId>)
+pub fn build_dual_with_order<S>(
+    sieve: &S,
+    cells: impl IntoIterator<Item = PointId>,
+) -> (DualGraph, Vec<PointId>)
 where
     S: Sieve<Point = PointId>,
 {
     build_dual_inner(sieve, cells)
 }
 
-
+// ---------------------------------------------------------------------------
+// internal routine
+// ---------------------------------------------------------------------------
 fn build_dual_inner<S>(
     sieve: &S,
     cells_iter: impl IntoIterator<Item = PointId>,
@@ -2383,10 +2870,7 @@ where
     // 4. Simple unit vertex weights
     let vwgt = vec![1; n];
 
-    (
-        DualGraph { xadj, adjncy, vwgt },
-        cells,
-    )
+    (DualGraph { xadj, adjncy, vwgt }, cells)
 }
 ```
 
@@ -2396,67 +2880,11 @@ where
 //! Set-lattice helpers: meet, join, adjacency and helpers.
 //! All output vectors are **sorted & deduplicated** for deterministic behaviour.
 
-use std::cmp::Ordering;
-
+use crate::algs::traversal::star;
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
-use crate::algs::traversal::{closure, star};
 
 type P = PointId;
-
-fn set_union(a: &[P], b: &[P], out: &mut Vec<P>) {
-    let mut i = 0;
-    let mut j = 0;
-    while i < a.len() && j < b.len() {
-        match a[i].cmp(&b[j]) {
-            Ordering::Less    => { out.push(a[i]); i += 1; }
-            Ordering::Greater => { out.push(b[j]); j += 1; }
-            Ordering::Equal   => { out.push(a[i]); i += 1; j += 1; }
-        }
-    }
-    out.extend_from_slice(&a[i..]);
-    out.extend_from_slice(&b[j..]);
-}
-
-fn set_intersection(a: &[P], b: &[P], out: &mut Vec<P>) {
-    let mut i = 0;
-    let mut j = 0;
-    while i < a.len() && j < b.len() {
-        match a[i].cmp(&b[j]) {
-            Ordering::Less    => i += 1,
-            Ordering::Greater => j += 1,
-            Ordering::Equal   => { out.push(a[i]); i += 1; j += 1; }
-        }
-    }
-}
-
-/// meet(a,b) = closure(a) ∩ closure(b)
-pub fn meet<S>(sieve: &S, a: P, b: P) -> Vec<P>
-where
-    S: Sieve<Point = P>,
-{
-    let mut ca = closure(sieve, [a]);
-    let mut cb = closure(sieve, [b]);
-    ca.sort_unstable();
-    cb.sort_unstable();
-    let mut out = Vec::with_capacity(ca.len().min(cb.len()));
-    set_intersection(&ca, &cb, &mut out);
-    out
-}
-
-/// join(a,b) = star(a) ∪ star(b)
-pub fn join<S>(sieve: &S, a: P, b: P) -> Vec<P>
-where
-    S: Sieve<Point = P>,
-{
-    let mut sa = star(sieve, [a]);
-    let mut sb = star(sieve, [b]);
-    sa.sort_unstable();
-    sb.sort_unstable();
-    let mut out = Vec::with_capacity(sa.len() + sb.len());
-    set_union(&sa, &sb, &mut out);
-    out
-}
 
 /// Cells adjacent to `p` that are **not** `p` itself.
 /// Adjacent = share a face/edge (= “support” of cone items).
@@ -2508,7 +2936,7 @@ impl DualGraph {
 
         // METIS options: 0 means “use defaults”
         let mut options = [0; 40];
-        options[0] = 1;                   // turn on option processing
+        options[0] = 1; // turn on option processing
         // e.g. options[METIS_OPTION_UFACTOR] = 30;
         let mut objval: idx_t = 0;
 
@@ -2519,11 +2947,11 @@ impl DualGraph {
                 xadj.as_mut_ptr(),
                 adjncy.as_mut_ptr(),
                 vwgt.as_mut_ptr(),
-                std::ptr::null_mut(),              // vsize
-                std::ptr::null_mut(),              // adjwgt
+                std::ptr::null_mut(), // vsize
+                std::ptr::null_mut(), // adjwgt
                 &mut nparts,
-                std::ptr::null_mut(),              // tpwgts
-                std::ptr::null_mut(),              // ubvec
+                std::ptr::null_mut(), // tpwgts
+                std::ptr::null_mut(), // ubvec
                 options.as_mut_ptr(),
                 &mut objval,
                 part.as_mut_ptr(),
@@ -2544,8 +2972,9 @@ impl DualGraph {
 
 #[cfg(feature = "partitioning")]
 pub use crate::partitioning::{
-    PartitionerConfig, PartitionMap, PartitionerError,
-    partition, metrics::{edge_cut, replication_factor},
+    PartitionMap, PartitionerConfig, PartitionerError,
+    metrics::{edge_cut, replication_factor},
+    partition,
 };
 
 #[cfg(feature = "partitioning")]
@@ -2573,10 +3002,7 @@ where
 
 /// Compute the edge cut of a partitioning.
 #[cfg(feature = "partitioning")]
-pub fn partition_edge_cut<G>(
-    graph: &G,
-    pm: &PartitionMap<G::VertexId>,
-) -> usize
+pub fn partition_edge_cut<G>(graph: &G, pm: &PartitionMap<G::VertexId>) -> usize
 where
     G: PartitionableGraph,
     G::VertexId: PartialOrd + Eq + std::hash::Hash + Copy,
@@ -2586,10 +3012,7 @@ where
 
 /// Compute the replication factor of a partitioning.
 #[cfg(feature = "partitioning")]
-pub fn partition_replication_factor<G>(
-    graph: &G,
-    pm: &PartitionMap<G::VertexId>,
-) -> f64
+pub fn partition_replication_factor<G>(graph: &G, pm: &PartitionMap<G::VertexId>) -> f64
 where
     G: PartitionableGraph,
     G::VertexId: Eq + std::hash::Hash + Copy,
@@ -2603,9 +3026,9 @@ where
 ```rust
 //! DFS/BFS traversal helpers for Sieve topologies.
 
-use std::collections::{HashSet, VecDeque};
-use crate::topology::sieve::Sieve;
 use crate::topology::point::PointId;
+use crate::topology::sieve::Sieve;
+use std::collections::{HashSet, VecDeque};
 
 /// Shorthand so callers don't have to spell the full bound.
 pub type Point = PointId;
@@ -2665,8 +3088,8 @@ pub fn link<S: Sieve<Point = Point>>(sieve: &S, p: Point) -> Vec<Point> {
 /// Optional BFS distance map – used by coarsening / agglomeration.
 pub fn depth_map<S: Sieve<Point = Point>>(sieve: &S, seed: Point) -> Vec<(Point, u32)> {
     let mut depths = Vec::new();
-    let mut seen   = HashSet::new();
-    let mut q      = VecDeque::from([(seed, 0)]);
+    let mut seen = HashSet::new();
+    let mut q = VecDeque::from([(seed, 0)]);
 
     while let Some((p, d)) = q.pop_front() {
         if seen.insert(p) {
@@ -2679,7 +3102,6 @@ pub fn depth_map<S: Sieve<Point = Point>>(sieve: &S, seed: Point) -> Vec<(Point,
     depths.sort_by_key(|&(p, _)| p);
     depths
 }
-
 ```
 
 `src/algs/completion/data_exchange.rs`
@@ -2693,7 +3115,13 @@ use crate::algs::communicator::Wait;
 /// post irecv for the corresponding byte length (from stage 1),
 /// then send and finally wait + `Delta::fuse` into your local section.
 pub fn exchange_data<V, D, C>(
-    links: &std::collections::HashMap<usize, Vec<(crate::topology::point::PointId, crate::topology::point::PointId)>>,
+    links: &std::collections::HashMap<
+        usize,
+        Vec<(
+            crate::topology::point::PointId,
+            crate::topology::point::PointId,
+        )>,
+    >,
     recv_counts: &std::collections::HashMap<usize, u32>,
     comm: &C,
     base_tag: u16,
@@ -2708,7 +3136,7 @@ pub fn exchange_data<V, D, C>(
     use std::collections::HashMap;
     // --- Stage 2: exchange data ---
     let mut recv_data = HashMap::new();
-    for (&nbr, _links) in links {
+    for &nbr in links.keys() {
         let n_items = recv_counts[&nbr] as usize;
         let mut buffer = vec![0u8; n_items * std::mem::size_of::<D::Part>()];
         let h = comm.irecv(nbr, base_tag, &mut buffer);
@@ -2741,7 +3169,13 @@ pub fn exchange_data<V, D, C>(
 /// This version always posts send/recv for all neighbors, even if count is zero,
 /// to prevent deadlocks in section completion.
 pub fn exchange_data_symmetric<V, D, C>(
-    links: &std::collections::HashMap<usize, Vec<(crate::topology::point::PointId, crate::topology::point::PointId)>>,
+    links: &std::collections::HashMap<
+        usize,
+        Vec<(
+            crate::topology::point::PointId,
+            crate::topology::point::PointId,
+        )>,
+    >,
     recv_counts: &std::collections::HashMap<usize, u32>,
     comm: &C,
     base_tag: u16,
@@ -2792,11 +3226,11 @@ pub fn exchange_data_symmetric<V, D, C>(
 ```rust
 //! Build the peer→(my_pt, their_pt) map for section completion.
 
-use std::collections::HashMap;
 use crate::data::section::Section;
 use crate::overlap::overlap::Overlap;
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
+use std::collections::HashMap;
 
 /// Given your local section, the overlap graph, and your rank,
 /// returns for each neighbor rank the list of `(local_point, remote_point)`
@@ -2812,9 +3246,7 @@ pub fn neighbour_links<V: Clone + Default>(
         has_owned = true;
         for (_dst, rem) in ovlp.cone(p) {
             if rem.rank != my_rank {
-                out.entry(rem.rank)
-                   .or_default()
-                   .push((p, rem.remote_point));
+                out.entry(rem.rank).or_default().push((p, rem.remote_point));
             }
         }
     }
@@ -2827,7 +3259,9 @@ pub fn neighbour_links<V: Clone + Default>(
                     let mut owner_rank = None;
                     if let Some(owner_rems) = ovlp.adjacency_out.get(src) {
                         for (_dst, owner_rem) in owner_rems {
-                            if owner_rem.remote_point == rem.remote_point && owner_rem.rank != my_rank {
+                            if owner_rem.remote_point == rem.remote_point
+                                && owner_rem.rank != my_rank
+                            {
                                 owner_rank = Some(owner_rem.rank);
                                 break;
                             }
@@ -2878,6 +3312,7 @@ pub fn complete_section<V, D, C>(
     let counts = crate::algs::completion::size_exchange::exchange_sizes_symmetric(&links, comm, BASE_TAG, &all_neighbors);
     crate::algs::completion::data_exchange::exchange_data_symmetric::<V, D, C>(&links, &counts, comm, BASE_TAG+1, section, &all_neighbors);
 }
+
 ```
 
 `src/algs/completion/sieve_completion.rs`
@@ -2885,11 +3320,11 @@ pub fn complete_section<V, D, C>(
 ```rust
 //! Complete missing sieve arrows across ranks by packing WireTriple.
 
-use crate::topology::point::PointId;
-use crate::overlap::overlap::Remote;
-use crate::algs::completion::partition_point;
-use crate::topology::sieve::Sieve;
 use crate::algs::communicator::Wait;
+use crate::algs::completion::partition_point;
+use crate::overlap::overlap::Remote;
+use crate::topology::point::PointId;
+use crate::topology::sieve::Sieve;
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -2900,13 +3335,17 @@ struct WireTriple {
 }
 
 pub fn complete_sieve(
-    sieve: &mut crate::topology::sieve::InMemorySieve<crate::topology::point::PointId, crate::overlap::overlap::Remote>,
+    sieve: &mut crate::topology::sieve::InMemorySieve<
+        crate::topology::point::PointId,
+        crate::overlap::overlap::Remote,
+    >,
     overlap: &crate::overlap::overlap::Overlap,
     comm: &impl crate::algs::communicator::Communicator,
     my_rank: usize,
 ) {
-        const BASE_TAG: u16 = 0xC0DE;
-    let mut nb_links: std::collections::HashMap<usize, Vec<(PointId, PointId)>> = std::collections::HashMap::new();
+    const BASE_TAG: u16 = 0xC0DE;
+    let mut nb_links: std::collections::HashMap<usize, Vec<(PointId, PointId)>> =
+        std::collections::HashMap::new();
     let me_pt = partition_point(my_rank);
     let mut has_owned = false;
     for (&p, outs) in &sieve.adjacency_out {
@@ -2916,7 +3355,8 @@ pub fn complete_sieve(
             // For every neighbor who has an overlap link to this point
             for (_dst2, rem) in overlap.cone(p) {
                 if rem.rank != my_rank {
-                    nb_links.entry(rem.rank)
+                    nb_links
+                        .entry(rem.rank)
                         .or_default()
                         .push((p, rem.remote_point));
                 }
@@ -2926,14 +3366,15 @@ pub fn complete_sieve(
     if !has_owned {
         for (src, rem) in overlap.support(me_pt) {
             if rem.rank != my_rank {
-                nb_links.entry(rem.rank)
+                nb_links
+                    .entry(rem.rank)
                     .or_default()
                     .push((rem.remote_point, src));
             }
         }
     }
     let mut recv_size = std::collections::HashMap::new();
-    for (&nbr, _) in &nb_links {
+    for &nbr in nb_links.keys() {
         let buf = [0u8; 4];
         let h = comm.irecv(nbr, BASE_TAG, &mut buf.clone());
         recv_size.insert(nbr, (h, buf));
@@ -2949,7 +3390,7 @@ pub fn complete_sieve(
         sizes_in.insert(nbr, u32::from_le_bytes(buf) as usize);
     }
     let mut recv_data = std::collections::HashMap::new();
-    for (&nbr, _) in &nb_links {
+    for &nbr in nb_links.keys() {
         let n_items = sizes_in[&nbr];
         let mut buffer = vec![0u8; n_items * std::mem::size_of::<WireTriple>()];
         let h = comm.irecv(nbr, BASE_TAG + 1, &mut buffer);
@@ -2961,7 +3402,11 @@ pub fn complete_sieve(
             // Send all arrows from src, not just those matching dst
             if let Some(outs) = sieve.adjacency_out.get(&src) {
                 for (d, payload) in outs {
-                    triples.push(WireTriple { src: src.get(), dst: d.get(), rank: payload.rank });
+                    triples.push(WireTriple {
+                        src: src.get(),
+                        dst: d.get(),
+                        rank: payload.rank,
+                    });
                 }
             }
         }
@@ -2977,14 +3422,27 @@ pub fn complete_sieve(
         for WireTriple { src, dst, rank } in triples {
             let src_pt = PointId::new(*src);
             let dst_pt = PointId::new(*dst);
-            let payload = Remote { rank: *rank, remote_point: dst_pt };
+            let payload = Remote {
+                rank: *rank,
+                remote_point: dst_pt,
+            };
             // Only inject if this (src, dst) is not already present
             if inserted.insert((src_pt, dst_pt)) {
-                let already = sieve.adjacency_out.get(&src_pt)
-                    .map_or(false, |v| v.iter().any(|(d, _)| *d == dst_pt));
+                let already = sieve
+                    .adjacency_out
+                    .get(&src_pt)
+                    .is_some_and(|v| v.iter().any(|(d, _)| *d == dst_pt));
                 if !already {
-                    sieve.adjacency_out.entry(src_pt).or_default().push((dst_pt, payload));
-                    sieve.adjacency_in.entry(dst_pt).or_default().push((src_pt, payload));
+                    sieve
+                        .adjacency_out
+                        .entry(src_pt)
+                        .or_default()
+                        .push((dst_pt, payload));
+                    sieve
+                        .adjacency_in
+                        .entry(dst_pt)
+                        .or_default()
+                        .push((src_pt, payload));
                 }
             }
         }
@@ -3016,7 +3474,7 @@ where
     C: crate::algs::communicator::Communicator + Sync,
 {
     let mut recv_size = std::collections::HashMap::new();
-    for (&nbr, _) in links {
+    for &nbr in links.keys() {
         let buf = [0u8; 4];
         let h = comm.irecv(nbr, base_tag, &mut buf.clone());
         recv_size.insert(nbr, (h, buf));
@@ -3063,6 +3521,11 @@ where
     }
     sizes_in
 }
+
+#[cfg(test)]
+mod tests {
+    // TODO: Add tests for exchange_sizes with a mock communicator
+}
 ```
 
 `src/algs/completion/stack_completion.rs`
@@ -3074,11 +3537,13 @@ use std::collections::HashMap;
 use crate::algs::communicator::Wait;
 
 /// A tightly-packed triple of (base, cap, payload).
-#[repr(C)]
-#[derive(Copy, Clone)]
+#[repr(C, packed)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct WireTriple<P, Q, Pay>
 where
-    P: Copy, Q: Copy, Pay: Copy,
+    P: Copy + bytemuck::Pod + bytemuck::Zeroable,
+    Q: Copy + bytemuck::Pod + bytemuck::Zeroable,
+    Pay: Copy + bytemuck::Pod + bytemuck::Zeroable,
 {
     base: P,
     cap:  Q,
@@ -3101,9 +3566,9 @@ pub fn complete_stack<P, Q, Pay, C, S, O, R>(
     my_rank: usize,
     n_ranks: usize,
 ) where
-    P: Copy + bytemuck::Pod + Eq + std::hash::Hash + Send + 'static,
-    Q: Copy + bytemuck::Pod + Eq + std::hash::Hash + Send + 'static,
-    Pay: Copy + bytemuck::Pod + Send + 'static,
+    P: Copy + bytemuck::Pod + bytemuck::Zeroable + Default + Eq + std::hash::Hash + Send + 'static,
+    Q: Copy + bytemuck::Pod + bytemuck::Zeroable + Default + Eq + std::hash::Hash + Send + 'static,
+    Pay: Copy + bytemuck::Pod + bytemuck::Zeroable + Default + Send + 'static,
     C: crate::algs::communicator::Communicator + Sync,
     S: crate::topology::stack::Stack<Point = P, CapPt = Q, Payload = Pay>,
     O: crate::topology::sieve::Sieve<Point = P, Payload = R> + Sync,
@@ -3145,13 +3610,13 @@ pub fn complete_stack<P, Q, Pay, C, S, O, R>(
         sizes_in.insert(nbr, u32::from_le_bytes(buf) as usize);
     }
     // 3. Exchange data (always post send/recv for all neighbors)
-
-    let item_size = std::mem::size_of::<WireTriple<P,Q,Pay>>();
+    use bytemuck::cast_slice;
+    use bytemuck::cast_slice_mut;
     let mut recv_data = HashMap::new();
     for &nbr in &all_neighbors {
         let n_items = sizes_in.get(&nbr).copied().unwrap_or(0);
-        let mut buf = vec![0u8; n_items * item_size];
-        let h = comm.irecv(nbr, BASE_TAG + 1, &mut buf);
+        let mut buf = vec![WireTriple::<P, Q, Pay> { base: P::default(), cap: Q::default(), pay: Pay::default() }; n_items];
+        let h = comm.irecv(nbr, BASE_TAG + 1, cast_slice_mut(&mut buf));
         recv_data.insert(nbr, (h, buf));
     }
     for &nbr in &all_neighbors {
@@ -3160,28 +3625,19 @@ pub fn complete_stack<P, Q, Pay, C, S, O, R>(
             triples.iter()
                    .map(|&(b,c,p)| WireTriple { base:b, cap:c, pay:p })
                    .collect();
-        // SAFETY: WireTriple<P,Q,Pay> is repr(C) and all fields are Pod
-        let bytes = unsafe {
-            std::slice::from_raw_parts(
-                wire.as_ptr() as *const u8,
-                wire.len() * std::mem::size_of::<WireTriple<P,Q,Pay>>()
-            )
-        };
+        let bytes = cast_slice(&wire);
         comm.isend(nbr, BASE_TAG + 1, bytes);
     }
     for (_nbr, (h, mut buf)) in recv_data {
         let raw = h.wait().expect("data receive");
-        buf.copy_from_slice(&raw);
-        // SAFETY: buf is a byte buffer of WireTriple<P,Q,Pay>
-        let incoming: &[WireTriple<P,Q,Pay>] = unsafe {
-            std::slice::from_raw_parts(
-                buf.as_ptr() as *const WireTriple<P,Q,Pay>,
-                buf.len() / std::mem::size_of::<WireTriple<P,Q,Pay>>()
-            )
-        };
+        let buf_bytes = cast_slice_mut(&mut buf);
+        buf_bytes.copy_from_slice(&raw);
+        let incoming: &[WireTriple<P,Q,Pay>] = &buf;
         for &WireTriple { base, cap, pay } in incoming {
             stack.add_arrow(base, cap, pay);
         }
     }
 }
+
 ```
+

@@ -6,6 +6,7 @@
 //! single contiguous `Vec` for efficient storage and communication.
 
 use crate::topology::point::PointId;
+use crate::topology::stratum::InvalidateCache;
 use std::collections::HashMap;
 
 /// `Atlas` maintains:
@@ -21,6 +22,12 @@ pub struct Atlas {
     order: Vec<PointId>,
     /// Total length of all slices; also next available offset.
     total_len: usize,
+}
+
+impl InvalidateCache for Atlas {
+    fn invalidate_cache(&mut self) {
+        // Atlas itself does not cache derived structures, but if you add any, clear them here.
+    }
 }
 
 impl Atlas {
@@ -58,6 +65,9 @@ impl Atlas {
 
         // Advance total length by this slice’s length.
         self.total_len += len;
+
+        // Invalidate caches in any structure built on this Atlas (e.g., Section, SievedArray, etc.)
+        InvalidateCache::invalidate_cache(self);
 
         offset
     }
@@ -115,5 +125,18 @@ mod tests {
     fn zero_len_rejected() {
         let mut a = Atlas::default();
         a.insert(PointId::new(7), 0);
+    }
+
+    #[test]
+    fn atlas_cache_cleared_on_insert() {
+        use crate::topology::stratum::InvalidateCache;
+        use crate::topology::point::PointId;
+        let mut atlas = Atlas::default();
+        atlas.insert(PointId::new(1), 2);
+        InvalidateCache::invalidate_cache(&mut atlas); // Should be a no-op
+        atlas.insert(PointId::new(2), 1);
+        // No panic, and points are present
+        assert_eq!(atlas.get(PointId::new(1)), Some((0, 2)));
+        assert_eq!(atlas.get(PointId::new(2)), Some((2, 1)));
     }
 }

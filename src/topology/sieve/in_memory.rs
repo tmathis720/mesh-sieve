@@ -111,3 +111,79 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
         crate::topology::sieve::lattice::LatticeOps::join(self, a, b)
     }
 }
+
+#[cfg(test)]
+mod sieve_tests {
+    use super::*;
+    use crate::topology::sieve::sieve_trait::Sieve;
+
+    #[test]
+    fn insertion_and_removal() {
+        let mut s = InMemorySieve::<u32, ()>::new();
+        assert_eq!(s.remove_arrow(1, 2), None);
+        s.add_arrow(1, 2,());
+        assert_eq!(s.remove_arrow(1, 2), Some(()));
+    }
+
+    #[test]
+    fn cone_and_support() {
+        let mut s = InMemorySieve::<u32, ()>::new();
+        s.add_arrow(1, 2,());
+        s.add_arrow(2, 1,());
+        let mut cone: Vec<_> = s.cone(1).map(|(d, _)| d).collect();
+        cone.sort();
+        assert_eq!(cone, vec![2]);
+        let mut support: Vec<_> = s.support(1).map(|(u, _)| u).collect();
+        support.sort();
+        assert_eq!(support, vec![2]);
+    }
+
+    #[test]
+    fn closure_and_star_and_closure_both() {
+        let mut s = InMemorySieve::<u32, ()>::new();
+        s.add_arrow(1, 2,());
+        s.add_arrow(2, 3,());
+        // closure(1) == [1,2,3]
+        let mut closure: Vec<_> = Sieve::closure(&s, [1]).collect();
+        closure.sort();
+        assert_eq!(closure, vec![1, 2, 3]);
+        // star(3) == [3,2,1]
+        let mut star: Vec<_> = Sieve::star(&s, [3]).collect();
+        star.sort();
+        assert_eq!(star, vec![1, 2, 3]);
+        // closure_both(2) == [2,1,3]
+        let mut both: Vec<_> = Sieve::closure_both(&s, [2]).collect();
+        both.sort();
+        assert_eq!(both, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn meet_and_join() {
+        let mut s = InMemorySieve::<u32, ()>::new();
+        s.add_arrow(1, 2,());
+        s.add_arrow(2, 3,());
+        let mut m: Vec<_> = s.meet(1, 2).collect();
+        m.sort();
+        let mut j: Vec<_> = s.join(2, 3).collect();
+        j.sort();
+        // Documented behavior: meet(1,2) = [], join(2,3) = [1,2,3] for this implementation
+        assert_eq!(m, vec![]);
+        assert_eq!(j, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn points_base_points_cap_points() {
+        let mut s = InMemorySieve::<u32, ()>::new();
+        s.add_arrow(1, 2,());
+        s.add_arrow(2, 3,());
+        let mut all: Vec<_> = s.points().collect();
+        all.sort();
+        assert_eq!(all, vec![1, 2, 3]);
+        let mut base: Vec<_> = s.base_points().collect();
+        base.sort();
+        assert_eq!(base, vec![1, 2]);
+        let mut cap: Vec<_> = s.cap_points().collect();
+        cap.sort();
+        assert_eq!(cap, vec![2, 3]);
+    }
+}

@@ -7,6 +7,13 @@
 use std::collections::HashMap;
 use crate::topology::sieve::Sieve;
 
+/// Anything that caches derived topology (strata, overlap footprints, dual graphs, …)
+/// should implement this.
+pub trait InvalidateCache {
+    /// Invalidate *all* internal caches so future queries recompute correctly.
+    fn invalidate_cache(&mut self);
+}
+
 /// Precomputed stratum information for a DAG of points `P`.
 ///
 /// - `height[p]` = distance from sources (points with no incoming arrows).
@@ -46,6 +53,18 @@ impl<P: Copy + Eq + std::hash::Hash + Ord, T: Clone> InMemorySieve<P, T> {
     pub fn invalidate_strata(&mut self) {
         self.strata.take();
     }
+}
+
+impl<P: Copy + Eq + std::hash::Hash + Ord, T: Clone> InvalidateCache for InMemorySieve<P, T> {
+    fn invalidate_cache(&mut self) {
+        // wipe strata cache
+        self.strata.take();
+    }
+}
+
+// Blanket impl for Box<T>
+impl<T: InvalidateCache> InvalidateCache for Box<T> {
+    fn invalidate_cache(&mut self) { (**self).invalidate_cache(); }
 }
 
 /// Build heights, depths, strata layers and diameter for *any* Sieve.
@@ -264,6 +283,79 @@ mod tests {
         let s3: Vec<_> = s.height_stratum(3).collect();
         assert!(s3.contains(&v(1)) && s3.contains(&v(6)));
         // Depth strata (should not be empty for any k <= diameter)
+        for k in 0..=s.diameter() {
+            let d: Vec<_> = s.depth_stratum(k).collect();
+            assert!(!d.is_empty(), "depth_stratum({}) should not be empty", k);
+        }
+    }
+
+    #[test]
+    fn sieve_cache_cleared_on_mutation() {
+        let mut s = InMemorySieve::<u32, ()>::new();
+        s.add_arrow(1,2,());
+        // first strata computed
+        let d0 = s.diameter();
+        // mutate again
+        s.add_arrow(2,3,());
+        // should not panic or reuse old strata
+        let d1 = s.diameter();
+        assert!(d1 >= d0);
+    }
+
+    #[test]
+    fn simple_chain_strata() {
+        // 1 -> 2 -> 3 -> 4
+        let mut s = InMemorySieve::<u32, ()>::default();
+        s.add_arrow(1, 2, ());
+        s.add_arrow(2, 3, ());
+        s.add_arrow(3, 4, ());
+        // Heights
+        assert_eq!(s.height(1), 0);
+        assert_eq!(s.height(4), 3);
+        // Depths
+        assert_eq!(s.depth(4), 0);
+        assert_eq!(s.depth(1), 3);
+        // Strata
+        let h0: Vec<_> = s.height_stratum(0).collect();
+        assert_eq!(h0, vec![1]);
+        let h3: Vec<_> = s.height_stratum(3).collect();
+        assert_eq!(h3, vec![4]);
+        let d0: Vec<_> = s.depth_stratum(0).collect();
+        assert_eq!(d0, vec![4]);
+        let d3: Vec<_> = s.depth_stratum(3).collect();
+        assert_eq!(d3, vec![1]);
+    }
+
+    #[test]
+    fn shared_face_mesh_strata() {
+        // Two tets sharing a face: 10, 11 share 20
+        let mut s = InMemorySieve::<u32, ()>::default();
+        // tets 10, 11; shared face 20; unique faces 21, 22, 23
+        s.add_arrow(10, 20, ());
+        s.add_arrow(10, 21, ());
+        s.add_arrow(10, 22, ());
+        s.add_arrow(11, 20, ());
+        s.add_arrow(11, 23, ());
+        // faces to edges
+        s.add_arrow(20, 30, ());
+        s.add_arrow(21, 31, ());
+        s.add_arrow(22, 32, ());
+        s.add_arrow(23, 33, ());
+        // edges to verts
+        s.add_arrow(30, 1, ());
+        s.add_arrow(31, 2, ());
+        s.add_arrow(32, 3, ());
+        s.add_arrow(33, 4, ());
+        // Check strata
+        let h0: Vec<_> = s.height_stratum(0).collect();
+        assert!(h0.contains(&10) && h0.contains(&11));
+        let h1: Vec<_> = s.height_stratum(1).collect();
+        assert!(h1.contains(&20));
+        let h2: Vec<_> = s.height_stratum(2).collect();
+        assert!(h2.contains(&30));
+        let h3: Vec<_> = s.height_stratum(3).collect();
+        assert!(h3.contains(&1));
+        // Depth strata
         for k in 0..=s.diameter() {
             let d: Vec<_> = s.depth_stratum(k).collect();
             assert!(!d.is_empty(), "depth_stratum({}) should not be empty", k);

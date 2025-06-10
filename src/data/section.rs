@@ -180,10 +180,19 @@ mod tests {
         // get_mut left as default (None)
     }
     #[test]
-    fn map_trait_readonly_get_mut_none() {
+    fn map_trait_readonly_get_mut_none_f64() {
         let s = make_section();
         let mut ro = ReadOnlyMap { section: &s };
-        assert!(ro.get_mut(PointId::new(1)).is_none());
+        assert!(Map::<f64>::get_mut(&mut ro, PointId::new(1)).is_none());
+    }
+
+    #[test]
+    fn map_trait_readonly_get_mut_none_i32() {
+        let mut atlas = Atlas::default();
+        atlas.insert(PointId::new(1), 1);
+        let s = Section::<i32>::new(atlas);
+        let mut ro = ReadOnlyMap { section: &s };
+        assert!(Map::<i32>::get_mut(&mut ro, PointId::new(1)).is_none());
     }
 
     #[test]
@@ -224,6 +233,47 @@ mod tests {
 
         // Resulting data: [1.0, 2.0, 3.5]
         assert_eq!(s.data, &[1.0, 2.0, 3.5]);
+    }
+
+    #[test]
+    fn section_round_trip_and_scatter() {
+        let mut atlas = Atlas::default();
+        atlas.insert(PointId::new(1), 2);
+        atlas.insert(PointId::new(2), 1);
+        let mut s = Section::<f64>::new(atlas.clone());
+        // set and restrict
+        s.set(PointId::new(1), &[1.1, 2.2]);
+        s.set(PointId::new(2), &[3.3]);
+        assert_eq!(s.restrict(PointId::new(1)), &[1.1, 2.2]);
+        assert_eq!(s.restrict(PointId::new(2)), &[3.3]);
+        // scatter_from
+        let mut s2 = Section::<f64>::new(atlas);
+        s2.scatter_from(&[1.1, 2.2, 3.3], &[(0, 2), (2, 1)]);
+        assert_eq!(s2.restrict(PointId::new(1)), &[1.1, 2.2]);
+        assert_eq!(s2.restrict(PointId::new(2)), &[3.3]);
+    }
+
+    #[test]
+    fn section_map_trait_and_readonly() {
+        use super::Map;
+        let mut atlas = Atlas::default();
+        atlas.insert(PointId::new(1), 1);
+        let mut s = Section::<i32>::new(atlas);
+        s.set(PointId::new(1), &[42]);
+        // Map trait get
+        assert_eq!(<Section<i32> as Map<i32>>::get(&s, PointId::new(1)), &[42]);
+        // Map trait get_mut
+        assert!(<Section<i32> as Map<i32>>::get_mut(&mut s, PointId::new(1)).is_some());
+        // ReadOnlyMap
+        struct ReadOnlyMap<'a, V: Clone + Default> { section: &'a Section<V> }
+        impl<'a, V: Clone + Default> Map<V> for ReadOnlyMap<'a, V> {
+            fn get(&self, p: PointId) -> &[V] { self.section.restrict(p) }
+        }
+        let ro = ReadOnlyMap { section: &s };
+        assert_eq!(ro.get(PointId::new(1)), &[42]);
+        // ReadOnlyMap is immutable, so call get_mut on a mutable reference
+        let mut ro = ReadOnlyMap { section: &s };
+        assert!(Map::<i32>::get_mut(&mut ro, PointId::new(1)).is_none());
     }
 }
 

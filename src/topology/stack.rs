@@ -6,6 +6,7 @@
 //! along with facilities for composing multiple stacks.
 
 use super::sieve::InMemorySieve;
+use crate::topology::stratum::InvalidateCache;
 use std::collections::HashMap;
 
 /// A `Stack` links a *base* Sieve to a *cap* Sieve via vertical arrows.
@@ -139,6 +140,8 @@ where
         // Insert into both up and down maps
         self.up.entry(base).or_default().push((cap, pay.clone()));
         self.down.entry(cap).or_default().push((base, pay));
+        // structural change → clear caches
+        crate::topology::stratum::InvalidateCache::invalidate_cache(self);
     }
 
     fn remove_arrow(&mut self, base: B, cap: C) -> Option<P> {
@@ -155,6 +158,7 @@ where
                 vec.remove(pos);
             }
         }
+        crate::topology::stratum::InvalidateCache::invalidate_cache(self);
         removed
     }
 
@@ -325,9 +329,22 @@ fn composed_stack_no_leak() {
     assert!(cs.payload_buffer.borrow().len() <= s1.lift(1).count() * s2.lift(10).count());
 }
 
+impl<B, C, P> InvalidateCache for InMemoryStack<B, C, P>
+where
+    B: Copy + Eq + std::hash::Hash + Ord,
+    C: Copy + Eq + std::hash::Hash + Ord,
+    P: Clone,
+{
+    fn invalidate_cache(&mut self) {
+        self.base.invalidate_cache();
+        self.cap.invalidate_cache();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::topology::sieve::sieve_trait::Sieve;
     #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, PartialOrd, Ord)]
     struct V(u32);
     #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, PartialOrd, Ord)]
@@ -379,5 +396,15 @@ mod tests {
         assert_eq!(lifted, vec![(C(100), 7), (C(101), 10)]);
         let dropped: Vec<_> = composed.drop(C(100)).map(|(a, p)| (a, **p)).collect();
         assert_eq!(dropped, vec![(A(1), 7)]);
+    }
+
+    #[test]
+    fn stack_cache_cleared_on_mutation() {
+        let mut s = InMemoryStack::<u32, u32, i32>::new();
+        s.add_arrow(1, 10, 2);
+        let d0 = s.base.diameter();
+        s.add_arrow(2, 11, 3);
+        let d1 = s.base.diameter();
+        assert!(d1 >= d0);
     }
 }

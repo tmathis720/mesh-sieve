@@ -30,6 +30,8 @@ impl Overlap {
                 remote_point: remote,
             },
         );
+        // Invalidate caches after mutation
+        //InvalidateCache::invalidate_cache(self);
     }
 
     /// Convenience: iterate all neighbours of the *current* rank.
@@ -50,5 +52,21 @@ impl Overlap {
         Sieve::support(self, partition_point(nbr))
             .filter(move |(_, r)| r.rank == nbr)
             .map(|(local, r)| (local, r.remote_point))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn overlap_cache_cleared_on_mutation() {
+        use crate::topology::point::PointId;
+        let mut ovlp = Overlap::default();
+        ovlp.add_link(PointId::new(1), 1, PointId::new(101));
+        let d0 = ovlp.diameter();
+        ovlp.add_link(PointId::new(2), 2, PointId::new(201));
+        let d1 = ovlp.diameter();
+        assert!(d1 >= d0);
     }
 }

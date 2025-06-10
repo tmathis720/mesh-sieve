@@ -1,12 +1,13 @@
 // src/algs/distribute.rs
 
 use crate::algs::communicator::Communicator;
-use mpi::topology::Communicator as MpiCommunicator;
 use crate::topology::point::PointId;
 use crate::topology::sieve::{Sieve, InMemorySieve};
 use crate::overlap::overlap::Remote;
 use crate::algs::completion::{sieve_completion, section_completion};
 use std::collections::HashMap;
+use mpi::topology::Communicator as MpiCommunicator;
+
 
 /// Distribute a global mesh across MPI ranks.
 ///
