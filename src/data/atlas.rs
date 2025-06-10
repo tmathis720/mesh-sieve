@@ -97,6 +97,26 @@ impl Atlas {
     pub fn points<'a>(&'a self) -> impl Iterator<Item = PointId> + 'a {
         self.order.iter().copied()
     }
+
+    /// Remove a point and its slice from the atlas, recomputing all offsets.
+    pub fn remove_point(&mut self, p: PointId) {
+        let _ = self.map.remove(&p);
+        self.order.retain(|&x| x != p);
+        // Compute new offsets for all remaining points
+        let mut next_offset = 0;
+        let mut new_offsets = Vec::with_capacity(self.order.len());
+        for &pt in &self.order {
+            let len = self.map.get(&pt).map(|&(_, len)| len).unwrap();
+            new_offsets.push((pt, next_offset, len));
+            next_offset += len;
+        }
+        // Update map with new offsets
+        for (pt, offset, len) in new_offsets {
+            self.map.insert(pt, (offset, len));
+        }
+        self.total_len = next_offset;
+        InvalidateCache::invalidate_cache(self);
+    }
 }
 
 #[cfg(test)]
@@ -138,5 +158,22 @@ mod tests {
         // No panic, and points are present
         assert_eq!(atlas.get(PointId::new(1)), Some((0, 2)));
         assert_eq!(atlas.get(PointId::new(2)), Some((2, 1)));
+    }
+
+    #[test]
+    fn remove_point_recomputes_offsets() {
+        let mut a = Atlas::default();
+        let p1 = PointId::new(1);
+        let p2 = PointId::new(2);
+        let p3 = PointId::new(3);
+        a.insert(p1, 3);
+        a.insert(p2, 5);
+        a.insert(p3, 2);
+        a.remove_point(p2);
+        // p1 and p3 remain, with p3's offset updated
+        assert_eq!(a.get(p1), Some((0, 3)));
+        assert_eq!(a.get(p3), Some((3, 2)));
+        assert_eq!(a.total_len(), 5);
+        assert_eq!(a.points().collect::<Vec<_>>(), vec![p1, p3]);
     }
 }

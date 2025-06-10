@@ -8,55 +8,77 @@ use crate::algs::communicator::Communicator;
 
 
 
-/// Distribute a global mesh across MPI ranks.
+/// Distribute a global mesh across ranks, returning the local submesh and overlap graph.
+///
+/// Implements Sec. 3 mesh distribution: builds the overlap Sieve and extracts the local submesh.
 ///
 /// # Arguments
-/// - `mesh`: the full global mesh (arrows of type `Payload=()`)  
-/// - `parts`: a slice of length `mesh.points().count()`, mapping each `PointId.get() as usize` to a rank  
+/// - `mesh`: the full global mesh (arrows of type `Payload=()`)
+/// - `parts`: a slice mapping each `PointId.get() as usize` to a rank
 /// - `comm`: your communicator (MPI or Rayon)
 ///
 /// # Returns
 /// `(local_mesh, overlap)` where:
-/// - `local_mesh`: only those arrows owned by this rank  
-/// - `overlap`: the overlap Sieve (arrows `PointId→partition_pt(rank)`) for ghost‐exchange  
+/// - `local_mesh`: only those arrows owned by this rank
+/// - `overlap`: the overlap Sieve (arrows `PointId→partition_pt(rank)`) for ghost‐exchange
+///
+/// # Example (serial)
+/// ```rust
+/// use sieve_rs::algs::communicator::NoComm;
+/// use sieve_rs::topology::sieve::{InMemorySieve, Sieve};
+/// use sieve_rs::topology::point::PointId;
+/// use sieve_rs::algs::distribute_mesh;
+/// let mut global = InMemorySieve::<PointId,()>::default();
+/// global.add_arrow(PointId::new(1), PointId::new(2), ());
+/// global.add_arrow(PointId::new(2), PointId::new(3), ());
+/// let parts = vec![0,1,1];
+/// let comm = NoComm;
+/// let (local, overlap) = distribute_mesh(&global, &parts, &comm);
+/// assert_eq!(local.cone(PointId::new(1)).count(), 0);
+/// assert_eq!(local.cone(PointId::new(2)).count(), 1);
+/// let ghosts: Vec<_> = overlap.support(PointId::new(2)).collect();
+/// assert!(ghosts.iter().any(|&(src,rem)| src==PointId::new(2) && rem.rank==0));
+/// ```
+/// # Example (MPI)
+/// ```ignore
+/// #![cfg(feature="mpi")]
+/// use sieve_rs::algs::communicator::MpiComm;
+/// // ... same as above, but use MpiComm::new() and run with mpirun -n 2 ...
+/// ```
 pub fn distribute_mesh<M, C>(
     mesh: &M,
     parts: &[usize],
     comm: &C,
 ) -> (InMemorySieve<PointId,()>, InMemorySieve<PointId,Remote>)
 where
-    M: Sieve<Point = PointId, Payload = ()>,
+    M: Sieve<Point=PointId, Payload=()>,
     C: Communicator + Sync,
 {
-    let my_rank = comm.rank();      // assume your Communicator exposes `rank()`
-    let _n_ranks = comm.size();      // and `size()`
+    let my_rank = comm.rank();
+    let _n_ranks = comm.size();
     // 1) Build the “overlap” sieve
     let mut overlap = InMemorySieve::<PointId,Remote>::default();
     for p in mesh.points() {
-        let owner = parts[p.get() as usize];
-        let part_pt = PointId::new((owner as u64)+1);
-        if p != part_pt {
+        let owner = parts[p.get() as usize - 1];
+        let part_pt = PointId::new((owner as u64) + 1);
+        if owner != my_rank && p != part_pt {
             overlap.add_arrow(p, part_pt, Remote { rank: owner, remote_point: p });
         }
     }
-
     // 2) Extract local submesh: only arrows whose src→dst are both owned here
     let mut local = InMemorySieve::<PointId,()>::default();
-    for p in mesh.base_points() {
-        if parts[p.get() as usize] == my_rank {
-            for (dst, _) in mesh.cone(p) {
-                if parts[dst.get() as usize] == my_rank {
-                    local.add_arrow(p, dst, ());
+    for base in mesh.base_points() {
+        if parts[base.get() as usize - 1] == my_rank {
+            for (dst, _) in mesh.cone(base) {
+                if parts[dst.get() as usize - 1] == my_rank {
+                    local.add_arrow(base, dst, ());
                 }
             }
         }
     }
-
     // 3) Complete the overlap graph of arrows across ranks
     let overlap_clone = overlap.clone();
     sieve_completion::complete_sieve(&mut overlap, &overlap_clone, comm, my_rank);
-
     // 4) (Optional: exchange data if needed, but for mesh topology with () payload, this is not required)
-
     (local, overlap)
 }

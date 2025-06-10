@@ -11,3 +11,4 @@ pub mod traversal;
 
 pub use completion::complete_section;
 pub use lattice::adjacent;
+pub use crate::algs::distribute::distribute_mesh;

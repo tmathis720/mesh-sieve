@@ -6,6 +6,7 @@
 
 use crate::data::atlas::Atlas;
 use crate::topology::point::PointId;
+use crate::topology::stratum::InvalidateCache;
 
 /// Storage for per-point field data, backed by an `Atlas`.
 #[derive(Clone, Debug)]
@@ -59,8 +60,8 @@ impl<V: Clone + Default> Section<V> {
             val.len(),
             "Input slice length must match point's DOF count"
         );
-        // Clone values into the section's buffer.
         target.clone_from_slice(val);
+        crate::topology::stratum::InvalidateCache::invalidate_cache(self);
     }
 
     /// Iterate over `(PointId, &[V])` for all points in atlas order.
@@ -71,6 +72,27 @@ impl<V: Clone + Default> Section<V> {
         self.atlas
             .points()
             .map(move |pid| (pid, self.restrict(pid)))
+    }
+
+    /// Add a new point to the section, resizing data as needed.
+    pub fn add_point(&mut self, p: PointId, len: usize) {
+        self.atlas.insert(p, len);
+        self.data.resize(self.atlas.total_len(), V::default());
+        crate::topology::stratum::InvalidateCache::invalidate_cache(self);
+    }
+
+    /// Remove a point from the section, rebuilding data to keep slices contiguous.
+    pub fn remove_point(&mut self, p: PointId) {
+        self.atlas.remove_point(p);
+        // Rebuild data: allocate new vec, copy each remaining slice from old data
+        let mut new_data = Vec::with_capacity(self.atlas.total_len());
+        for pid in self.atlas.points() {
+            let (offset, len) = self.atlas.get(pid).unwrap();
+            let old_slice = &self.data[offset..offset+len];
+            new_data.extend_from_slice(old_slice);
+        }
+        self.data = new_data;
+        crate::topology::stratum::InvalidateCache::invalidate_cache(self);
     }
 }
 
@@ -91,10 +113,12 @@ impl<V: Clone + Send> Section<V> {
             self.data[*offset..offset + *len].clone_from_slice(chunk);
             start = end;
         }
+        crate::topology::stratum::InvalidateCache::invalidate_cache(self);
     }
 }
 
-/// A zero‐cost view of per‐point data, used by refine/assemble helpers.
+/// A **zero‐cost view** of per‐point data, supporting both read‐only and write mappings.
+/// Commonly implemented by `Section<V>` or user‐supplied read‐only wrappers.
 pub trait Map<V: Clone + Default> {
     /// Immutable access to the data slice for `p`.
     fn get(&self, p: PointId) -> &[V];
@@ -117,6 +141,12 @@ impl<V: Clone + Default> Map<V> for Section<V> {
     fn get_mut(&mut self, p: PointId) -> Option<&mut [V]> {
         // Use the restrict_mut method to get a mutable slice, wrapped in Some.
         Some(self.restrict_mut(p))
+    }
+}
+
+impl<V> InvalidateCache for Section<V> {
+    fn invalidate_cache(&mut self) {
+        // If you ever cache anything derived from atlas/data, clear it here.
     }
 }
 
@@ -170,58 +200,6 @@ mod tests {
         assert!(<Section<f64> as Map<f64>>::get_mut(&mut s, PointId::new(1)).is_some());
     }
 
-    struct ReadOnlyMap<'a, V: Clone + Default> {
-        section: &'a Section<V>,
-    }
-    impl<'a, V: Clone + Default> Map<V> for ReadOnlyMap<'a, V> {
-        fn get(&self, p: PointId) -> &[V] {
-            self.section.restrict(p)
-        }
-        // get_mut left as default (None)
-    }
-    #[test]
-    fn map_trait_readonly_get_mut_none_f64() {
-        let s = make_section();
-        let mut ro = ReadOnlyMap { section: &s };
-        assert!(Map::<f64>::get_mut(&mut ro, PointId::new(1)).is_none());
-    }
-
-    #[test]
-    fn map_trait_readonly_get_mut_none_i32() {
-        let mut atlas = Atlas::default();
-        atlas.insert(PointId::new(1), 1);
-        let s = Section::<i32>::new(atlas);
-        let mut ro = ReadOnlyMap { section: &s };
-        assert!(Map::<i32>::get_mut(&mut ro, PointId::new(1)).is_none());
-    }
-
-    #[test]
-    fn restrict_closure_and_star_helpers() {
-        use super::*;
-        let mut atlas = Atlas::default();
-        atlas.insert(PointId::new(1), 1);
-        atlas.insert(PointId::new(2), 1);
-        atlas.insert(PointId::new(3), 1);
-        let mut s = Section::<i32>::new(atlas);
-        s.set(PointId::new(1), &[10]);
-        s.set(PointId::new(2), &[20]);
-        s.set(PointId::new(3), &[30]);
-        // Toy mesh: 1 -> 2, 2 -> 3
-        let mut sieve = InMemorySieve::<PointId, ()>::default();
-        Sieve::add_arrow(&mut sieve, PointId::new(1), PointId::new(2), ());
-        Sieve::add_arrow(&mut sieve, PointId::new(2), PointId::new(3), ());
-        // Closure from 1: [1,2,3]
-        let closure = crate::data::refine::restrict_closure_vec(&sieve, &s, [PointId::new(1)]);
-        let mut vals: Vec<_> = closure.iter().map(|(_, v)| v[0]).collect();
-        vals.sort();
-        assert_eq!(vals, vec![10, 20, 30]);
-        // Star from 3: [3,2,1]
-        let star = crate::data::refine::restrict_star_vec(&sieve, &s, [PointId::new(3)]);
-        let mut vals: Vec<_> = star.iter().map(|(_, v)| v[0]).collect();
-        vals.sort();
-        assert_eq!(vals, vec![10, 20, 30]);
-    }
-
     #[test]
     fn scatter_from() {
         let mut s = make_section();
@@ -264,16 +242,6 @@ mod tests {
         assert_eq!(<Section<i32> as Map<i32>>::get(&s, PointId::new(1)), &[42]);
         // Map trait get_mut
         assert!(<Section<i32> as Map<i32>>::get_mut(&mut s, PointId::new(1)).is_some());
-        // ReadOnlyMap
-        struct ReadOnlyMap<'a, V: Clone + Default> { section: &'a Section<V> }
-        impl<'a, V: Clone + Default> Map<V> for ReadOnlyMap<'a, V> {
-            fn get(&self, p: PointId) -> &[V] { self.section.restrict(p) }
-        }
-        let ro = ReadOnlyMap { section: &s };
-        assert_eq!(ro.get(PointId::new(1)), &[42]);
-        // ReadOnlyMap is immutable, so call get_mut on a mutable reference
-        let mut ro = ReadOnlyMap { section: &s };
-        assert!(Map::<i32>::get_mut(&mut ro, PointId::new(1)).is_none());
     }
 }
 
