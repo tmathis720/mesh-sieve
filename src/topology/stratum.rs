@@ -370,8 +370,12 @@ mod sieve_strata_default_tests {
     use std::collections::HashMap;
 
     /// A trivial Sieve implementation for testing default strata helpers.
+    #[derive(Default)]
     struct TrivialSieve {
         edges: HashMap<u32, Vec<u32>>,
+    }
+    impl InvalidateCache for TrivialSieve {
+        fn invalidate_cache(&mut self) {}
     }
     impl Sieve for TrivialSieve {
         type Point = u32;
