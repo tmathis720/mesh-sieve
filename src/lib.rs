@@ -11,4 +11,4 @@ pub use algs::metis_partition;
 #[cfg(feature = "partitioning")]
 pub mod partitioning;
 
-pub use topology::sieve::{Sieve, InMemorySieve, LatticeOps};
+pub use topology::sieve::{Sieve, InMemorySieve};

@@ -87,7 +87,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
     fn cap_points<'a>(&'a self) -> Box<dyn Iterator<Item=P> + 'a> {
         Box::new(self.adjacency_in.keys().copied())
     }
-    // override strata‐helpers using `self.strata_cache()`
+    // override strata-helpers using `self.strata_cache()`
     fn height(&self,p:P)->u32{ self.strata_cache().height.get(&p).copied().unwrap_or(0) }
     fn depth(&self,p:P)->u32{ self.strata_cache().depth.get(&p).copied().unwrap_or(0) }
     fn diameter(&self)->u32{ self.strata_cache().diameter }
@@ -103,13 +103,6 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
         let cache = self.strata_cache();
         let points: Vec<_> = cache.depth.iter().filter(|(_, d)| **d == k).map(|(&p, _)| p).collect();
         Box::new(points.into_iter())
-    }
-    // Implement meet and join by delegating to LatticeOps
-    fn meet<'s>(&'s self, a: P, b: P) -> Box<dyn Iterator<Item=P> + 's> {
-        crate::topology::sieve::lattice::LatticeOps::meet(self, a, b)
-    }
-    fn join<'s>(&'s self, a: P, b: P) -> Box<dyn Iterator<Item=P> + 's> {
-        crate::topology::sieve::lattice::LatticeOps::join(self, a, b)
     }
     fn add_point(&mut self, p: P) {
         self.adjacency_out.entry(p).or_default();

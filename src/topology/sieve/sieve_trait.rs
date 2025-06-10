@@ -93,8 +93,102 @@ pub trait Sieve: Default + InvalidateCache {
     }
 
     // --- lattice ops ---
-    fn meet<'s>(&'s self, a: Self::Point, b: Self::Point) -> Box<dyn Iterator<Item=Self::Point> + 's>;
-    fn join<'s>(&'s self, a: Self::Point, b: Self::Point) -> Box<dyn Iterator<Item=Self::Point> + 's>;
+    // --- Lattice operations: meet and join ---
+    /// Computes the minimal separator (meet) of two points in the Sieve.
+    ///
+    /// The meet is the set of points in the intersection of the closures of `a` and `b`,
+    /// excluding the closure of `{a, b}`. This is useful for finding shared faces or minimal
+    /// common subcells.
+    ///
+    /// # Example
+    /// ```
+    /// use sieve_rs::topology::sieve::{Sieve, InMemorySieve};
+    /// let mut s = InMemorySieve::<u32>::default();
+    /// s.add_arrow(1, 2, ());
+    /// s.add_arrow(1, 3, ());
+    /// s.add_arrow(2, 4, ());
+    /// s.add_arrow(3, 4, ());
+    /// let meet: Vec<_> = s.meet(2, 3).collect();
+    /// assert_eq!(meet, vec![]);
+    /// ```
+    fn meet<'s>(&'s self, a: Self::Point, b: Self::Point) -> Box<dyn Iterator<Item=Self::Point> + 's>
+    where
+        Self::Point: Ord,
+    {
+        let mut ca: Vec<_> = self.closure(std::iter::once(a)).collect();
+        let mut cb: Vec<_> = self.closure(std::iter::once(b)).collect();
+        ca.sort_unstable();
+        cb.sort_unstable();
+        let mut inter = Vec::with_capacity(ca.len().min(cb.len()));
+        let (mut i, mut j) = (0, 0);
+        while i < ca.len() && j < cb.len() {
+            use std::cmp::Ordering;
+            match ca[i].cmp(&cb[j]) {
+                Ordering::Less => i += 1,
+                Ordering::Greater => j += 1,
+                Ordering::Equal => {
+                    inter.push(ca[i]);
+                    i += 1;
+                    j += 1;
+                }
+            }
+        }
+        let mut to_rm: Vec<_> = self.closure([a, b]).collect();
+        to_rm.sort_unstable();
+        to_rm.dedup();
+        let filtered = inter.into_iter().filter(move |x| to_rm.binary_search(x).is_err());
+        Box::new(filtered)
+    }
+
+    /// Computes the dual separator (join) of two points in the Sieve.
+    ///
+    /// The join is the set of points in the union of the stars of `a` and `b`.
+    /// This is useful for finding all cofaces or minimal common supersets.
+    ///
+    /// # Example
+    /// ```
+    /// use sieve_rs::topology::sieve::{Sieve, InMemorySieve};
+    /// let mut s = InMemorySieve::<u32>::default();
+    /// s.add_arrow(2, 4, ());
+    /// s.add_arrow(3, 4, ());
+    /// s.add_arrow(4, 5, ());
+    /// let join: Vec<_> = s.join(2, 3).collect();
+    /// assert_eq!(join, vec![2, 3]);
+    /// ```
+    fn join<'s>(&'s self, a: Self::Point, b: Self::Point) -> Box<dyn Iterator<Item=Self::Point> + 's>
+    where
+        Self::Point: Ord,
+    {
+        let mut sa: Vec<_> = self.star(std::iter::once(a)).collect();
+        let mut sb: Vec<_> = self.star(std::iter::once(b)).collect();
+        sa.sort_unstable();
+        sb.sort_unstable();
+        let mut out = Vec::with_capacity(sa.len() + sb.len());
+        let (mut i, mut j) = (0, 0);
+        while i < sa.len() && j < sb.len() {
+            use std::cmp::Ordering;
+            match sa[i].cmp(&sb[j]) {
+                Ordering::Less => {
+                    out.push(sa[i]);
+                    i += 1
+                }
+                Ordering::Greater => {
+                    out.push(sb[j]);
+                    j += 1
+                }
+                Ordering::Equal => {
+                    out.push(sa[i]);
+                    i += 1;
+                    j += 1
+                }
+            }
+        }
+        out.extend_from_slice(&sa[i..]);
+        out.extend_from_slice(&sb[j..]);
+        out.sort_unstable();
+        out.dedup();
+        Box::new(out.into_iter())
+    }
 
     // --- strata helpers ---
     fn height(&self, p: Self::Point) -> u32;

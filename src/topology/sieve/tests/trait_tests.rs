@@ -24,7 +24,7 @@ fn meet_two_triangles_shared_vertices() {
             s.add_arrow(d, src, ());
         }
     }
-    let sep = crate::topology::sieve::lattice::meet_minimal_separator(&s, v(10), v(11));
+    let sep: Vec<_> = s.meet(v(10), v(11)).collect();
     assert!(sep.is_empty());
 }
 
@@ -40,7 +40,7 @@ fn meet_disjoint_cells() {
             s.add_arrow(d, src, ());
         }
     }
-    let sep = crate::topology::sieve::lattice::meet_minimal_separator(&s, v(10), v(11));
+    let sep: Vec<_> = s.meet(v(10), v(11)).collect();
     assert!(sep.is_empty());
 }
 
@@ -52,7 +52,7 @@ fn meet_same_cell() {
     for d in [v(1), v(2)] {
         s.add_arrow(d, v(10), ());
     }
-    let sep = crate::topology::sieve::lattice::meet_minimal_separator(&s, v(10), v(10));
+    let sep: Vec<_> = s.meet(v(10), v(10)).collect();
     assert!(sep.is_empty());
 }
 
@@ -94,7 +94,7 @@ fn meet_two_triangles_shared_edge_entity() {
             s.add_arrow(d, src, ());
         }
     }
-    let sep = crate::topology::sieve::lattice::meet_minimal_separator(&s, v(10), v(11));
+    let sep: Vec<_> = s.meet(v(10), v(11)).collect();
     assert_eq!(sep, vec![]);
 }
 
@@ -122,6 +122,6 @@ fn meet_two_triangles_shared_edge_entity_refined() {
     s.add_arrow(v(23), v(4), ());
     s.add_arrow(v(24), v(4), ());
     s.add_arrow(v(24), v(2), ());
-    let sep = crate::topology::sieve::lattice::meet_minimal_separator(&s, v(10), v(11));
+    let sep: Vec<_> = s.meet(v(10), v(11)).collect();
     assert_eq!(sep, vec![]);
 }
