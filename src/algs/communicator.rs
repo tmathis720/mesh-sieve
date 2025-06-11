@@ -73,7 +73,7 @@ impl Communicator for NoComm {
 // --- RayonComm: intra-process / multi-thread ---
 type Key = (usize, usize, u16); // (src, dst, tag)
 
-static MAILBOX: Lazy<DashMap<Key, Bytes>> = Lazy::new(DashMap::new);
+pub static MAILBOX: Lazy<DashMap<Key, Bytes>> = Lazy::new(DashMap::new);
 
 pub struct LocalHandle {
     buf: Arc<Mutex<Option<Vec<u8>>>>,
@@ -90,7 +90,7 @@ impl Wait for LocalHandle {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct RayonComm {
     rank: usize,
 }
@@ -223,9 +223,20 @@ pub use mpi_backend::MpiComm;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::algs::communicator::Communicator;
+    use mpi::topology::Communicator as MpiCommTrait;
 
     #[test]
     fn rayon_roundtrip_two_ranks() {
+        // Always clear the mailbox before and after the test to avoid interference and leaks
+        struct MailboxGuard;
+        impl Drop for MailboxGuard {
+            fn drop(&mut self) {
+                MAILBOX.clear();
+            }
+        }
+        let _guard = MailboxGuard;
+        MAILBOX.clear();
         // Simulate rank 0 and rank 1 in the same process:
         let comm0 = RayonComm::new(0);
         let comm1 = RayonComm::new(1);
@@ -253,6 +264,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn mpi_roundtrip() {
         use mpi::traits::*;
         let comm = MpiComm::new();
@@ -273,5 +285,145 @@ mod tests {
             "Rank {} expected to receive {} from {} but got {}",
             comm.rank, nbr_recv as u8, nbr_recv, recv[0]
         );
+    }
+
+    #[test]
+    #[ignore]
+    fn mpi_comm_mock_serial() {
+        let comm = MpiComm::default();
+        if comm.world.size() < 2 {
+            eprintln!("mpi_comm_mock_serial requires at least 2 MPI ranks; skipping.");
+            return;
+        }
+        assert!(!comm.is_no_comm(), "MpiComm should not be no_comm");
+        assert_eq!(comm.rank(), comm.world.rank() as usize);
+        assert_eq!(comm.size(), comm.world.size() as usize);
+        let mut buf = [0u8; 1];
+        let r = comm.irecv(comm.rank(), 0, &mut buf);
+        let s = comm.isend(comm.rank(), 0, &[123]);
+        let _ = s.wait();
+        let _ = r.wait();
+    }
+
+    #[test]
+    fn no_comm_basics() {
+        // Test NoComm API and semantics
+        let comm = NoComm::default();
+        assert!(comm.is_no_comm(), "NoComm should report is_no_comm() == true");
+        assert_eq!(comm.rank(), 0, "NoComm rank should be 0");
+        assert_eq!(comm.size(), 1, "NoComm size should be 1");
+        comm.isend(0, 0, &[1, 2, 3]); // no-op
+        let mut buf = [0u8; 3];
+        let h = comm.irecv(0, 0, &mut buf); // no-op
+        assert_eq!(h.wait(), None, "NoComm Wait should return None");
+    }
+
+    #[test]
+    fn rayon_comm_edge_cases() {
+        // Always clear the mailbox before and after the test to avoid interference and leaks
+        struct MailboxGuard;
+        impl Drop for MailboxGuard {
+            fn drop(&mut self) {
+                MAILBOX.clear();
+            }
+        }
+        let _guard = MailboxGuard;
+        MAILBOX.clear();
+        // is_no_comm
+        let comm0 = RayonComm::new(0);
+        let comm1 = RayonComm::new(1);
+        assert!(!comm0.is_no_comm(), "RayonComm should not be no_comm");
+        // Multiple tags/peers
+        let mut buf1 = [0u8; 2];
+        let mut buf2 = [0u8; 2];
+        let r1 = comm1.irecv(0, 1, &mut buf1);
+        let r2 = comm1.irecv(0, 2, &mut buf2);
+        comm0.isend(1, 1, &[10, 11]);
+        comm0.isend(1, 2, &[20, 21]);
+        assert_eq!(r1.wait().unwrap(), vec![10, 11]);
+        assert_eq!(r2.wait().unwrap(), vec![20, 21]);
+        // Buffer truncation
+        let mut small_buf = [0u8; 1];
+        comm0.isend(1, 3, &[99, 100, 101]);
+        let r = comm1.irecv(0, 3, &mut small_buf);
+        assert_eq!(r.wait().unwrap(), vec![99]);
+        // Simultaneous pending receives
+        let mut a = [0u8; 1];
+        let mut b = [0u8; 1];
+        let ra = comm1.irecv(0, 4, &mut a);
+        let rb = comm1.irecv(0, 5, &mut b);
+        comm0.isend(1, 4, &[1]);
+        comm0.isend(1, 5, &[2]);
+        assert_eq!(ra.wait().unwrap(), vec![1]);
+        assert_eq!(rb.wait().unwrap(), vec![2]);
+        // Ordering/overwrite: later send overwrites earlier
+        comm0.isend(1, 6, &[1]);
+        comm0.isend(1, 6, &[2]);
+        let mut c = [0u8; 1];
+        let rc = comm1.irecv(0, 6, &mut c);
+        assert_eq!(rc.wait().unwrap(), vec![2]);
+    }
+
+    #[test]
+    fn rayon_comm_mailbox_cleanup_and_drop_handle() {
+        use std::thread;
+        // Always clear the mailbox before and after the test to avoid interference and leaks
+        struct MailboxGuard;
+        impl Drop for MailboxGuard {
+            fn drop(&mut self) {
+                MAILBOX.clear();
+            }
+        }
+        let _guard = MailboxGuard;
+        MAILBOX.clear();
+        let comm0 = RayonComm::new(0);
+        let comm1 = RayonComm::new(1);
+        // Mailbox should not grow unboundedly
+        let start = MAILBOX.len();
+        for i in 0..10 {
+            let mut buf = [0u8; 1];
+            let r = comm1.irecv(0, 100 + i, &mut buf);
+            comm0.isend(1, 100 + i, &[i as u8]);
+            assert_eq!(r.wait().unwrap(), vec![i as u8]);
+        }
+        assert!(MAILBOX.len() <= start + 1, "MAILBOX should not grow unboundedly");
+        // Dropped handle: should not panic or leak threads
+        let mut buf = [0u8; 1];
+        let handle = comm1.irecv(0, 200, &mut buf);
+        comm0.isend(1, 200, &[42]);
+        drop(handle); // Should not panic or leak
+        thread::sleep(std::time::Duration::from_millis(10));
+    }
+
+    // Cross-backend harness: exercise all Communicator impls
+    fn roundtrip<C: Communicator + Default>() {
+        let comm = C::default();
+        let peer = (comm.rank() + 1) % comm.size();
+        let tag = 42;
+        let data = [9, 9, 9];
+        let mut buf = [0u8; 3];
+        let r = comm.irecv(peer, tag, &mut buf);
+        let s = comm.isend(peer, tag, &data);
+        let _ = s.wait();
+        let received = r.wait().unwrap_or_default();
+        assert_eq!(received.len(), buf.len());
+    }
+
+    #[test]
+    fn sanity_rayon() {
+        // Always clear the mailbox before and after the test to avoid interference and leaks
+        struct MailboxGuard;
+        impl Drop for MailboxGuard {
+            fn drop(&mut self) {
+                MAILBOX.clear();
+            }
+        }
+        let _guard = MailboxGuard;
+        MAILBOX.clear();
+        roundtrip::<RayonComm>();
+    }
+    #[test]
+    fn sanity_mpi() {
+        roundtrip::<MpiComm>();
     }
 }

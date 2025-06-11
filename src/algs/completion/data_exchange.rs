@@ -137,6 +137,14 @@ mod tests {
 
     #[test]
     fn test_exchange_data_rayon_comm() {
+        // Guard to clear the mailbox after the test, even if panic occurs
+        struct MailboxGuard;
+        impl Drop for MailboxGuard {
+            fn drop(&mut self) {
+                crate::algs::communicator::MAILBOX.clear();
+            }
+        }
+        let _guard = MailboxGuard;
         // Setup: two ranks (0 and 1), each with one value to send/receive
         let base_tag = 42;
         // Use RayonComm for realistic intra-process comm
@@ -168,7 +176,7 @@ mod tests {
         recv_counts1.insert(0, 1);
 
         // Spawn threads for each rank
-        let t0 = thread::spawn(move || {
+        let t0 = std::thread::spawn(move || {
             exchange_data::<DummyValue, DummyDelta, crate::algs::communicator::RayonComm>(
                 &links0,
                 &recv_counts0,
@@ -181,7 +189,7 @@ mod tests {
                 section0.restrict(PointId::new(20))[0],
             )
         });
-        let t1 = thread::spawn(move || {
+        let t1 = std::thread::spawn(move || {
             exchange_data::<DummyValue, DummyDelta, crate::algs::communicator::RayonComm>(
                 &links1,
                 &recv_counts1,
@@ -194,13 +202,27 @@ mod tests {
                 section1.restrict(PointId::new(20))[0],
             )
         });
-        let (s0_10, s0_20) = t0.join().unwrap();
-        let (s1_10, s1_20) = t1.join().unwrap();
-        // Rank 0 should have received 7 into 20
-        assert_eq!(s0_10, DummyValue(5));
-        assert_eq!(s0_20, DummyValue(7));
-        // Rank 1 should have received 5 into 10
-        assert_eq!(s1_10, DummyValue(5));
-        assert_eq!(s1_20, DummyValue(7));
+        let t0_res = t0.join();
+        let t1_res = t1.join();
+        match (t0_res, t1_res) {
+            (Ok((s0_10, s0_20)), Ok((s1_10, s1_20))) => {
+                // Rank 0 should have received 7 into 20
+                assert_eq!(s0_10, DummyValue(5));
+                assert_eq!(s0_20, DummyValue(7));
+                // Rank 1 should have received 5 into 10
+                assert_eq!(s1_10, DummyValue(5));
+                assert_eq!(s1_20, DummyValue(7));
+            }
+            (Err(e0), Err(e1)) => {
+                panic!("test_exchange_data_rayon_comm: both threads panicked: {:?} | {:?}", e0, e1);
+            }
+            (Err(e0), _) => {
+                panic!("test_exchange_data_rayon_comm: thread 0 panicked: {:?}", e0);
+            }
+            (_, Err(e1)) => {
+                panic!("test_exchange_data_rayon_comm: thread 1 panicked: {:?}", e1);
+            }
+            _ => panic!("test_exchange_data_rayon_comm: thread join failed or deadlocked"),
+        }
     }
 }
