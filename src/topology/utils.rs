@@ -43,3 +43,80 @@ pub fn assert_dag<P: Copy + Eq + std::hash::Hash + Ord, T>(s: &InMemorySieve<P, 
         panic!("Sieve contains a cycle: not a DAG");
     }
 }
+
+#[cfg(test)]
+mod assert_dag_tests {
+    use super::assert_dag;
+    use crate::topology::sieve::InMemorySieve;
+    use crate::topology::point::PointId;
+    use crate::topology::sieve::sieve_trait::Sieve;
+
+    fn v(x: u64) -> PointId { PointId::new(x) }
+
+    #[test]
+    fn empty_sieve_is_dag() {
+        let s = InMemorySieve::<PointId, ()>::default();
+        assert_dag(&s);
+    }
+
+    #[test]
+    fn singleton_node_is_dag() {
+        let mut s = InMemorySieve::<PointId, ()>::default();
+        s.adjacency_out.insert(v(1), Vec::new());
+        assert_dag(&s);
+    }
+
+    #[test]
+    fn simple_chain_is_dag() {
+        let mut s = InMemorySieve::<u32, ()>::new();
+        s.add_arrow(1,2,());
+        s.add_arrow(2,3,());
+        assert_dag(&s);
+    }
+
+    #[test]
+    #[should_panic(expected = "Sieve contains a cycle")]
+    fn two_node_cycle_panics() {
+        let mut s = InMemorySieve::<u32, ()>::new();
+        s.add_arrow(1,2,());
+        s.add_arrow(2,1,());
+        assert_dag(&s);
+    }
+
+    #[test]
+    #[should_panic(expected = "Sieve contains a cycle")]
+    fn self_loop_panics() {
+        let mut s = InMemorySieve::<u32, ()>::new();
+        s.add_arrow(5,5,());
+        assert_dag(&s);
+    }
+
+    #[test]
+    fn disconnected_dag_is_ok() {
+        let mut s = InMemorySieve::<u32, ()>::new();
+        s.add_arrow(1,2,());
+        s.add_arrow(3,4,());
+        s.add_arrow(6,5,());
+        assert_dag(&s);
+    }
+
+    #[test]
+    #[should_panic(expected = "Sieve contains a cycle")]
+    fn embedded_cycle_panics() {
+        let mut s = InMemorySieve::<u32, ()>::new();
+        s.add_arrow(1,2,());
+        s.add_arrow(2,3,());
+        s.add_arrow(4,5,());
+        s.add_arrow(5,6,());
+        s.add_arrow(6,4,());
+        assert_dag(&s);
+    }
+
+    #[test]
+    fn repeated_assert_dag_no_panic() {
+        let mut s = InMemorySieve::<u32, ()>::new();
+        s.add_arrow(1,2,());
+        assert_dag(&s);
+        assert_dag(&s);
+    }
+}

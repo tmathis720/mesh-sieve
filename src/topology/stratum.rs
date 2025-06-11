@@ -361,6 +361,81 @@ mod tests {
             assert!(!d.is_empty(), "depth_stratum({}) should not be empty", k);
         }
     }
+
+    #[test]
+    fn explicit_invalidate_strata_forces_recompute() {
+        let mut s = InMemorySieve::<u32,()>::new();
+        s.add_arrow(1,2,());
+        let d0 = s.diameter();
+        s.invalidate_strata();
+        s.add_arrow(2,3,());
+        let d1 = s.diameter();
+        assert!(d1 > d0);
+    }
+
+    #[test]
+    fn isolated_points_are_included() {
+        let mut s = InMemorySieve::<u32,()>::new();
+        s.adjacency_out.insert(42, Vec::new());
+        let heights = crate::topology::stratum::compute_strata(&s).height;
+        assert_eq!(heights.get(&42).copied(), Some(0));
+    }
+
+    #[test]
+    fn empty_sieve_strata() {
+        let s = InMemorySieve::<u8,()>::default();
+        assert_eq!(s.diameter(), 0);
+        assert!(s.height_stratum(0).next().is_none());
+        assert!(s.depth_stratum(0).next().is_none());
+    }
+
+    #[test]
+    fn depth_stratum_exactness() {
+        let mut s = InMemorySieve::<u32,()>::new();
+        s.add_arrow(5,6,());
+        s.add_arrow(6,7,());
+        let d0: Vec<_> = s.depth_stratum(0).collect();
+        let d1: Vec<_> = s.depth_stratum(1).collect();
+        let d2: Vec<_> = s.depth_stratum(2).collect();
+        assert_eq!(d0, vec![7]);
+        assert_eq!(d1, vec![6]);
+        assert_eq!(d2, vec![5]);
+    }
+
+    #[test]
+    fn strata_cache_new_is_empty() {
+        let cache: crate::topology::stratum::StrataCache<u8> = crate::topology::stratum::StrataCache::new();
+        assert!(cache.height.is_empty());
+        assert!(cache.depth.is_empty());
+        assert!(cache.strata.is_empty());
+        assert_eq!(cache.diameter, 0);
+    }
+
+    #[test]
+    fn strata_cache_thread_safe() {
+        use std::sync::Arc;
+        use std::thread;
+        let mut s = InMemorySieve::<u32,()>::new();
+        s.add_arrow(1,2,());
+        s.add_arrow(2,3,());
+        let shared = Arc::new(s);
+        let mut handles = Vec::new();
+        for _ in 0..4 {
+            let s_cloned = Arc::clone(&shared);
+            handles.push(thread::spawn(move || {
+                for _ in 0..10 {
+                    assert_eq!(s_cloned.diameter(), 2);
+                }
+            }));
+        }
+        for h in handles { h.join().unwrap(); }
+    }
+
+    #[test]
+    fn boxed_invalidate_cache() {
+        let mut s: Box<dyn crate::topology::stratum::InvalidateCache> = Box::new(InMemorySieve::<u8,()>::new());
+        s.invalidate_cache();
+    }
 }
 
 #[cfg(test)]
