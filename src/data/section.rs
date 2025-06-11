@@ -83,12 +83,14 @@ impl<V: Clone + Default> Section<V> {
 
     /// Remove a point from the section, rebuilding data to keep slices contiguous.
     pub fn remove_point(&mut self, p: PointId) {
+        // Take a snapshot of the old atlas for correct offsets
+        let old_atlas = self.atlas.clone();
         self.atlas.remove_point(p);
         // Rebuild data: allocate new vec, copy each remaining slice from old data
         let mut new_data = Vec::with_capacity(self.atlas.total_len());
         for pid in self.atlas.points() {
-            let (offset, len) = self.atlas.get(pid).unwrap();
-            let old_slice = &self.data[offset..offset+len];
+            let (old_offset, old_len) = old_atlas.get(pid).unwrap();
+            let old_slice = &self.data[old_offset..old_offset+old_len];
             new_data.extend_from_slice(old_slice);
         }
         self.data = new_data;
@@ -240,6 +242,71 @@ mod tests {
         assert_eq!(<Section<i32> as Map<i32>>::get(&s, PointId::new(1)), &[42]);
         // Map trait get_mut
         assert!(<Section<i32> as Map<i32>>::get_mut(&mut s, PointId::new(1)).is_some());
+    }
+
+    #[test]
+    fn add_point_expands_and_defaults() {
+        let mut atlas = Atlas::default();
+        atlas.insert(PointId::new(1), 2);
+        let mut s = Section::<i32>::new(atlas.clone());
+        // initial capacity = 2
+        assert_eq!(s.iter().count(), 1);
+        // add a new point of length 3
+        s.add_point(PointId::new(2), 3);
+        // now iter() yields 2 points
+        let mut pts: Vec<_> = s.iter().map(|(p, _)| p).collect();
+        pts.sort_unstable();
+        assert_eq!(pts, vec![PointId::new(1), PointId::new(2)]);
+        // its slice is all default (0)
+        assert_eq!(s.restrict(PointId::new(2)), &[0, 0, 0]);
+        // setting and reading works
+        s.set(PointId::new(2), &[7,8,9]);
+        assert_eq!(s.restrict(PointId::new(2)), &[7,8,9]);
+    }
+
+    #[test]
+    fn remove_point_compacts_and_forgets() {
+        // build atlas with 3 points, lengths [2,1,2]
+        let mut atlas = Atlas::default();
+        atlas.insert(PointId::new(1), 2);
+        atlas.insert(PointId::new(2), 1);
+        atlas.insert(PointId::new(3), 2);
+        let mut s = Section::<i32>::new(atlas);
+        // set some dummy values
+        s.set(PointId::new(1), &[10,11]);
+        s.set(PointId::new(2), &[22]);
+        s.set(PointId::new(3), &[33,34]);
+        // remove the middle point
+        s.remove_point(PointId::new(2));
+        // now only 1 and 3 remain, in order
+        let pts: Vec<_> = s.iter().map(|(p, _)| p).collect();
+        assert_eq!(pts, vec![PointId::new(1), PointId::new(3)]);
+        // data buffer should be [10,11,33,34]
+        let all: Vec<_> = s.data.iter().copied().collect();
+        assert_eq!(all, vec![10,11,33,34]);
+        // restricting the removed point panics
+        std::panic::catch_unwind(|| { let _ = s.restrict(PointId::new(2)); }).expect_err("should panic");
+    }
+
+    #[test]
+    #[should_panic(expected = "PointId not found in atlas")]
+    fn restrict_missing_panics() {
+        let s = make_section();
+        let _ = s.restrict(PointId::new(99));
+    }
+
+    #[test]
+    #[should_panic(expected = "Input slice length must match")]
+    fn set_wrong_length_panics() {
+        let mut s = make_section();
+        s.set(PointId::new(1), &[1.0]); // wrong length (expected 2)
+    }
+
+    #[test]
+    fn invalidate_cache_noop() {
+        let mut s = make_section();
+        // Just ensure this compiles and does nothing
+        InvalidateCache::invalidate_cache(&mut s);
     }
 }
 

@@ -28,6 +28,22 @@ impl<V: Clone + Send> Delta<V> for CopyDelta {
     }
 }
 
+/// No-op delta: skips fusion, always returns default for restrict.
+#[derive(Copy, Clone)]
+pub struct ZeroDelta;
+
+impl<V: Clone + Default + Send> Delta<V> for ZeroDelta {
+    type Part = V;
+    #[inline]
+    fn restrict(_v: &V) -> V {
+        V::default()
+    }
+    #[inline]
+    fn fuse(_local: &mut V, _incoming: V) {
+        // do nothing
+    }
+}
+
 /// Additive delta for summation/balancing fields.
 #[derive(Copy, Clone)]
 pub struct AddDelta;
@@ -44,5 +60,35 @@ where
     #[inline]
     fn fuse(local: &mut V, incoming: V) {
         *local += incoming;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_copy_delta_roundtrip() {
+        let mut v = 5;
+        let part = CopyDelta::restrict(&v);
+        CopyDelta::fuse(&mut v, part);
+        assert_eq!(v, 5);
+    }
+
+    #[test]
+    fn test_add_delta_forward_and_fuse() {
+        let mut v = 2;
+        let part = AddDelta::restrict(&3);
+        AddDelta::fuse(&mut v, part);
+        assert_eq!(v, 5);
+    }
+
+    #[test]
+    fn test_zero_delta_noop() {
+        let mut v = 7;
+        let part = ZeroDelta::restrict(&v);
+        assert_eq!(part, 0);
+        ZeroDelta::fuse(&mut v, 42);
+        assert_eq!(v, 7);
     }
 }

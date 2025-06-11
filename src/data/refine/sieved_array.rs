@@ -162,4 +162,100 @@ where
     }
 }
 
-// #[cfg(test)] module here for all the SievedArray tests
+#[cfg(test)]
+mod tests {
+    use crate::data::atlas::Atlas;
+    use crate::topology::point::PointId;
+    use crate::topology::arrow::Orientation;
+    use crate::data::refine::sieved_array::SievedArray;
+
+    fn pt(i: u64) -> PointId { PointId::new(i) }
+    fn make_sieved() -> SievedArray<PointId, i32> {
+        let mut atlas = Atlas::default();
+        atlas.insert(pt(1), 2);
+        atlas.insert(pt(2), 2);
+        atlas.insert(pt(3), 2);
+        SievedArray::new(atlas)
+    }
+
+    #[test]
+    fn sieved_array_basic_get_set_iter() {
+        let mut atlas = Atlas::default();
+        atlas.insert(pt(1),2);
+        atlas.insert(pt(2),1);
+        let mut arr = SievedArray::<PointId,i32>::new(atlas);
+        arr.set(pt(1), &[1,2]);
+        arr.set(pt(2), &[3]);
+        assert_eq!(arr.get(pt(1)), &[1,2]);
+        assert_eq!(arr.get(pt(2)), &[3]);
+        let vals: Vec<_> = arr.iter().map(|(_,v)| v[0]).collect();
+        assert_eq!(vals, vec![1,3]);
+    }
+
+    #[test]
+    fn sieved_array_refine_with_sifter_forward_and_reverse() {
+        // coarse pt 1 len=2: data [10,20]
+        // fine pts 2,3 len=2
+        let mut cat = Atlas::default(); cat.insert(pt(1),2);
+        let mut fat = Atlas::default(); fat.insert(pt(2),2); fat.insert(pt(3),2);
+        let mut coarse = SievedArray::new(cat);
+        let mut fine   = SievedArray::new(fat);
+        coarse.set(pt(1), &[10,20]);
+        let refinement = vec![
+          (pt(1), vec![(pt(2), Orientation::Forward),(pt(3),Orientation::Reverse)])
+        ];
+        fine.refine_with_sifter(&coarse, &refinement);
+        assert_eq!(fine.get(pt(2)), &[10,20]);
+        assert_eq!(fine.get(pt(3)), &[20,10]);
+    }
+
+    #[test]
+    fn sieved_array_refine_forward_only() {
+        let mut coarse = make_sieved();
+        let mut fine   = make_sieved();
+        coarse.set(pt(1), &[5,6]);
+        fine.refine(&coarse, &[(pt(1), vec![pt(2),pt(3)])]);
+        assert_eq!(fine.get(pt(2)), &[5,6]);
+        assert_eq!(fine.get(pt(3)), &[5,6]);
+    }
+
+    #[test]
+    fn sieved_array_assemble_average() {
+        let mut coarse = make_sieved();
+        let mut fine   = make_sieved();
+        // coarse unset, fine carries two slices
+        fine.set(pt(1), &[2,4]);
+        fine.set(pt(2), &[6,8]);
+        fine.assemble(&mut coarse, &[(pt(3), vec![pt(1),pt(2)])]);
+        // point 3 of coarse should be avg of [2,4] & [6,8] => [4,6]
+        assert_eq!(coarse.get(pt(3)), &[4,6]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn sieved_array_set_wrong_length_panics() {
+        let mut arr = make_sieved();
+        arr.set(pt(1), &[1]); // length mismatch
+    }
+
+    #[test]
+    #[should_panic]
+    fn sieved_array_assemble_mismatch_panics() {
+        let mut coarse = make_sieved();
+        let mut fine   = make_sieved();
+        // coarse len=2, fine len=1
+        fine.set(pt(1), &[9]);
+        fine.assemble(&mut coarse, &[(pt(1), vec![pt(1)])]);
+    }
+
+    #[cfg(feature="rayon")]
+    #[test]
+    fn sieved_array_refine_with_sifter_parallel_works() {
+        let mut coarse = make_sieved();
+        let mut fine   = make_sieved();
+        coarse.set(pt(1), &[2,3]);
+        let refinement = vec![(pt(1), vec![(pt(2),Orientation::Forward)])];
+        fine.refine_with_sifter_parallel(&coarse, &refinement);
+        assert_eq!(fine.get(pt(2)), &[2,3]);
+    }
+}

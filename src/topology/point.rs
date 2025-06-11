@@ -20,6 +20,10 @@ use std::{fmt, num::NonZeroU64};
 /// that the value cannot be zero. This makes `PointId` safe to use in
 /// contexts where zero is reserved as "invalid" or "none".
 ///
+/// # PETSc SF semantics
+/// In the context of parallel mesh distribution (see Knepley & Karpeev 2009),
+/// a `PointId` is used as the root/leaf in the Star Forest (SF) model.
+///
 /// # Memory layout
 /// This type is `repr(transparent)`, meaning it has the same ABI and
 /// alignment as its single field (`NonZeroU64`) and can be passed to FFI

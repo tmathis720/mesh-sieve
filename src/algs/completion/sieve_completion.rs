@@ -5,6 +5,7 @@ use crate::algs::completion::partition_point;
 use crate::overlap::overlap::Remote;
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
+use crate::topology::stratum::InvalidateCache;
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -131,6 +132,30 @@ pub fn complete_sieve(
     // (simulate what would happen in a real MPI exchange)
     sieve.strata.take();
     crate::topology::utils::assert_dag(sieve);
+}
+
+pub fn complete_sieve_until_converged(
+    sieve: &mut crate::topology::sieve::InMemorySieve<
+        crate::topology::point::PointId,
+        crate::overlap::overlap::Remote,
+    >,
+    overlap: &crate::overlap::overlap::Overlap,
+    comm: &impl crate::algs::communicator::Communicator,
+    my_rank: usize,
+) {
+    use crate::topology::utils::assert_dag;
+    let mut prev_points = std::collections::HashSet::new();
+    loop {
+        let before: std::collections::HashSet<_> = sieve.points().collect();
+        complete_sieve(sieve, overlap, comm, my_rank);
+        let after: std::collections::HashSet<_> = sieve.points().collect();
+        if after == before || after == prev_points {
+            break;
+        }
+        prev_points = after.clone();
+        InvalidateCache::invalidate_cache(sieve);
+        assert_dag(sieve);
+    }
 }
 
 // Optionally, add #[cfg(test)] mod tests for sieve completion
