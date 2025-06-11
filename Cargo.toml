@@ -21,11 +21,13 @@ metis-sys = "0.3.2"
 rand = { version = "0.8", features = ["std", "small_rng"], optional = true }
 ahash = { version = "0.8", optional = true }
 num-traits = "0.2"
+serial_test = "3.2.0"
 
 [dev-dependencies]
 rand = "0.8"
 serde_json = "1.0"
 bincode = "1.3"
+serial_test = "3.2.0"
 
 [features]
 default = []            # keep core lean

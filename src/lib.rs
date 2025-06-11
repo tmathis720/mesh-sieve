@@ -10,7 +10,7 @@ pub mod topology;
 #[cfg(feature = "metis-support")]
 pub use algs::metis_partition;
 
-#[cfg(feature = "partitioning")]
+#[cfg(feature = "partitioning-onizuka")]
 pub mod partitioning;
 
 pub use topology::sieve::{Sieve, InMemorySieve};

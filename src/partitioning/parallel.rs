@@ -53,3 +53,10 @@ where
         func(i, item);
     });
 }
+
+#[cfg(feature = "partitioning-onizuka")]
+mod onizuka_partitioning {
+    use super::*;
+
+    /// Your onizuka partitioning code here
+}

@@ -13,12 +13,6 @@
 //!   hashing) so `PointId` can be used in maps, sets, and printed easily.
 
 use std::{fmt, num::NonZeroU64};
-
-/// A unique, nonzero identifier for a mesh point (cell, face, edge, vertex, …).
-///
-/// Internally, `PointId` holds a `NonZeroU64`, ensuring at compile time
-/// that the value cannot be zero. This makes `PointId` safe to use in
-/// contexts where zero is reserved as "invalid" or "none".
 ///
 /// # PETSc SF semantics
 /// In the context of parallel mesh distribution (see Knepley & Karpeev 2009),

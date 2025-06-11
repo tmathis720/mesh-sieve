@@ -147,3 +147,47 @@ mod tests {
         assert_eq!(seeds.len(), 3);
     }
 }
+
+#[cfg(feature = "partitioning-onizuka")]
+mod onizuka_partitioning {
+    use super::*;
+    use crate::partitioning::graph_traits::PartitionableGraph;
+
+    struct CompleteGraph {
+        n: usize,
+    }
+    impl PartitionableGraph for CompleteGraph {
+        type VertexId = usize;
+        type VertexParIter<'a> = rayon::vec::IntoIter<usize>;
+        type NeighParIter<'a> = rayon::vec::IntoIter<usize>;
+        fn vertices(&self) -> Self::VertexParIter<'_> {
+            (0..self.n).collect::<Vec<_>>().into_par_iter()
+        }
+        fn neighbors(&self, v: usize) -> Self::NeighParIter<'_> {
+            let mut neigh = (0..self.n).collect::<Vec<_>>();
+            neigh.remove(v);
+            neigh.into_par_iter()
+        }
+        fn degree(&self, _v: usize) -> usize {
+            self.n - 1
+        }
+    }
+
+    #[test]
+    fn pick_seeds_complete_graph() {
+        let g = CompleteGraph { n: 4 };
+        let degrees: Vec<u64> = (0..4).map(|v| g.degree(v) as u64).collect();
+        let cfg = PartitionerConfig {
+            n_parts: 2,
+            seed_factor: 1.0,
+            ..Default::default()
+        };
+        let seeds = pick_seeds(&g, &degrees, &cfg);
+        // In a complete graph, all vertices have the same degree. Seeds should be
+        // picked uniformly at random.
+        assert_eq!(seeds.len(), 2);
+        for &s in &seeds {
+            assert!(s < 4);
+        }
+    }
+}

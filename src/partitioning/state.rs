@@ -1,12 +1,12 @@
 use std::sync::atomic::AtomicU32;
 
 /// Stores cluster IDs for each vertex (1-to-1 with vertex index).
-#[cfg(feature = "partitioning")]
+#[cfg(feature = "partitioning-onizuka")]
 pub struct ClusterIds {
     pub ids: Vec<AtomicU32>,
 }
 
-#[cfg(feature = "partitioning")]
+#[cfg(feature = "partitioning-onizuka")]
 impl ClusterIds {
     pub fn new(size: usize) -> Self {
         let ids = (0..size).map(|_| AtomicU32::new(0)).collect();
@@ -77,4 +77,9 @@ mod tests {
             assert_eq!(uf.get(i), root);
         }
     }
+}
+
+#[cfg(feature = "partitioning-onizuka")]
+impl ClusterIds {
+    /// Additional methods or overrides for onizuka partitioning can be added here.
 }

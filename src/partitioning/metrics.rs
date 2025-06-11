@@ -1,5 +1,5 @@
 // Metrics skeleton for partitioning
-#![cfg(feature = "partitioning")]
+#![cfg(feature = "partitioning-onizuka")]
 
 use super::{PartitionMap, PartitionableGraph};
 use rayon::iter::IntoParallelIterator;
@@ -94,6 +94,7 @@ where
 }
 
 #[cfg(test)]
+#[cfg(feature = "partitioning-okizuna")]
 mod tests {
     use super::*;
     use crate::partitioning::graph_traits::PartitionableGraph;

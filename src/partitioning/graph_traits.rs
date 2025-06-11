@@ -8,7 +8,7 @@ use std::hash::Hash;
 /// Implementors must guarantee that all returned iterators are safe for concurrent use and do not mutate the graph.
 ///
 /// This trait is only available when the `partitioning` feature is enabled.
-#[cfg_attr(docsrs, doc(cfg(feature = "partitioning")))]
+#[cfg(feature = "partitioning-onizuka")]
 pub trait PartitionableGraph: Sync {
     /// Vertex identifier type (must be copyable, hashable, and thread-safe).
     type VertexId: Copy + Hash + Eq + Send + Sync;

@@ -1,4 +1,5 @@
-#![cfg(feature = "partitioning")]
+#![cfg(feature = "partitioning-onizuka")]
+
 
 use crate::partitioning::PartitionerConfig;
 use crate::partitioning::graph_traits::PartitionableGraph;

@@ -1,26 +1,34 @@
 //! Entry-point for native graph partitioning.
-#![cfg_attr(not(feature = "partitioning"), allow(dead_code, unused_imports))]
+#![cfg_attr(not(feature = "partitioning-onizuka"), allow(dead_code, unused_imports))]
 
+#[cfg(feature = "partitioning-onizuka")]
 pub mod binpack;
+#[cfg(feature = "partitioning-onizuka")]
 pub mod graph_traits;
+#[cfg(feature = "partitioning-onizuka")]
 pub mod louvain;
+#[cfg(feature = "partitioning-onizuka")]
 pub mod metrics;
+#[cfg(feature = "partitioning-onizuka")]
 pub mod parallel;
+#[cfg(feature = "partitioning-onizuka")]
 pub mod seed_select;
+#[cfg(feature = "partitioning-onizuka")]
 pub mod vertex_cut;
 
+#[cfg(feature = "partitioning-onizuka")]
 pub use self::metrics::*;
 
-#[cfg(feature = "partitioning")]
+#[cfg(feature = "partitioning-onizuka")]
 use hashbrown::HashMap;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use std::hash::Hash;
 
-#[cfg(feature = "partitioning")]
+#[cfg(feature = "partitioning-onizuka")]
 pub type PartitionId = usize;
 
-#[cfg(feature = "partitioning")]
+#[cfg(feature = "partitioning-onizuka")]
 #[derive(Debug, Clone)]
 pub struct PartitionerConfig {
     pub n_parts: usize,
@@ -30,7 +38,7 @@ pub struct PartitionerConfig {
     pub max_iters: usize,
 }
 
-#[cfg(feature = "partitioning")]
+#[cfg(feature = "partitioning-onizuka")]
 impl Default for PartitionerConfig {
     fn default() -> Self {
         Self {
@@ -43,11 +51,11 @@ impl Default for PartitionerConfig {
     }
 }
 
-#[cfg(feature = "partitioning")]
+#[cfg(feature = "partitioning-onizuka")]
 #[derive(Debug, Clone)]
 pub struct PartitionMap<V: Eq + Hash + Copy>(HashMap<V, PartitionId>);
 
-#[cfg(feature = "partitioning")]
+#[cfg(feature = "partitioning-onizuka")]
 impl<V: Eq + Hash + Copy> PartitionMap<V> {
     pub fn with_capacity(cap: usize) -> Self {
         Self(HashMap::with_capacity(cap))
@@ -66,17 +74,17 @@ impl<V: Eq + Hash + Copy> PartitionMap<V> {
     }
 }
 
-#[cfg(feature = "partitioning")]
+#[cfg(feature = "partitioning-onizuka")]
 use crate::partitioning::graph_traits::PartitionableGraph;
 
-#[cfg(feature = "partitioning")]
+#[cfg(feature = "partitioning-onizuka")]
 #[derive(Debug)]
 pub enum PartitionerError {
     MaxIter,
     // Add more as needed
 }
 
-#[cfg(feature = "partitioning")]
+#[cfg(feature = "partitioning-onizuka")]
 pub fn partition<G>(
     graph: &G,
     cfg: &PartitionerConfig,
