@@ -1,4 +1,4 @@
-#![cfg(feature = "partitioning-onizuka")]
+#![cfg(feature = "partitioning")]
 
 
 use crate::partitioning::PartitionerConfig;

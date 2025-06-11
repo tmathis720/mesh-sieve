@@ -5,6 +5,7 @@ use crate::data::atlas::Atlas;
 use crate::data::refine::delta::Delta;
 use crate::topology::arrow::Orientation;
 use crate::topology::point::PointId;
+use rayon::prelude::*;
 
 #[derive(Clone, Debug)]
 pub struct SievedArray<P, V> {
@@ -142,23 +143,34 @@ where
 }
 
 #[cfg(feature = "rayon")]
+use rayon::prelude::*;
+
 impl<P, V: Clone + Default + Send + Sync> SievedArray<P, V>
 where
     P: Into<PointId> + Copy + Eq + Send + Sync,
 {
+    #[cfg(feature = "rayon")]
     pub fn refine_with_sifter_parallel(
         &mut self,
         coarse: &Self,
         refinement: &[(P, Vec<(P, Orientation)>)]
     ) {
-        use rayon::prelude::*;
-        refinement.par_iter().for_each(|(c, fine_pts)| {
+        // Collect updates in parallel: (fine_pt, data)
+        let updates: Vec<(P, Vec<V>)> = refinement.par_iter().flat_map(|(c, fine_pts)| {
             let coarse_slice = coarse.get((*c).into());
-            fine_pts.par_iter().for_each(|(f, o)| {
-                let dst = self.get_mut((*f).into());
-                o.apply(coarse_slice, dst);
-            });
-        });
+            fine_pts.par_iter().map(|(f, o)| {
+                let mut data = vec![V::default(); coarse_slice.len()];
+                o.apply(coarse_slice, &mut data);
+                (*f, data)
+            }).collect::<Vec<_>>()
+        }).collect();
+
+        // Apply updates sequentially
+        for (f, data) in updates {
+            let dst = self.get_mut(f.into());
+            assert_eq!(dst.len(), data.len(), "dof mismatch in refinement");
+            dst.clone_from_slice(&data);
+        }
     }
 }
 

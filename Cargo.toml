@@ -31,10 +31,12 @@ serial_test = "3.2.0"
 
 [features]
 default = []            # keep core lean
-partitioning = ["rayon", "rand", "ahash"]
+partitioning = ["rand", "ahash"]
+mpi-support = []
 metis-support = ["pkg-config", "bindgen"]
 topology_refine = []  # Feature gate for topology refinement and experimental algorithms
 stack_refine = [] # Feature gate for stack/bundle refinement
+rayon = ["dep:rayon"]
 
 [build-dependencies]
 pkg-config = { version = "0.3", optional = true }

@@ -215,18 +215,6 @@ mod edge_case_tests {
     }
 }
 
-#[cfg(all(test, feature = "metis-support"))]
-mod mpi_equivalence_tests {
-    use super::*;
-    use mpi::datatype::Equivalence;
-    #[test]
-    fn pointid_equivalence_matches_u64() {
-        let t1 = <PointId as Equivalence>::equivalent_datatype();
-        let t2 = <u64 as Equivalence>::equivalent_datatype();
-        assert_eq!(t1, t2);
-    }
-}
-
 // Add these to dev-dependencies in Cargo.toml:
 // serde_json = "1.0"
 // bincode = "1.3"

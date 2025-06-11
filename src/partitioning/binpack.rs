@@ -1,4 +1,4 @@
-#[cfg(feature = "partitioning-onizuka")]
+#[cfg(feature = "partitioning")]
 use rayon::prelude::*;
 use std::cmp::Reverse;
 use std::sync::atomic::{AtomicU64, Ordering};

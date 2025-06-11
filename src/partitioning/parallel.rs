@@ -54,9 +54,8 @@ where
     });
 }
 
-#[cfg(feature = "partitioning-onizuka")]
+#[cfg(feature = "partitioning")]
 mod onizuka_partitioning {
     use super::*;
 
-    /// Your onizuka partitioning code here
 }

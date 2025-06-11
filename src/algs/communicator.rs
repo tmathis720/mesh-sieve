@@ -72,7 +72,6 @@ impl Communicator for NoComm {
 
 // --- RayonComm: intra-process / multi-thread ---
 type Key = (usize, usize, u16); // (src, dst, tag)
-
 pub static MAILBOX: Lazy<DashMap<Key, Bytes>> = Lazy::new(DashMap::new);
 
 pub struct LocalHandle {
@@ -226,7 +225,6 @@ pub use mpi_backend::MpiComm;
 mod tests {
     use super::*;
     use crate::algs::communicator::Communicator;
-    use mpi::topology::Communicator as MpiCommTrait;
 
     #[test]
     #[ignore]
@@ -267,6 +265,7 @@ mod tests {
         MAILBOX.clear();
     }
 
+    #[cfg(feature = "mpi-support")]
     #[test]
     #[ignore]
     fn mpi_roundtrip() {
@@ -291,11 +290,12 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "mpi-support")]
     #[test]
     #[ignore]
     fn mpi_comm_mock_serial() {
-        
-        let comm = MpiComm::default();
+        use mpi::traits::*;
+        let comm = MpiComm::new();
         if comm.world.size() < 2 {
             eprintln!("mpi_comm_mock_serial requires at least 2 MPI ranks; skipping.");
             return;
@@ -311,7 +311,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn no_comm_basics() {
         // Test NoComm API and semantics
         let comm = NoComm::default();
@@ -434,6 +433,7 @@ mod tests {
         roundtrip::<RayonComm>();
         MAILBOX.clear();
     }
+    #[cfg(feature = "mpi-support")]
     #[test]
     #[ignore]
     fn sanity_mpi() {

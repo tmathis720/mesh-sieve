@@ -148,7 +148,7 @@ mod tests {
     }
 }
 
-#[cfg(feature = "partitioning-onizuka")]
+#[cfg(feature = "partitioning")]
 mod onizuka_partitioning {
     use super::*;
     use crate::partitioning::graph_traits::PartitionableGraph;

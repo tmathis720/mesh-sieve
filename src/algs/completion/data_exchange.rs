@@ -113,12 +113,10 @@ pub fn exchange_data_symmetric<V, D, C>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::algs::communicator::MAILBOX;
     use crate::data::atlas::Atlas;
     use crate::data::section::Section;
-    use crate::topology::point::PointId;
     use std::collections::HashMap;
+    use crate::algs::completion::data_exchange::exchange_data;
 
     #[derive(Clone, Copy, Default, Debug, PartialEq)]
     struct DummyValue(pub i32);
@@ -135,18 +133,11 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "rayon")]
     #[test]
     #[ignore]
     fn test_exchange_data_rayon_comm() {
-        // Guard to clear the mailbox after the test, even if panic occurs
-        struct MailboxGuard;
-        impl Drop for MailboxGuard {
-            fn drop(&mut self) {
-                MAILBOX.clear();
-            }
-        }
-        let _guard = MailboxGuard;
-        MAILBOX.clear();
+        use crate::topology::point::PointId;
         // Setup: two ranks (0 and 1), each with one value to send/receive
         let base_tag = 42;
         // Use RayonComm for realistic intra-process comm
@@ -226,6 +217,5 @@ mod tests {
             }
             _ => panic!("test_exchange_data_rayon_comm: thread join failed or deadlocked"),
         }
-        MAILBOX.clear();
     }
 }
