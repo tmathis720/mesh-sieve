@@ -72,6 +72,7 @@ impl<'a> PartitionableGraph for GridGraph<'a> {
 
 #[cfg(feature = "mpi-support")]
 fn main() {
+    use std::collections::HashMap;
     // 1) Initialize MPI
     let universe = mpi::initialize().unwrap();
     let world = universe.world();
@@ -90,26 +91,42 @@ fn main() {
             ..Default::default()
         };
         let pm = partition(&graph, &cfg).expect("partition failed");
-        // Distribute atlas and section to each rank based on pm
+        // Build a Vec of pids per rank
+        let mut by_rank: HashMap<i32, Vec<usize>> = HashMap::new();
         for (&pid, &p) in pm.iter() {
-            let proc = world.process_at_rank(p as i32);
-            proc.send(&pid);
-            proc.send(&sec.restrict(PointId::new(pid as u64))[0]);
+            let r = p as i32;
+            by_rank.entry(r).or_default().push(pid);
+        }
+        // Now send counts + data to each *other* rank
+        for (&r, pids) in by_rank.iter() {
+            if r == 0 { continue; } // skip yourself
+            let proc = world.process_at_rank(r);
+            // 1) send how many points this rank owns
+            let count = pids.len();
+            proc.send(&count);
+            // 2) send each pid + its value
+            for &pid in pids {
+                proc.send(&pid);
+                let val = sec.restrict(PointId::new(pid as u64))[0];
+                proc.send(&val);
+            }
         }
         (s, a, sec)
     } else {
         let mut s = InMemorySieve::new();
         let mut a = Atlas::default();
         let mut sec = Section::new(a.clone());
-        let mut owned = Vec::new();
-        for _ in 0..3 {
-            let (pid, _status) = world.any_process().receive::<PointId>();
-            let (val, _status) = world.any_process().receive::<f64>();
+        // 1) receive the number of points rank 0 will send
+        let (count, _) = world.process_at_rank(0).receive::<usize>();
+        // 2) now loop exactly `count` times
+        for _ in 0..count {
+            let (pid, _) = world.process_at_rank(0).receive::<usize>();
+            let (val, _) = world.process_at_rank(0).receive::<f64>();
+            let pid = PointId::new(pid as u64);
             s.add_point(pid);
             a.insert(pid, 1);
             sec = Section::new(a.clone());
             sec.restrict_mut(pid)[0] = val;
-            owned.push(pid);
         }
         (s, a, sec)
     };
