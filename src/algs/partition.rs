@@ -1,14 +1,14 @@
 //! Partitioning wrappers for ParMETIS / Zoltan
 //! and native Onizuka-inspired partitioning (see partitioning/)
 
-#[cfg(feature = "partitioning")]
+#[cfg(feature = "mpi-support")]
 pub use crate::partitioning::{
     PartitionMap, PartitionerConfig, PartitionerError,
     metrics::{edge_cut, replication_factor},
     partition,
 };
 
-#[cfg(feature = "partitioning")]
+#[cfg(feature = "mpi-support")]
 use crate::partitioning::graph_traits::PartitionableGraph;
 
 /// Partition a graph using the Onizuka et al. inspired native partitioner.
@@ -20,7 +20,7 @@ use crate::partitioning::graph_traits::PartitionableGraph;
 /// # Returns
 /// * `Ok(PartitionMap)` on success, mapping each vertex to a part.
 /// * `Err(PartitionerError)` on failure.
-#[cfg(feature = "partitioning")]
+#[cfg(feature = "mpi-support")]
 pub fn native_partition<G>(
     graph: &G,
     cfg: &PartitionerConfig,
@@ -32,7 +32,7 @@ where
 }
 
 /// Compute the edge cut of a partitioning.
-#[cfg(feature = "partitioning")]
+#[cfg(feature = "mpi-support")]
 pub fn partition_edge_cut<G>(graph: &G, pm: &PartitionMap<G::VertexId>) -> usize
 where
     G: PartitionableGraph,
@@ -42,7 +42,7 @@ where
 }
 
 /// Compute the replication factor of a partitioning.
-#[cfg(feature = "partitioning")]
+#[cfg(feature = "mpi-support")]
 pub fn partition_replication_factor<G>(graph: &G, pm: &PartitionMap<G::VertexId>) -> f64
 where
     G: PartitionableGraph,

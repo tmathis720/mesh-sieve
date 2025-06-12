@@ -86,7 +86,7 @@ fn main() {
         // Partition on rank 0
         let cfg = PartitionerConfig {
             n_parts: 4,
-            epsilon: 0.05,
+            epsilon: 4.8,
             ..Default::default()
         };
         let pm = partition(&graph, &cfg).expect("partition failed");

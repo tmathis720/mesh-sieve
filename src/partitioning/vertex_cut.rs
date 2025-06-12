@@ -23,7 +23,10 @@ where
     G: PartitionableGraph<VertexId = usize> + Sync,
 {
     // 1. Determine number of vertices
-    let n = graph.vertices().count();
+    let verts: Vec<G::VertexId> = graph.vertices().collect();
+    let n = verts.len();
+    // Map vertex ID to index
+    let vert_idx: std::collections::HashMap<G::VertexId, usize> = verts.iter().cloned().enumerate().map(|(i, v)| (v, i)).collect();
 
     // Determine how many parts we have (max part ID + 1)
     let num_parts = {
@@ -45,56 +48,47 @@ where
         (0..n).map(|_| Mutex::new(Vec::new())).collect();
 
     // 4. Parallel edge sweep: for each u, for each neighbor v where u < v
-    graph
-        .vertices() // yields a parallel iterator over VertexId
-        .into_par_iter()
-        .for_each(|u| {
-            // For each neighbor v of u (owned Vec<usize>), iterate in parallel
-            graph.neighbors(u).into_par_iter().for_each(|v| {
-                if u < v {
-                    let pu = pm.part_of(u);
-                    let pv = pm.part_of(v);
-                    if pu != pv {
-                        // NEW: load-aware selection
-                        let count_u = part_replica_count[pu].load(Ordering::Relaxed);
-                        let count_v = part_replica_count[pv].load(Ordering::Relaxed);
-                        let (owner, other, owner_part) = if count_u < count_v {
+    verts.par_iter().for_each(|&u| {
+        graph.neighbors(u).into_par_iter().for_each(|v| {
+            if u < v {
+                let pu = pm.part_of(u);
+                let pv = pm.part_of(v);
+                if pu != pv {
+                    let count_u = part_replica_count[pu].load(Ordering::Relaxed);
+                    let count_v = part_replica_count[pv].load(Ordering::Relaxed);
+                    let (owner, other, owner_part) = if count_u < count_v {
+                        (u, v, pu)
+                    } else if count_v < count_u {
+                        (v, u, pv)
+                    } else {
+                        let mut h = AHasher::default();
+                        h.write_u64(salt);
+                        h.write_u64(u as u64);
+                        h.write_u64(v as u64);
+                        let hashval = h.finish();
+                        if (hashval & 1) == 0 {
                             (u, v, pu)
-                        } else if count_v < count_u {
-                            (v, u, pv)
                         } else {
-                            // deterministic tie-breaker via AHasher
-                            let mut h = AHasher::default();
-                            h.write_u64(salt);
-                            h.write_u64(u as u64);
-                            h.write_u64(v as u64);
-                            let hashval = h.finish();
-                            if (hashval & 1) == 0 {
-                                (u, v, pu)
-                            } else {
-                                (v, u, pv)
-                            }
-                        };
-                        // Increment the chosen part’s counter
-                        part_replica_count[owner_part]
-                            .fetch_add(1, Ordering::Relaxed);
-                        // 4.a Set primary_part for both vertices to the owner’s part
-                        primary_part[owner].store(owner_part, Ordering::Relaxed);
-                        primary_part[other].store(owner_part, Ordering::Relaxed);
-
-                        // 4.b Push replica entries under mutex
-                        {
-                            let mut guard = replica_lists[owner].lock();
-                            guard.push((other, owner_part));
+                            (v, u, pv)
                         }
-                        {
-                            let mut guard = replica_lists[other].lock();
-                            guard.push((owner, owner_part));
-                        }
+                    };
+                    let owner_idx = *vert_idx.get(&owner).expect("owner vertex not found");
+                    let other_idx = *vert_idx.get(&other).expect("other vertex not found");
+                    part_replica_count[owner_part].fetch_add(1, Ordering::Relaxed);
+                    primary_part[owner_idx].store(owner_part, Ordering::Relaxed);
+                    primary_part[other_idx].store(owner_part, Ordering::Relaxed);
+                    {
+                        let mut guard = replica_lists[owner_idx].lock();
+                        guard.push((other, owner_part));
+                    }
+                    {
+                        let mut guard = replica_lists[other_idx].lock();
+                        guard.push((owner, owner_part));
                     }
                 }
-            });
+            }
         });
+    });
 
     // 5. Deduplicate & sort each vertex’s replica list
     for mutex in &replica_lists {
@@ -106,7 +100,8 @@ where
     // 6. For any vertex never set, assign its own part
     for (v, atomic_part) in primary_part.iter_mut().enumerate() {
         if atomic_part.load(Ordering::Relaxed) == usize::MAX {
-            atomic_part.store(pm.part_of(v), Ordering::Relaxed);
+            let vert = verts[v];
+            atomic_part.store(pm.part_of(vert), Ordering::Relaxed);
         }
     }
 
