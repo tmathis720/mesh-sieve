@@ -5,7 +5,6 @@ use crate::data::atlas::Atlas;
 use crate::data::refine::delta::Delta;
 use crate::topology::arrow::Orientation;
 use crate::topology::point::PointId;
-use rayon::prelude::*;
 
 #[derive(Clone, Debug)]
 pub struct SievedArray<P, V> {

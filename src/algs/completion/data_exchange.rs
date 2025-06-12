@@ -113,10 +113,10 @@ pub fn exchange_data_symmetric<V, D, C>(
 
 #[cfg(test)]
 mod tests {
+    use crate::algs::completion::data_exchange::exchange_data;
     use crate::data::atlas::Atlas;
     use crate::data::section::Section;
     use std::collections::HashMap;
-    use crate::algs::completion::data_exchange::exchange_data;
 
     #[derive(Clone, Copy, Default, Debug, PartialEq)]
     struct DummyValue(pub i32);

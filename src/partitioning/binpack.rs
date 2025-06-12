@@ -1,6 +1,7 @@
 #[cfg(feature = "partitioning")]
 use rayon::prelude::*;
 use std::cmp::Reverse;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 // Ensure rand and ahash are available as dependencies in Cargo.toml
@@ -83,6 +84,64 @@ pub fn partition_clusters(items: &[Item], k: usize, epsilon: f64) -> Vec<usize> 
     );
 
     cluster_to_part
+}
+
+/// Phase 2 merge: adjacency-guided cluster assignment.
+pub fn merge_clusters_into_parts(items: &[Item], k: usize) -> Vec<usize> {
+    assert!(k > 0 && !items.is_empty());
+    let n = items.len();
+    // 1. Sort items by descending load, pick top-k as seeds
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_unstable_by_key(|&i| Reverse(items[i].load));
+    let seed_idxs = &order[..k];
+
+    // track each seed’s total load and member clusters
+    let mut seed_loads: Vec<u64> = seed_idxs.iter().map(|&i| items[i].load).collect();
+    let mut seed_members: Vec<Vec<usize>> = seed_idxs.iter().map(|&i| vec![i]).collect();
+
+    // 2. Build a set of “unassigned” cluster indices
+    let mut unassigned: HashSet<usize> = (0..n).collect();
+    for &i in seed_idxs { unassigned.remove(&i); }
+
+    // 3. While any seed has adjacent candidates
+    loop {
+       // find (seed_idx, neighbor_idx, weight) triple with max weight
+       let mut best: Option<(usize, usize, u64)> = None;
+       for (s, members) in seed_members.iter().enumerate() {
+         for &cid in members {
+           for &(nbr, w) in &items[cid].adj {
+             if unassigned.contains(&nbr) {
+               if best.as_ref().map_or(true, |&(_,_,bw)| w > bw) {
+                 best = Some((s, nbr, w));
+               }
+             }
+           }
+         }
+       }
+       // stop if no adjacencies remain
+       let (seed_idx, pick, _) = match best { Some(t) => t, None => break };
+       // assign `pick` to that seed
+       seed_members[seed_idx].push(pick);
+       seed_loads[seed_idx] += items[pick].load;
+       unassigned.remove(&pick);
+    }
+
+    // 4. Any leftover clusters → first-fit to lightest seed
+    for &cid in unassigned.iter() {
+      // pick seed with minimal load
+      let (s, _) = seed_loads.iter().enumerate().min_by_key(|&(_, &l)| l).unwrap();
+      seed_members[s].push(cid);
+      seed_loads[s] += items[cid].load;
+    }
+
+    // 5. Build result: for each cluster index, record its seed’s part ID
+    let mut result = vec![0usize; n];
+    for (part, members) in seed_members.into_iter().enumerate() {
+      for cid in members {
+        result[cid] = part;
+      }
+    }
+    result
 }
 
 #[cfg(test)]

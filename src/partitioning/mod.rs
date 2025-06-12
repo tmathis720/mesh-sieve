@@ -21,8 +21,7 @@ pub use self::metrics::*;
 
 #[cfg(feature = "partitioning")]
 use hashbrown::HashMap;
-use rayon::iter::IntoParallelIterator;
-use rayon::iter::ParallelIterator;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::hash::Hash;
 
 #[cfg(feature = "partitioning")]
@@ -94,12 +93,12 @@ where
 {
     use crate::partitioning::{
         binpack::Item,
+        binpack::merge_clusters_into_parts,
         binpack::partition_clusters,
         louvain::louvain_cluster,
         metrics::{edge_cut, replication_factor},
         vertex_cut::build_vertex_cuts,
     };
-    use std::collections::HashMap;
 
     let verts: Vec<_> = graph.vertices().collect();
     let n = verts.len();
@@ -111,7 +110,34 @@ where
     let clusters = louvain_cluster(graph, cfg);
     let n_clusters = clusters.iter().copied().max().unwrap_or(0) as usize + 1;
 
-    // 2. Build cluster -> vertices map and cluster loads
+    // ————————————————————————————————————————————————
+    // 1. Gather all undirected edges u<v
+    // ————————————————————————————————————————————————
+    let all_edges: Vec<(usize, usize)> = graph
+        .vertices()
+        .flat_map(|u| {
+            graph
+                .neighbors(u)
+                .filter_map(move |v| if u < v { Some((u, v)) } else { None })
+        })
+        .collect();
+
+    // ————————————————————————————————————————————————
+    // 2. Build a map (cid_a, cid_b) → number of edges between them
+    // ————————————————————————————————————————————————
+    let mut cluster_adj: HashMap<(u32, u32), u64> =
+        HashMap::with_capacity(all_edges.len());
+    for (u, v) in all_edges {
+        let cu = clusters[u];
+        let cv = clusters[v];
+        if cu != cv {
+            // keep key ordered so (2,5) and (5,2) fold together
+            let key = if cu < cv { (cu, cv) } else { (cv, cu) };
+            *cluster_adj.entry(key).or_insert(0) += 1;
+        }
+    }
+
+    // 3. Build cluster -> vertices map and cluster loads
     let mut cluster_to_verts: HashMap<u32, Vec<usize>> = HashMap::with_capacity(n_clusters);
     let mut cluster_loads: HashMap<u32, u64> = HashMap::with_capacity(n_clusters);
     for (v, &cid) in verts.iter().zip(clusters.iter()) {
@@ -120,33 +146,45 @@ where
         *cluster_loads.entry(cid).or_insert(0) += deg.max(1); // avoid zero-load clusters
     }
 
-    // 3. Binpack clusters into parts
-    let mut items: Vec<Item> = cluster_to_verts
+    // 4. Binpack clusters into parts, with adjacency
+    let items: Vec<Item> = cluster_to_verts
         .iter()
-        .map(|(&cid, verts)| {
+        .map(|(&cid, _)| {
             let load = *cluster_loads.get(&cid).unwrap_or(&1);
+
+            // build adjacency list for this cluster id
+            let mut adj = Vec::new();
+            for (&(a, b), &count) in &cluster_adj {
+                if a == cid {
+                    adj.push((b as usize, count));
+                } else if b == cid {
+                    adj.push((a as usize, count));
+                }
+            }
+
             Item {
                 cid: cid as usize,
                 load,
-                adj: vec![],
+                adj,
             }
         })
         .collect();
-    let cluster_part = partition_clusters(&items, cfg.n_parts, 0.05);
 
-    // 4. Assign each vertex to its cluster's part
+    let cluster_part = merge_clusters_into_parts(&items, cfg.n_parts);
+
+    // 5. Assign each vertex to its cluster's part
     let mut pm = PartitionMap::with_capacity(n);
-    for (i, (&cid, verts)) in cluster_to_verts.iter().enumerate() {
+    for (i, (_cid, verts)) in cluster_to_verts.iter().enumerate() {
         let part = cluster_part[i];
         for &v in verts {
             pm.insert(v, part);
         }
     }
 
-    // 5. Vertex cut construction (primary owners, replicas)
+    // 6. Vertex cut construction (primary owners, replicas)
     let _vertex_cut = build_vertex_cuts(graph, &pm, cfg.rng_seed);
 
-    // 6. Metrics (for debug/logging)
+    // 7. Metrics (for debug/logging)
     let _cut = edge_cut(graph, &pm);
     let _rep = replication_factor(graph, &pm);
     // Optionally: log or print metrics here
@@ -157,6 +195,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rayon::iter::IntoParallelIterator;
     #[derive(Debug)]
     struct DummyGraph;
     impl PartitionableGraph for DummyGraph {

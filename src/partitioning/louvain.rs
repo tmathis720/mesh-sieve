@@ -3,8 +3,8 @@
 
 use crate::partitioning::PartitionerConfig;
 use crate::partitioning::graph_traits::PartitionableGraph;
-use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
+use rayon::iter::IntoParallelIterator;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -50,8 +50,6 @@ where
         let vid = u as u32;
         clusters.insert(vid, Cluster::new(vid, degrees[u]));
     }
-    let mut current_cluster_count: u32 = n as u32;
-    let seed_limit: u32 = ((cfg.seed_factor * cfg.n_parts as f64).ceil() as u32).max(1);
     for _iter in 0..cfg.max_iters {
         let mut intercluster_edges: HashMap<(u32, u32), u64> = HashMap::new();
         for &(u, v) in &all_edges {
@@ -102,12 +100,11 @@ where
             });
             entry.volume += degrees[u];
         }
-        current_cluster_count = clusters.len() as u32;
-        if current_cluster_count <= seed_limit {
+        if clusters.len() as u32 <= ((cfg.seed_factor * cfg.n_parts as f64).ceil() as u32).max(1) {
             break;
         }
     }
-    let mut unique_ids: Vec<u32> = {
+    let unique_ids: Vec<u32> = {
         let mut tmp: Vec<u32> = (0..n)
             .map(|u| cluster_ids[u].load(Ordering::Relaxed))
             .collect();
@@ -186,7 +183,7 @@ mod tests {
             max_iters: 10,
         };
         let clustering = louvain_cluster(&pg, &cfg);
-        let mut unique_clusters: Vec<u32> = {
+        let unique_clusters: Vec<u32> = {
             let mut tmp = clustering.clone();
             tmp.sort_unstable();
             tmp.dedup();
@@ -215,9 +212,12 @@ mod tests {
         };
         let clustering = louvain_cluster(&pg, &cfg);
         assert_eq!(clustering.len(), 5);
-        let mut unique = clustering.clone();
-        unique.sort_unstable();
-        unique.dedup();
+        let unique = {
+            let mut tmp = clustering.clone();
+            tmp.sort_unstable();
+            tmp.dedup();
+            tmp
+        };
         assert_eq!(unique.len(), 5);
     }
 }

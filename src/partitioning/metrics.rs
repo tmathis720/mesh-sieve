@@ -2,7 +2,6 @@
 #![cfg(feature = "partitioning")]
 
 use super::{PartitionMap, PartitionableGraph};
-use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
@@ -98,6 +97,7 @@ where
 mod tests {
     use super::*;
     use crate::partitioning::graph_traits::PartitionableGraph;
+    use rayon::iter::IntoParallelIterator;
 
     struct TestGraph {
         edges: Vec<(usize, usize)>,
