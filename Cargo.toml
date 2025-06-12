@@ -9,7 +9,7 @@ homepage = "https://github.com/tmathis720/mesh-sieve"
 documentation = "https://docs.rs/mesh-sieve"
 readme = "README.md"
 keywords = ["mesh", "PDE", "scientific-computing", "parallel", "MPI"]
-categories = ["science", "data-structures", "parallel"]
+categories = ["science", "data-structures", "database-implementations"]
 
 [dependencies]
 bytes = "1.10.1"

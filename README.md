@@ -1,6 +1,6 @@
-# sieve-rs
+# mesh-sieve
 
-sieve-rs is a modular, high-performance Rust library for mesh and data management, designed for scientific computing and PDE codes. It provides abstractions for mesh topology, field data, parallel partitioning, and communication, supporting both serial and MPI-based distributed workflows.
+mesh-sieve is a modular, high-performance Rust library for mesh and data management, designed for scientific computing and PDE codes. It provides abstractions for mesh topology, field data, parallel partitioning, and communication, supporting both serial and MPI-based distributed workflows.
 
 ## Features
 - **Mesh Topology**: Flexible, generic Sieve data structures for representing mesh connectivity.
