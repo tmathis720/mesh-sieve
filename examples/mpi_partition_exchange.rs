@@ -1,12 +1,21 @@
 //! A 4-rank MPI integration test: build a 2×2 grid mesh, partition, distribute, and exchange.
-
+#[cfg(feature = "mpi-support")]
 use mpi::traits::*;
+#[cfg(feature = "mpi-support")]
 use rayon::iter::IntoParallelIterator;
+#[cfg(feature = "mpi-support")]
 use rayon::iter::ParallelIterator;
+#[cfg(feature = "mpi-support")]
 use sieve_rs::algs::complete_section;
+#[cfg(feature = "mpi-support")]
+use sieve_rs::algs::partition;
+#[cfg(feature = "mpi-support")]
 use sieve_rs::data::atlas::Atlas;
+#[cfg(feature = "mpi-support")]
 use sieve_rs::data::section::{Map, Section};
+#[cfg(feature = "mpi-support")]
 use sieve_rs::topology::point::PointId;
+#[cfg(feature = "mpi-support")]
 use sieve_rs::topology::sieve::{InMemorySieve, Sieve};
 
 #[cfg(feature = "mpi-support")]
@@ -15,6 +24,7 @@ use sieve_rs::partitioning::{partition, PartitionerConfig};
 use sieve_rs::partitioning::graph_traits::PartitionableGraph;
 
 /// Build a 2×2 structured grid of points (IDs 0..8).
+#[cfg(feature = "mpi-support")]
 fn build_grid() -> (InMemorySieve<PointId, ()>, Atlas, Section<f64>) {
     // 9 points laid out in a 3×3 mesh (4 cells)
     let mut sieve = InMemorySieve::new();
@@ -32,16 +42,18 @@ fn build_grid() -> (InMemorySieve<PointId, ()>, Atlas, Section<f64>) {
 }
 
 // For partitioning, use a minimal wrapper that implements PartitionableGraph
+#[cfg(feature = "mpi-support")]
 struct GridGraph<'a> {
     sieve: &'a InMemorySieve<PointId>,
 }
+
 #[cfg(feature = "mpi-support")]
 impl<'a> PartitionableGraph for GridGraph<'a> {
     type VertexId = usize;
-    type VertexParIter<'b> = std::vec::IntoIter<usize> where Self: 'b;
-    type NeighParIter<'b> = std::vec::IntoIter<usize> where Self: 'b;
+    type VertexParIter<'b> = rayon::vec::IntoIter<usize> where Self: 'b;
+    type NeighParIter<'b> = rayon::vec::IntoIter<usize> where Self: 'b;
     fn vertices(&self) -> <Self as PartitionableGraph>::VertexParIter<'_> {
-        (1..=9).collect::<Vec<_>>().into_iter()
+        (1..=9).collect::<Vec<_>>().into_par_iter()
     }
     fn neighbors(&self, v: usize) -> <Self as PartitionableGraph>::NeighParIter<'_> {
         let mut nbrs = Vec::new();
@@ -51,13 +63,14 @@ impl<'a> PartitionableGraph for GridGraph<'a> {
         if row < 2 { nbrs.push(v + 3); }
         if col > 0 { nbrs.push(v - 1); }
         if col < 2 { nbrs.push(v + 1); }
-        nbrs.into_iter()
+        nbrs.into_par_iter()
     }
     fn degree(&self, v: usize) -> usize {
         self.neighbors(v).count()
     }
 }
 
+#[cfg(feature = "mpi-support")]
 fn main() {
     // 1) Initialize MPI
     let universe = mpi::initialize().unwrap();
@@ -79,8 +92,9 @@ fn main() {
         let pm = partition(&graph, &cfg).expect("partition failed");
         // Distribute atlas and section to each rank based on pm
         for (&pid, &p) in pm.iter() {
-            world.process_at_rank(p as i32)
-                .send(&(pid.get(), sec.restrict(pid)[0]));
+            let proc = world.process_at_rank(p as i32);
+            proc.send(&pid);
+            proc.send(&sec.restrict(PointId::new(pid as u64))[0]);
         }
         (s, a, sec)
     } else {
@@ -89,9 +103,8 @@ fn main() {
         let mut sec = Section::new(a.clone());
         let mut owned = Vec::new();
         for _ in 0..3 {
-            let (msg, _status) = world.any_process().receive::<(u64, f64)>();
-            let (pid_raw, val) = msg;
-            let pid = PointId::new(pid_raw);
+            let (pid, _status) = world.any_process().receive::<PointId>();
+            let (val, _status) = world.any_process().receive::<f64>();
             s.add_point(pid);
             a.insert(pid, 1);
             sec = Section::new(a.clone());
@@ -125,4 +138,9 @@ fn main() {
     if rank == 0 {
         println!("MPI partition+exchange test passed on 4 ranks!");
     }
+}
+
+#[cfg(not(feature = "mpi-support"))]
+fn main() {
+    eprintln!("This example requires the 'mpi-support' feature to be enabled.");
 }

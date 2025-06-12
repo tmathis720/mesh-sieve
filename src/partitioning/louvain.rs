@@ -29,20 +29,23 @@ pub fn louvain_cluster<G>(graph: &G, cfg: &PartitionerConfig) -> Vec<u32>
 where
     G: PartitionableGraph<VertexId = usize> + Sync,
 {
-    let n: usize = graph.vertices().count();
+    // Collect all vertex IDs and build an index map
+    let verts: Vec<usize> = graph.vertices().collect();
+    let n = verts.len();
     if n == 0 {
         return Vec::new();
     }
-    let degrees: Vec<u64> = graph.vertices().map(|u| graph.degree(u) as u64).collect();
-    // NOTE: PartitionableGraph does not require an edges() method, so we reconstruct edges from neighbors.
-    let all_edges: Vec<(usize, usize)> = graph
-        .vertices()
-        .flat_map(|u| {
-            graph
-                .neighbors(u)
-                .filter_map(move |v| if u < v { Some((u, v)) } else { None })
-        })
-        .collect();
+    let idx_map: HashMap<usize, usize> = verts.iter().copied().enumerate().map(|(i, v)| (v, i)).collect();
+    let degrees: Vec<u64> = verts.iter().map(|&u| graph.degree(u) as u64).collect();
+    // Reconstruct edges from neighbors
+    let mut all_edges = Vec::new();
+    for &u in &verts {
+        for v in graph.neighbors(u).collect::<Vec<_>>() {
+            if u < v {
+                all_edges.push((u, v));
+            }
+        }
+    }
     let m_f64: f64 = (all_edges.len() as u64 / 2) as f64;
     let cluster_ids: Vec<AtomicU32> = (0..n).map(|u| AtomicU32::new(u as u32)).collect();
     let mut clusters: HashMap<u32, Cluster> = HashMap::with_capacity(n);
@@ -53,9 +56,11 @@ where
     for _iter in 0..cfg.max_iters {
         let mut intercluster_edges: HashMap<(u32, u32), u64> = HashMap::new();
         for &(u, v) in &all_edges {
-            if u < v {
-                let cu = cluster_ids[u].load(Ordering::Relaxed);
-                let cv = cluster_ids[v].load(Ordering::Relaxed);
+            let iu = idx_map[&u];
+            let iv = idx_map[&v];
+            if iu < iv {
+                let cu = cluster_ids[iu].load(Ordering::Relaxed);
+                let cv = cluster_ids[iv].load(Ordering::Relaxed);
                 if cu != cv {
                     let key = if cu < cv { (cu, cv) } else { (cv, cu) };
                     *intercluster_edges.entry(key).or_insert(0) += 1;

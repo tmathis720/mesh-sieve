@@ -165,6 +165,9 @@ where
         n_clusters, cut1, rep1
     );
 
+    // Build a mapping from vertex ID to index in verts
+    let vert_idx: HashMap<usize, usize> = verts.iter().enumerate().map(|(i, &v)| (v, i)).collect();
+
     // ————————————————————————————————————————————————
     // 1. Gather all undirected edges u<v
     // ————————————————————————————————————————————————
@@ -183,8 +186,8 @@ where
     let mut cluster_adj: HashMap<(u32, u32), u64> =
         HashMap::with_capacity(all_edges.len());
     for (u, v) in all_edges {
-        let cu = clusters[u];
-        let cv = clusters[v];
+        let cu = clusters[*vert_idx.get(&u).expect("vertex not found in vert_idx")] ;
+        let cv = clusters[*vert_idx.get(&v).expect("vertex not found in vert_idx")] ;
         if cu != cv {
             // keep key ordered so (2,5) and (5,2) fold together
             let key = if cu < cv { (cu, cv) } else { (cv, cu) };
