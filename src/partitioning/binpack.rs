@@ -1,6 +1,4 @@
 use rayon::prelude::ParallelSliceMut;
-#[cfg(feature = "mpi-support")]
-use rayon::prelude::*;
 use std::cmp::Reverse;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};

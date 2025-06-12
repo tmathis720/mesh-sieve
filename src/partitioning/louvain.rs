@@ -4,15 +4,14 @@
 use crate::partitioning::PartitionerConfig;
 use crate::partitioning::graph_traits::PartitionableGraph;
 use rayon::iter::ParallelIterator;
-use rayon::iter::IntoParallelIterator;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 #[derive(Debug, Clone)]
 struct Cluster {
-    id: u32,
+    id: u32, // consider removing or prefixing with _ if unused
     volume: u64,
-    internal_edges: u64,
+    internal_edges: u64, // consider removing or prefixing with _ if unused
 }
 
 impl Cluster {
@@ -134,6 +133,7 @@ where
 mod tests {
     use super::*;
     use crate::partitioning::graph_traits::PartitionableGraph;
+    use rayon::iter::IntoParallelIterator;
     struct PathGraph {
         n: usize,
     }

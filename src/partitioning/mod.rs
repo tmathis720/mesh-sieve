@@ -45,8 +45,8 @@ pub use self::metrics::*;
 #[cfg(feature = "mpi-support")]
 use hashbrown::HashMap;
 use log::debug;
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::hash::Hash;
+use rayon::prelude::*;
 
 #[cfg(feature = "mpi-support")]
 pub type PartitionId = usize;
@@ -136,7 +136,6 @@ where
     use crate::partitioning::{
         binpack::Item,
         binpack::merge_clusters_into_parts,
-        binpack::partition_clusters,
         louvain::louvain_cluster,
         metrics::{edge_cut, replication_factor},
         vertex_cut::build_vertex_cuts,
@@ -261,7 +260,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rayon::iter::IntoParallelIterator;
     #[derive(Debug)]
     struct DummyGraph;
     impl PartitionableGraph for DummyGraph {

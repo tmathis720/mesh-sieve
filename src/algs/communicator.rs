@@ -85,7 +85,11 @@ impl Wait for LocalHandle {
             let _ = handle.join();
         }
         let mut guard = self.buf.lock().unwrap();
-        guard.take()
+        // Provide a clearer error if no message was received
+        guard.take().or_else(|| {
+            eprintln!("[RayonComm] ERROR: No message received for this handle. Possible send/receive mismatch or mailbox cleared too early.");
+            None
+        })
     }
 }
 
@@ -165,7 +169,11 @@ mod mpi_backend {
 
     impl MpiComm {
         pub fn new() -> Self {
-            let universe = mpi::initialize().unwrap();
+            let universe = mpi::initialize().unwrap_or_else(|| {
+                eprintln!("Error: MPI environment not initialized. \\nMake sure you’re running under an MPI launcher, e.g.:");
+                eprintln!("    cargo mpirun -n <ranks> --features mpi-support ...");
+                std::process::exit(1);
+            });
             let world = universe.world();
             let rank = world.rank() as usize;
             MpiComm {
@@ -186,7 +194,12 @@ mod mpi_backend {
             let _ = self.req.wait();
             // SAFETY: We own the leaked buffer, so it's safe to reconstruct and take ownership
             let buf = unsafe { Box::from_raw(self.buf) };
-            Some(buf.to_vec())
+            if buf.is_empty() {
+                eprintln!("[MpiComm] ERROR: No message received or buffer is empty. Possible send/receive mismatch or communication error.");
+                None
+            } else {
+                Some(buf.to_vec())
+            }
         }
     }
 

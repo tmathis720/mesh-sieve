@@ -134,6 +134,10 @@ mod tests {
     #[ignore]
     fn test_exchange_data_rayon_comm() {
         use crate::topology::point::PointId;
+        use crate::data::atlas::Atlas;
+        use crate::data::section::Section;
+        use std::collections::HashMap;
+        use crate::algs::completion::data_exchange::exchange_data;
         // Setup: two ranks (0 and 1), each with one value to send/receive
         let base_tag = 42;
         // Use RayonComm for realistic intra-process comm
