@@ -11,7 +11,7 @@ pub fn complete_section<V, D, C>(
     my_rank: usize,
     n_ranks: usize,
 ) where
-    V: Clone + Default + Send + 'static,
+    V: Clone + Default + Send + PartialEq + 'static,
     D: crate::overlap::delta::Delta<V> + Send + Sync + 'static,
     D::Part: bytemuck::Pod + Default,
     C: crate::algs::communicator::Communicator + Sync,

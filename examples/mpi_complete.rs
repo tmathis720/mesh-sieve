@@ -53,6 +53,10 @@ fn main() {
         sec.set(p1, &[200]);
     }
 
+    // Debug: print neighbour links before exchange
+    let links = mesh_sieve::algs::completion::neighbour_links::neighbour_links(&sec, &ovlp, rank);
+    println!("[rank {}] neighbour_links: {:?}", rank, links);
+
     // 6) Perform the two-phase exchange
     let delta = CopyDelta;
     complete_section(&mut sec, &ovlp, &comm, &delta, rank, size);

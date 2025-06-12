@@ -9,14 +9,18 @@ use std::collections::HashMap;
 /// Given your local section, the overlap graph, and your rank,
 /// returns for each neighbor rank the list of `(local_point, remote_point)`
 /// that you must send or receive.
-pub fn neighbour_links<V: Clone + Default>(
+pub fn neighbour_links<V: Clone + Default + PartialEq>(
     section: &Section<V>,
     ovlp: &Overlap,
     my_rank: usize,
 ) -> HashMap<usize, Vec<(PointId, PointId)>> {
     let mut out: HashMap<usize, Vec<(PointId, PointId)>> = HashMap::new();
     let mut has_owned = false;
-    for (p, _) in section.iter() {
+    for (p, vals) in section.iter() {
+        // Only treat as owned if the value is not default (i.e., was set by the user)
+        if vals.iter().all(|v| v == &V::default()) {
+            continue;
+        }
         has_owned = true;
         for (_dst, rem) in ovlp.cone(p) {
             if rem.rank != my_rank {
