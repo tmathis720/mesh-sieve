@@ -20,6 +20,7 @@ pub fn main() {
     }
     let mut atlas = Atlas::default();
     let mut ovlp = Overlap::default();
+    // Insert all points into atlas before constructing Section
     match rank {
         0 => {
             atlas.insert(PointId::new(1), 1);
@@ -39,6 +40,7 @@ pub fn main() {
         }
         _ => {}
     }
+    // Now construct Section after all atlas.insert
     let mut sec = Section::<u32>::new(atlas);
     if rank == 0 {
         sec.set(PointId::new(1), &[1]);
