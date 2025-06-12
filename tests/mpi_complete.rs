@@ -1,8 +1,8 @@
 //! Serial test for parallel topology completion (P1.1)
-use sieve_rs::algs::completion::complete_sieve;
-use sieve_rs::overlap::overlap::{Overlap, Remote};
-use sieve_rs::topology::point::PointId;
-use sieve_rs::topology::sieve::{InMemorySieve, Sieve};
+use mesh_sieve::algs::completion::complete_sieve;
+use mesh_sieve::overlap::overlap::{Overlap, Remote};
+use mesh_sieve::topology::point::PointId;
+use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
 
 #[test]
 fn two_rank_tetra_completion() {
@@ -80,7 +80,7 @@ fn two_rank_tetra_completion() {
     ovlp1.add_link(f4, 0, f1);
     ovlp1.add_link(f5, 0, f2);
     // NoComm for serial test
-    let comm = sieve_rs::algs::communicator::NoComm;
+    let comm = mesh_sieve::algs::communicator::NoComm;
     // Complete topology on both sides
     complete_sieve(&mut sieve0, &ovlp0, &comm, 0);
     complete_sieve(&mut sieve1, &ovlp1, &comm, 1);

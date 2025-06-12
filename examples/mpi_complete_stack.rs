@@ -1,10 +1,10 @@
 // --- MPI test: complete_stack_two_ranks ---
 fn main() {
-    use sieve_rs::algs::communicator::MpiComm;
+    use mesh_sieve::algs::communicator::MpiComm;
     use mpi::topology::Communicator;
-    use sieve_rs::topology::stack::{InMemoryStack, Stack};
-    use sieve_rs::topology::sieve::{InMemorySieve, Sieve};
-    use sieve_rs::algs::completion::complete_stack;
+    use mesh_sieve::topology::stack::{InMemoryStack, Stack};
+    use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
+    use mesh_sieve::algs::completion::complete_stack;
     #[derive(Copy, Clone, Debug, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable, Default)]
     #[repr(transparent)]
     struct DummyPayload(u32);
@@ -17,7 +17,7 @@ fn main() {
         rank: usize,
         remote_point: PodU64,
     }
-    impl sieve_rs::algs::completion::stack_completion::HasRank for DummyRemote {
+    impl mesh_sieve::algs::completion::stack_completion::HasRank for DummyRemote {
         fn rank(&self) -> usize { self.rank }
     }
     let comm = MpiComm::new();

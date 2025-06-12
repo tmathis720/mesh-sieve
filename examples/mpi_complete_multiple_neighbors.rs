@@ -1,13 +1,13 @@
 // --- MPI test: complete_section_multiple_neighbors ---
 pub fn main() {
-    use sieve_rs::algs::communicator::MpiComm;
+    use mesh_sieve::algs::communicator::MpiComm;
     use mpi::topology::Communicator;
-    use sieve_rs::topology::point::PointId;
-    use sieve_rs::overlap::overlap::Overlap;
-    use sieve_rs::data::atlas::Atlas;
-    use sieve_rs::data::section::Section;
-    use sieve_rs::overlap::delta::CopyDelta;
-    use sieve_rs::algs::completion::complete_section;
+    use mesh_sieve::topology::point::PointId;
+    use mesh_sieve::overlap::overlap::Overlap;
+    use mesh_sieve::data::atlas::Atlas;
+    use mesh_sieve::data::section::Section;
+    use mesh_sieve::overlap::delta::CopyDelta;
+    use mesh_sieve::algs::completion::complete_section;
     let comm = MpiComm::new();
     let world = &comm.world;
     let size = world.size() as usize;

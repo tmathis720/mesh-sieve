@@ -1,9 +1,9 @@
 // examples/mesh_distribute_two_ranks.rs
 
-use sieve_rs::algs::communicator::{MpiComm, Communicator};
-use sieve_rs::algs::distribute::distribute_mesh;
-use sieve_rs::topology::point::PointId;
-use sieve_rs::topology::sieve::{Sieve, InMemorySieve};
+use mesh_sieve::algs::communicator::{MpiComm, Communicator};
+use mesh_sieve::algs::distribute::distribute_mesh;
+use mesh_sieve::topology::point::PointId;
+use mesh_sieve::topology::sieve::{Sieve, InMemorySieve};
 
 fn main() {
     let comm = MpiComm::new();

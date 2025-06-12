@@ -1,14 +1,14 @@
 // This example demonstrates how to distribute a simple mesh across two MPI ranks
-// using the `sieve_rs` library. It creates a mesh with three points and two arrows,
+// using the `mesh_sieve` library. It creates a mesh with three points and two arrows,
 // partitions it such that rank 0 owns point 1 and rank 1 owns points 2 and 3, and
 // then distributes the mesh using the `distribute_mesh` function. Each rank prints
 // its local mesh and overlap for manual inspection.
 fn main() {
     use mpi::traits::*;
-    use sieve_rs::algs::communicator::{Communicator, MpiComm};
-    use sieve_rs::topology::sieve::{InMemorySieve, Sieve};
-    use sieve_rs::topology::point::PointId;
-    use sieve_rs::algs::distribute_mesh;
+    use mesh_sieve::algs::communicator::{Communicator, MpiComm};
+    use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
+    use mesh_sieve::topology::point::PointId;
+    use mesh_sieve::algs::distribute_mesh;
     // 1. Initialize MPI
     let universe = mpi::initialize().unwrap();
     let world = universe.world();

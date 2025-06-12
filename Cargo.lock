@@ -696,6 +696,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "mesh-sieve"
+version = "1.0.0"
+dependencies = [
+ "ahash",
+ "bincode",
+ "bindgen 0.65.1",
+ "bytemuck",
+ "bytes",
+ "criterion",
+ "dashmap",
+ "hashbrown 0.14.5",
+ "itertools 0.14.0",
+ "libffi-sys",
+ "log",
+ "metis",
+ "metis-sys",
+ "mpi",
+ "num-traits",
+ "once_cell",
+ "parking_lot",
+ "pkg-config",
+ "proptest",
+ "rand 0.8.5",
+ "rayon",
+ "regex",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "static_assertions",
+]
+
+[[package]]
 name = "metis"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1219,38 +1251,6 @@ name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
-
-[[package]]
-name = "sieve-rs"
-version = "1.0.0"
-dependencies = [
- "ahash",
- "bincode",
- "bindgen 0.65.1",
- "bytemuck",
- "bytes",
- "criterion",
- "dashmap",
- "hashbrown 0.14.5",
- "itertools 0.14.0",
- "libffi-sys",
- "log",
- "metis",
- "metis-sys",
- "mpi",
- "num-traits",
- "once_cell",
- "parking_lot",
- "pkg-config",
- "proptest",
- "rand 0.8.5",
- "rayon",
- "regex",
- "serde",
- "serde_json",
- "serial_test",
- "static_assertions",
-]
 
 [[package]]
 name = "slab"

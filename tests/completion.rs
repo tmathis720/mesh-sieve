@@ -1,8 +1,8 @@
-use sieve_rs::algs::{communicator::RayonComm, completion::complete_section};
-use sieve_rs::data::{atlas::Atlas, section::Section};
-use sieve_rs::overlap::delta::CopyDelta;
-use sieve_rs::overlap::overlap::Overlap;
-use sieve_rs::topology::point::PointId;
+use mesh_sieve::algs::{communicator::RayonComm, completion::complete_section};
+use mesh_sieve::data::{atlas::Atlas, section::Section};
+use mesh_sieve::overlap::delta::CopyDelta;
+use mesh_sieve::overlap::overlap::Overlap;
+use mesh_sieve::topology::point::PointId;
 
 #[test]
 fn ghost_update_self() {

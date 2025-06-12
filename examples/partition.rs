@@ -1,9 +1,9 @@
 //! Run with: cargo run --example partition --features metis
-use sieve_rs::algs::dual_graph::{DualGraph, build_dual};
+use mesh_sieve::algs::dual_graph::{DualGraph, build_dual};
 #[cfg(feature = "metis-support")]
-use sieve_rs::algs::metis_partition::MetisPartition;
-use sieve_rs::topology::point::PointId;
-use sieve_rs::topology::sieve::{InMemorySieve, Sieve};
+use mesh_sieve::algs::metis_partition::MetisPartition;
+use mesh_sieve::topology::point::PointId;
+use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
 
 fn main() {
     // 1) Build a tiny mesh & extract its cells

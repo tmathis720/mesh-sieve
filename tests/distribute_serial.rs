@@ -1,9 +1,9 @@
 #[test]
 fn distribute_mesh_serial() {
-    use sieve_rs::algs::communicator::NoComm;
-    use sieve_rs::topology::sieve::{InMemorySieve, Sieve};
-    use sieve_rs::topology::point::PointId;
-    use sieve_rs::algs::distribute_mesh;
+    use mesh_sieve::algs::communicator::NoComm;
+    use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
+    use mesh_sieve::topology::point::PointId;
+    use mesh_sieve::algs::distribute_mesh;
     // Build a simple mesh: 1->2, 2->3
     let mut global = InMemorySieve::<PointId,()>::default();
     global.add_arrow(PointId::new(1), PointId::new(2), ());
