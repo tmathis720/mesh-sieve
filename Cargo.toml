@@ -2,6 +2,14 @@
 name = "sieve-rs"
 version = "1.0.0"
 edition = "2024"
+description = "Modular, high-performance Rust library for mesh and data management, designed for scientific computing and PDE codes."
+license = "MIT"
+repository = "https://github.com/tmathis720/sieve-rs"
+homepage = "https://github.com/tmathis720/sieve-rs"
+documentation = "https://docs.rs/sieve-rs"
+readme = "README.md"
+keywords = ["mesh", "PDE", "scientific-computing", "parallel", "MPI"]
+categories = ["science", "data-structures", "parallel"]
 
 [dependencies]
 bytes = "1.10.1"

@@ -1,29 +1,51 @@
 # sieve-rs
 
-A simple Rust project scaffolded with Cargo.
+sieve-rs is a modular, high-performance Rust library for mesh and data management, designed for scientific computing and PDE codes. It provides abstractions for mesh topology, field data, parallel partitioning, and communication, supporting both serial and MPI-based distributed workflows.
+
+## Features
+- **Mesh Topology**: Flexible, generic Sieve data structures for representing mesh connectivity.
+- **Field Data**: Atlas and Section types for mapping mesh points to data arrays.
+- **Parallel Communication**: Pluggable communication backends (serial, Rayon, MPI) for ghost exchange and mesh distribution.
+- **Partitioning**: Built-in support for graph partitioning (Metis, custom algorithms).
+- **MPI Integration**: Examples and tests for distributed mesh and data exchange using MPI.
+- **Extensive Testing**: Serial, parallel, and property-based tests.
 
 ## Getting Started
 
 To build and run the project:
 
-```powershell
+```sh
 cargo build
 cargo run
 ```
 
-## MPI Integration Tests
+### Running MPI Examples
 
-Some tests that require true parallel/MPI communication have been migrated from the unit test framework to integration tests in `examples/mpi_complete.rs`. To run these tests, use `mpirun` (or `mpiexec`) with the appropriate number of processes:
+Some features require MPI. To run an MPI example (e.g., `mpi_complete.rs`):
 
 ```sh
-mpirun -n 3 cargo run --example mpi_complete
+mpirun -n 2 cargo run --example mpi_complete
 ```
 
-This will execute the MPI-based integration tests, such as `mpi_test_complete_section_no_overlap`, `mpi_test_complete_section_multiple_neighbors`, and `mpi_test_complete_stack_two_ranks`.
+Other examples:
+- `mesh_distribute_two_ranks.rs`: Demonstrates mesh distribution across two ranks.
+- `mpi_complete_no_overlap.rs`, `mpi_complete_multiple_neighbors.rs`, `mpi_complete_stack.rs`: Test various parallel completion scenarios.
 
 ## Project Structure
-- `src/main.rs`: Entry point of the application.
-- `Cargo.toml`: Project manifest.
+- `src/`: Library source code
+  - `topology/`: Mesh topology and Sieve traits
+  - `data/`: Atlas and Section for field data
+  - `overlap/`: Overlap and Delta for ghost exchange
+  - `algs/`: Algorithms for communication, distribution, completion, partitioning
+  - `partitioning/`: Graph partitioning algorithms
+- `examples/`: Usage and integration tests (serial and MPI)
+- `tests/`: Unit and integration tests
+- `benches/`: Benchmarks
+- `Cargo.toml`: Project manifest and dependencies
+
+## Optional Features
+- `mpi-support`: Enable MPI-based communication and parallel tests
+- `metis-support`: Enable Metis-based partitioning (requires Metis and pkg-config)
 
 ## License
-MIT
+MIT License. See [LICENSE](LICENSE) for details.
