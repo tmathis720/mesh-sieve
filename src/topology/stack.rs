@@ -96,11 +96,13 @@ where
     }
 }
 
+/// Provides a default implementation for `InMemoryStack`.
 impl<B, C, P: Clone> Default for InMemoryStack<B, C, P>
 where
     B: Copy + Eq + std::hash::Hash + Ord,
     C: Copy + Eq + std::hash::Hash + Ord,
 {
+    /// Returns an empty `InMemoryStack`.
     fn default() -> Self {
         Self {
             base: InMemorySieve::default(),
@@ -123,6 +125,8 @@ where
     type BaseSieve = InMemorySieve<B, P>;
     type CapSieve = InMemorySieve<C, P>;
 
+    /// Returns an iterator over all upward arrows from base point `p` to cap points.
+    /// Each item is `(cap_point, &payload)`.
     fn lift<'a>(&'a self, p: B) -> Box<dyn Iterator<Item = (C, &'a P)> + 'a> {
         // Return all upward arrows or empty if none
         match self.up.get(&p) {
@@ -131,6 +135,8 @@ where
         }
     }
 
+    /// Returns an iterator over all downward arrows from cap point `q` to base points.
+    /// Each item is `(base_point, &payload)`.
     fn drop<'a>(&'a self, q: C) -> Box<dyn Iterator<Item = (B, &'a P)> + 'a> {
         // Return all downward arrows or empty if none
         match self.down.get(&q) {
@@ -139,6 +145,9 @@ where
         }
     }
 
+    /// Adds a new vertical arrow `base -> cap` with associated payload.
+    ///
+    /// After mutating arrows, this method invalidates any derived caches on both the base and cap sieves.
     fn add_arrow(&mut self, base: B, cap: C, pay: P) {
         self.up.entry(base).or_default().push((cap, pay.clone()));
         self.down.entry(cap).or_default().push((base, pay.clone()));
@@ -146,6 +155,9 @@ where
         InvalidateCache::invalidate_cache(&mut self.cap);
     }
 
+    /// Removes the arrow `base -> cap`, returning its payload if present.
+    ///
+    /// After mutating arrows, this method invalidates any derived caches on both the base and cap sieves.
     fn remove_arrow(&mut self, base: B, cap: C) -> Option<P> {
         // Remove from up map, capture payload
         let mut removed = None;
@@ -165,24 +177,28 @@ where
         removed
     }
 
+    /// Returns a reference to the underlying base Sieve.
     fn base(&self) -> &Self::BaseSieve {
         &self.base
     }
+    /// Returns a reference to the underlying cap Sieve.
     fn cap(&self) -> &Self::CapSieve {
         &self.cap
     }
 }
 
-// Add base_points and cap_points accessors for testability
+/// Provides accessors for base and cap points for testability.
 impl<B, C, P> InMemoryStack<B, C, P>
 where
     B: Copy + Eq + std::hash::Hash + Ord,
     C: Copy + Eq + std::hash::Hash + Ord,
     P: Clone,
 {
+    /// Returns an iterator over all base points with at least one upward arrow.
     pub fn base_points(&self) -> impl Iterator<Item = B> + '_ {
         self.up.keys().copied()
     }
+    /// Returns an iterator over all cap points with at least one downward arrow.
     pub fn cap_points(&self) -> impl Iterator<Item = C> + '_ {
         self.down.keys().copied()
     }
