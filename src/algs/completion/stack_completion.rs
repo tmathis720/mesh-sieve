@@ -64,7 +64,7 @@ pub fn complete_stack<P, Q, Pay, C, S, O, R>(
 ) where
     P: Copy + bytemuck::Pod + bytemuck::Zeroable + Default + Eq + std::hash::Hash + Send + 'static,
     Q: Copy + bytemuck::Pod + bytemuck::Zeroable + Default + Eq + std::hash::Hash + Send + 'static,
-    Pay: Copy + bytemuck::Pod + bytemuck::Zeroable + Default + Send + 'static,
+    Pay: Copy + bytemuck::Pod + bytemuck::Zeroable + Default + PartialEq + Send + 'static,
     C: crate::algs::communicator::Communicator + Sync,
     S: crate::topology::stack::Stack<Point = P, CapPt = Q, Payload = Pay>,
     O: crate::topology::sieve::Sieve<Point = P, Payload = R> + Sync,
@@ -73,14 +73,25 @@ pub fn complete_stack<P, Q, Pay, C, S, O, R>(
     const BASE_TAG: u16 = 0xC0DE;
     // 1. Find all neighbors (ranks) to communicate with
     let mut nb_links: HashMap<usize, Vec<(P, Q, Pay)>> = HashMap::new();
-    // Iterate over all base points in the stack's base sieve
+    // Only treat as owned if the base point has at least one non-default payload
     for base in stack.base().base_points() {
+        let mut has_owned = false;
+        let mut owned_caps = Vec::new();
         for (cap, pay) in stack.lift(base) {
+            if *pay != Pay::default() {
+                has_owned = true;
+                owned_caps.push((cap, *pay));
+            }
+        }
+        if !has_owned {
+            continue;
+        }
+        for (cap, pay) in owned_caps {
             for (_dst, rem) in overlap.cone(base) {
                 if rem.rank() != my_rank {
                     nb_links.entry(rem.rank())
                         .or_default()
-                        .push((base, cap, *pay));
+                        .push((base, cap, pay));
                 }
             }
         }

@@ -32,6 +32,11 @@ pub trait Communicator: Send + Sync + 'static {
     fn rank(&self) -> usize;
     /// Total number of ranks
     fn size(&self) -> usize;
+
+    /// Synchronization barrier (default: no-op for non-MPI comms)
+    fn barrier(&self) {
+        // Default: no-op for non-MPI comms
+    }
 }
 
 /// Anything that can be waited on.
