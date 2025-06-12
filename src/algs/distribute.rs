@@ -24,10 +24,10 @@ use crate::algs::communicator::Communicator;
 ///
 /// # Example (serial)
 /// ```rust
-/// use sieve_rs::algs::communicator::NoComm;
-/// use sieve_rs::topology::sieve::{InMemorySieve, Sieve};
-/// use sieve_rs::topology::point::PointId;
-/// use sieve_rs::algs::distribute_mesh;
+/// use mesh_sieve::algs::communicator::NoComm;
+/// use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
+/// use mesh_sieve::topology::point::PointId;
+/// use mesh_sieve::algs::distribute_mesh;
 /// let mut global = InMemorySieve::<PointId,()>::default();
 /// global.add_arrow(PointId::new(1), PointId::new(2), ());
 /// global.add_arrow(PointId::new(2), PointId::new(3), ());
@@ -43,7 +43,7 @@ use crate::algs::communicator::Communicator;
 /// # Example (MPI)
 /// ```ignore
 /// #![cfg(feature="mpi")]
-/// use sieve_rs::algs::communicator::MpiComm;
+/// use mesh_sieve::algs::communicator::MpiComm;
 /// // ... same as above, but use MpiComm::new() and run with mpirun -n 2 ...
 /// ```
 pub fn distribute_mesh<M, C>(

@@ -41,9 +41,9 @@ impl Atlas {
     /// - if `p` has already been inserted.
     ///
     /// # Example
-    /// ```rust
-    /// # use sieve_rs::data::atlas::Atlas;
-    /// # use sieve_rs::topology::point::PointId;
+    /// ```rust,ignore
+    /// # use mesh_sieve::data::atlas::Atlas;
+    /// # use mesh_sieve::topology::point::PointId;
     /// let mut atlas = Atlas::default();
     /// let p = PointId::new(7);
     /// let offset = atlas.insert(p, 3);

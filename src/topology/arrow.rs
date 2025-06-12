@@ -28,8 +28,8 @@ impl<P> Arrow<P> {
     /// # Examples
     ///
     /// ```rust
-    /// use sieve_rs::topology::arrow::Arrow;
-    /// use sieve_rs::topology::point::PointId;
+    /// use mesh_sieve::topology::arrow::Arrow;
+    /// use mesh_sieve::topology::point::PointId;
     /// let a = Arrow::new(PointId::new(1), PointId::new(2), 3u32);
     /// assert_eq!(a.src.get(), 1);
     /// assert_eq!(a.dst.get(), 2);
@@ -56,8 +56,8 @@ impl<P> Arrow<P> {
     /// # Examples
     ///
     /// ```rust
-    /// use sieve_rs::topology::arrow::Arrow;
-    /// use sieve_rs::topology::point::PointId;
+    /// use mesh_sieve::topology::arrow::Arrow;
+    /// use mesh_sieve::topology::point::PointId;
     /// let a = Arrow::new(PointId::new(1), PointId::new(2), 10);
     /// // Double the payload
     /// let b = a.clone().map(|v| v * 2);

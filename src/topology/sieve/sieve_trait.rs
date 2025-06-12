@@ -134,7 +134,7 @@ pub trait Sieve: Default + InvalidateCache
     ///
     /// # Example
     /// ```
-    /// use sieve_rs::topology::sieve::{Sieve, InMemorySieve};
+    /// use mesh_sieve::topology::sieve::{Sieve, InMemorySieve};
     /// let mut s = InMemorySieve::<u32>::default();
     /// s.add_arrow(1, 2, ());
     /// s.add_arrow(1, 3, ());
@@ -179,7 +179,7 @@ pub trait Sieve: Default + InvalidateCache
     ///
     /// # Example
     /// ```
-    /// use sieve_rs::topology::sieve::{Sieve, InMemorySieve};
+    /// use mesh_sieve::topology::sieve::{Sieve, InMemorySieve};
     /// let mut s = InMemorySieve::<u32>::default();
     /// s.add_arrow(2, 4, ());
     /// s.add_arrow(3, 4, ());
@@ -271,9 +271,9 @@ pub trait Sieve: Default + InvalidateCache
 
     /// # Strata helpers example
     /// ```rust
-    /// # use sieve_rs::topology::sieve::Sieve;
-    /// # use sieve_rs::topology::sieve::InMemorySieve;
-    /// # use sieve_rs::topology::point::PointId;
+    /// # use mesh_sieve::topology::sieve::Sieve;
+    /// # use mesh_sieve::topology::sieve::InMemorySieve;
+    /// # use mesh_sieve::topology::point::PointId;
     /// let mut s = InMemorySieve::<PointId,()>::default();
     /// // 1→2→3→4
     /// s.add_arrow(PointId::new(1), PointId::new(2), ());
@@ -296,7 +296,7 @@ pub trait Sieve: Default + InvalidateCache
     ///
     /// # Example
     /// ```
-    /// use sieve_rs::topology::sieve::{Sieve, InMemorySieve};
+    /// use mesh_sieve::topology::sieve::{Sieve, InMemorySieve};
     /// let mut s = InMemorySieve::<u32>::default();
     /// s.add_arrow(1, 2, ());
     /// s.add_arrow(2, 3, ());

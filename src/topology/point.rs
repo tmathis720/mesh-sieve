@@ -38,7 +38,7 @@ impl PointId {
     /// # Example
     ///
     /// ```rust
-    /// # use sieve_rs::topology::point::PointId;
+    /// # use mesh_sieve::topology::point::PointId;
     /// let p = PointId::new(1);
     /// assert_eq!(p.get(), 1);
     /// ```

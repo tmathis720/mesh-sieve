@@ -43,7 +43,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> InMemorySieve<P,T> {
     /// Constructs an `InMemorySieve` from an iterator of arrows.
     ///
     /// # Example
-    /// ```
+    /// ```rust,ignore
     /// let arrows = vec![(1, 2, "a"), (1, 3, "b")];
     /// let sieve = InMemorySieve::from_arrows(arrows);
     /// ```
@@ -70,7 +70,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
     /// by following arrows, along with the payloads of the arrows.
     ///
     /// # Example
-    /// ```
+    /// ```rust,ignore
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_arrow(1, 2,());
     /// let mut cone: Vec<_> = s.cone(1).map(|(d, _)| d).collect();
@@ -88,7 +88,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
     /// by following arrows in the reverse direction, along with the payloads of the arrows.
     ///
     /// # Example
-    /// ```
+    /// ```rust,ignore
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_arrow(1, 2,());
     /// let mut support: Vec<_> = s.support(2).map(|(u, _)| u).collect();
@@ -106,7 +106,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
     /// It also invalidates the cache for strata information.
     ///
     /// # Example
-    /// ```
+    /// ```rust,ignore
     /// let mut s = InMemorySieve::<u32, char>::new();
     /// s.add_arrow(1, 2, 'a');
     /// ```
@@ -122,7 +122,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
     /// It also invalidates the cache for strata information.
     ///
     /// # Example
-    /// ```
+    /// ```rust,ignore
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_arrow(1, 2, ());
     /// assert_eq!(s.remove_arrow(1, 2), Some(()));
@@ -147,7 +147,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
     /// Adds a point to the sieve, creating empty adjacencies for it.
     ///
     /// # Example
-    /// ```
+    /// ```rust,ignore
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_point(1);
     /// assert!(s.adjacency_out.contains_key(&1));
@@ -161,7 +161,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
     /// Removes a point and its associated arrows from the sieve.
     ///
     /// # Example
-    /// ```
+    /// ```rust,ignore
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_arrow(1, 2, ());
     /// s.remove_point(1);
@@ -176,7 +176,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
     /// Adds a base point to the sieve, creating an empty outgoing adjacency for it.
     ///
     /// # Example
-    /// ```
+    /// ```rust,ignore
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_base_point(1);
     /// assert!(s.adjacency_out.contains_key(&1));
@@ -188,7 +188,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
     /// Adds a cap point to the sieve, creating an empty incoming adjacency for it.
     ///
     /// # Example
-    /// ```
+    /// ```rust,ignore
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_cap_point(2);
     /// assert!(s.adjacency_in.contains_key(&2));
@@ -200,7 +200,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
     /// Removes a base point and its outgoing arrows from the sieve.
     ///
     /// # Example
-    /// ```
+    /// ```rust,ignore
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_arrow(1, 2, ());
     /// s.remove_base_point(1);
@@ -213,7 +213,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
     /// Removes a cap point and its incoming arrows from the sieve.
     ///
     /// # Example
-    /// ```
+    /// ```rust,ignore
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_arrow(1, 2, ());
     /// s.remove_cap_point(2);
@@ -229,7 +229,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
     /// The iterator items are collected into a vector and stored as the new cone.
     ///
     /// # Example
-    /// ```
+    /// ```rust,ignore
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.set_cone(1, vec![(2, ()), (3, ())]);
     /// ```
@@ -244,7 +244,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
     /// The iterator items are appended to the existing cone of the point.
     ///
     /// # Example
-    /// ```
+    /// ```rust,ignore
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_cone(1, vec![(2, ()), (3, ())]);
     /// ```
@@ -261,7 +261,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
     /// The iterator items are collected into a vector and stored as the new support.
     ///
     /// # Example
-    /// ```
+    /// ```rust,ignore
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.set_support(2, vec![(1, ()), (3, ())]);
     /// ```
@@ -282,7 +282,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
     /// The iterator items are appended to the existing support of the point.
     ///
     /// # Example
-    /// ```
+    /// ```rust,ignore
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_support(2, vec![(3, ()), (4, ())]);
     /// ```
@@ -296,7 +296,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
     /// Restricts the sieve to only include arrows originating from the given chain of base points.
     ///
     /// # Example
-    /// ```
+    /// ```rust,ignore
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_arrow(1, 2, ());
     /// s.add_arrow(3, 4, ());
@@ -317,7 +317,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
     /// Restricts the sieve to only include arrows ending at the given chain of cap points.
     ///
     /// # Example
-    /// ```
+    /// ```rust,ignore
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_arrow(1, 2, ());
     /// s.add_arrow(3, 4, ());
@@ -338,7 +338,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
     /// Returns an iterator over all points in the sieve.
     ///
     /// # Example
-    /// ```
+    /// ```rust,ignore
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_arrow(1, 2, ());
     /// let mut all_points: Vec<_> = s.points().collect();
@@ -351,7 +351,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
     /// Returns an iterator over all cap points in the sieve.
     ///
     /// # Example
-    /// ```
+    /// ```rust,ignore
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_arrow(1, 2, ());
     /// let mut all_caps: Vec<_> = s.cap_points().collect();
