@@ -1,4 +1,7 @@
 //! DFS/BFS traversal helpers for Sieve topologies.
+//!
+//! This module provides depth-first and breadth-first traversal utilities for
+//! [`Sieve`] topologies, including closure, star, link, and distance map routines.
 
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
@@ -7,6 +10,9 @@ use std::collections::{HashSet, VecDeque};
 /// Shorthand so callers don't have to spell the full bound.
 pub type Point = PointId;
 
+/// Generic DFS traversal for a sieve using a custom neighbor function.
+///
+/// Returns all reachable points from the given seeds.
 fn dfs<F, I, S>(sieve: &S, seeds: I, mut neighbour_fn: F) -> Vec<Point>
 where
     S: Sieve<Point = Point>,
@@ -29,6 +35,8 @@ where
 }
 
 /// Complete transitive closure following `cone` arrows.
+///
+/// Returns all points reachable from the seeds via outgoing arrows.
 pub fn closure<I, S>(sieve: &S, seeds: I) -> Vec<Point>
 where
     S: Sieve<Point = Point>,
@@ -38,6 +46,8 @@ where
 }
 
 /// Complete transitive star following `support` arrows.
+///
+/// Returns all points reachable from the seeds via incoming arrows.
 pub fn star<I, S>(sieve: &S, seeds: I) -> Vec<Point>
 where
     S: Sieve<Point = Point>,
@@ -46,7 +56,9 @@ where
     dfs(sieve, seeds, |s, p| s.support(p).map(|(q, _)| q).collect())
 }
 
-/// link(p) = star(p) ∩ closure(p)
+/// Computes the link of a point: `star(p) ∩ closure(p)` minus cone/support/p itself.
+///
+/// Returns the set of points in both the closure and star of `p`, excluding direct neighbors and `p`.
 pub fn link<S: Sieve<Point = Point>>(sieve: &S, p: Point) -> Vec<Point> {
     let mut cl = closure(sieve, [p]);
     let mut st = star(sieve, [p]);
@@ -60,6 +72,8 @@ pub fn link<S: Sieve<Point = Point>>(sieve: &S, p: Point) -> Vec<Point> {
 }
 
 /// Optional BFS distance map – used by coarsening / agglomeration.
+///
+/// Returns a vector of `(Point, distance)` pairs from the seed.
 pub fn depth_map<S: Sieve<Point = Point>>(sieve: &S, seed: Point) -> Vec<(Point, u32)> {
     let mut depths = Vec::new();
     let mut seen = HashSet::new();

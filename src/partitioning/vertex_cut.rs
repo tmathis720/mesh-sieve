@@ -1,3 +1,8 @@
+//! Vertex cut construction for distributed graph partitioning.
+//!
+//! This module provides [`build_vertex_cuts`], a parallel algorithm for assigning primary owners
+//! and replica lists for vertices in a partitioned graph, supporting distributed ghosting and communication.
+
 use crate::partitioning::PartitionMap;
 use crate::partitioning::graph_traits::PartitionableGraph;
 use ahash::AHasher;
@@ -7,12 +12,31 @@ use rayon::prelude::*; // brings IntoParallelIterator, ParallelIterator, etc.
 use std::hash::Hasher;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+/// Build primary owner and replica lists for each vertex in a partitioned graph.
+///
 /// For each edge `(u, v)` in the graph where `pm.part_of(u) != pm.part_of(v)`,
-/// choose a “primary owner” of that edge (by hashing `(u,v)` with a salt),
-/// then record the other endpoint as a “replica.”  
+/// chooses a “primary owner” of that edge (by hashing `(u,v)` with a salt),
+/// then records the other endpoint as a “replica.”
+///
 /// Returns `(Vec<PartId>, Vec<Vec<(VertexId, PartId)>>)`:
-/// - `primary_owner[v]` is the primary owner’s part ID for vertex v.
-/// - `replicas[v]` is a Vec of `(neighbor_vertex, neighbor_part)` that need ghosting.
+/// - `primary_owner[v]` is the primary owner’s part ID for vertex `v`.
+/// - `replicas[v]` is a `Vec` of `(neighbor_vertex, neighbor_part)` that need ghosting.
+///
+/// # Arguments
+/// - `graph`: The partitioned graph.
+/// - `pm`: The partition map indicating part assignments for each vertex.
+/// - `salt`: A salt value for deterministic hashing.
+///
+/// # Returns
+/// A tuple containing:
+/// - `primary_owner`: Vector mapping each vertex to its primary owner's part ID.
+/// - `replicas`: Vector of vectors, where each inner vector lists the replicas for a vertex.
+///
+/// # Parallelism
+/// This function uses parallel iteration for efficient processing of large graphs.
+///
+/// # Features
+/// Only available with the `mpi-support` feature enabled.
 #[cfg(feature = "mpi-support")]
 pub fn build_vertex_cuts<G>(
     graph: &G,

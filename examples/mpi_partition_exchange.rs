@@ -6,22 +6,22 @@ use rayon::iter::IntoParallelIterator;
 #[cfg(feature = "mpi-support")]
 use rayon::iter::ParallelIterator;
 #[cfg(feature = "mpi-support")]
-use sieve_rs::algs::complete_section;
+use mesh_sieve::algs::complete_section;
 #[cfg(feature = "mpi-support")]
-use sieve_rs::algs::partition;
+use mesh_sieve::algs::partition;
 #[cfg(feature = "mpi-support")]
-use sieve_rs::data::atlas::Atlas;
+use mesh_sieve::data::atlas::Atlas;
 #[cfg(feature = "mpi-support")]
-use sieve_rs::data::section::{Map, Section};
+use mesh_sieve::data::section::{Map, Section};
 #[cfg(feature = "mpi-support")]
-use sieve_rs::topology::point::PointId;
+use mesh_sieve::topology::point::PointId;
 #[cfg(feature = "mpi-support")]
-use sieve_rs::topology::sieve::{InMemorySieve, Sieve};
+use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
 
 #[cfg(feature = "mpi-support")]
-use sieve_rs::partitioning::{partition, PartitionerConfig};
+use mesh_sieve::partitioning::{partition, PartitionerConfig};
 #[cfg(feature = "mpi-support")]
-use sieve_rs::partitioning::graph_traits::PartitionableGraph;
+use mesh_sieve::partitioning::graph_traits::PartitionableGraph;
 
 /// Build a 2×2 structured grid of points (IDs 0..8).
 #[cfg(feature = "mpi-support")]

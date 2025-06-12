@@ -1,6 +1,12 @@
 //! Delta trait: rules for fusing data across overlaps
+//!
+//! This module defines the [`Delta`] trait and several implementations for
+//! restricting and fusing values across overlaps in distributed mesh computations.
 
 /// *Delta* encapsulates restriction & fusion for a section value `V`.
+///
+/// This trait defines how to extract a part of a value for communication
+/// and how to merge an incoming fragment into the local value.
 pub trait Delta<V>: Sized {
     /// What a *restricted* value looks like (often identical to `V`).
     type Part: Send;
@@ -13,6 +19,9 @@ pub trait Delta<V>: Sized {
 }
 
 /// Identity delta for cloneable values (copy-overwrites-local).
+///
+/// This implementation simply clones the value for restriction and overwrites
+/// the local value on fusion.
 #[derive(Copy, Clone)]
 pub struct CopyDelta;
 
@@ -29,6 +38,9 @@ impl<V: Clone + Send> Delta<V> for CopyDelta {
 }
 
 /// No-op delta: skips fusion, always returns default for restrict.
+///
+/// This implementation always returns the default value for restriction and
+/// does nothing on fusion.
 #[derive(Copy, Clone)]
 pub struct ZeroDelta;
 
@@ -45,6 +57,8 @@ impl<V: Clone + Default + Send> Delta<V> for ZeroDelta {
 }
 
 /// Additive delta for summation/balancing fields.
+///
+/// This implementation restricts by copying and fuses by addition.
 #[derive(Copy, Clone)]
 pub struct AddDelta;
 

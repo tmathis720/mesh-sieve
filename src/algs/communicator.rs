@@ -1,8 +1,9 @@
-//! Thin façade over intra-process (Rayon) or inter-process (MPI) message passing.
+//! Communication abstraction for intra-process (Rayon) and inter-process (MPI) message passing.
 //!
-//! Messages are *contiguous byte slices* (no zero-copy guarantees).
-//! All handles are **waitable** but non-blocking -– completion.rs calls
-//! `.wait()` before it trusts that the buffer is ready.
+//! This module provides a minimal, non-blocking, waitable communication interface
+//! for distributed and parallel mesh algorithms. Messages are contiguous byte slices,
+//! and all handles are waitable but non-blocking. Includes implementations for
+//! serial (no-op), Rayon-based, and MPI-based communication.
 
 use bytes::Bytes;
 use dashmap::DashMap;
@@ -11,6 +12,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 /// Non-blocking communication interface (minimal by design).
+///
+/// Implementors provide asynchronous send/receive operations and waitable handles.
 pub trait Communicator: Send + Sync + 'static {
     /// Handle returned by `isend`.
     type SendHandle: Wait;

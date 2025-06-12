@@ -1,3 +1,8 @@
+//! Seed selection for graph partitioning.
+//!
+//! This module provides [`pick_seeds`], a function for selecting seed vertices for partitioning algorithms,
+//! with probability weighted by vertex degree and without replacement.
+
 use crate::partitioning::PartitionerConfig;
 use crate::partitioning::graph_traits::PartitionableGraph;
 use rand::Rng;
@@ -6,8 +11,21 @@ use rand::rngs::SmallRng;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 
-/// Returns a Vec<VertexId> of length `num_seeds = ceil(cfg.seed_factor * cfg.n_parts)`,
-/// chosen *without replacement*, weighted by degree.  Assumes `VertexId = usize`.
+/// Selects a set of seed vertices for partitioning, weighted by degree and without replacement.
+///
+/// Returns a `Vec<VertexId>` of length `num_seeds = ceil(cfg.seed_factor * cfg.n_parts)`,
+/// chosen *without replacement*, weighted by degree. Assumes `VertexId = usize`.
+///
+/// # Arguments
+/// - `graph`: The graph to select seeds from.
+/// - `degrees`: Slice of vertex degrees, indexed by vertex ID.
+/// - `cfg`: Partitioner configuration, including number of parts, seed factor, and RNG seed.
+///
+/// # Returns
+/// A vector of selected vertex IDs to use as seeds.
+///
+/// # Panics
+/// Panics if `degrees.len()` does not match the number of vertices in the graph.
 pub fn pick_seeds<G>(graph: &G, degrees: &[u64], cfg: &PartitionerConfig) -> Vec<G::VertexId>
 where
     G: PartitionableGraph<VertexId = usize> + Sync,

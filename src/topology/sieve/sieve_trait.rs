@@ -1,6 +1,27 @@
+//! Core trait for sieve data structures in mesh topology.
+//!
+//! This module defines the [`Sieve`] trait, which provides a bidirectional incidence API
+//! for representing and manipulating mesh topologies. The trait supports generic point and payload types,
+//! and includes methods for traversing, mutating, and querying the structure.
+
 use crate::topology::stratum::InvalidateCache;
 
 /// Core bidirectional incidence API for mesh topology.
+///
+/// The `Sieve` trait abstracts the concept of a directed incidence structure (such as a mesh or cell complex),
+/// supporting efficient traversal and mutation of arrows (edges) between points (nodes).
+///
+/// # Associated Types
+/// - `Point`: The type of points in the sieve (must be `Copy`, `Eq`, `Hash`, and `Ord`).
+/// - `Payload`: The type of payloads associated with arrows.
+/// - `ConeIter`: Iterator over outgoing arrows from a point.
+/// - `SupportIter`: Iterator over incoming arrows to a point.
+///
+/// # Provided Methods
+/// - Arrow insertion/removal
+/// - Traversal (cone, support, closure, star, etc.)
+/// - Lattice operations (meet, join)
+/// - Strata helpers (height, depth, diameter)
 pub trait Sieve: Default + InvalidateCache
     where Self::Point: Ord
 {

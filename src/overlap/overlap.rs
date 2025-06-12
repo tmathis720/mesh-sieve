@@ -1,9 +1,17 @@
-//! Metadata that identifies a remote copy of a local point.
+//! Overlap metadata and utilities for distributed mesh partitioning.
+//!
+//! This module defines the [`Overlap`] type and related functions for tracking
+//! sharing relationships between partitions, as well as the [`Remote`] metadata
+//! describing remote copies of local points. The API supports closure and star
+//! operations, cache invalidation, and overlap expansion.
+
 use crate::topology::point::PointId;
 use crate::topology::sieve::{InMemorySieve, Sieve};
 use crate::topology::stratum::InvalidateCache;
 
 /// A sieve that stores sharing relationships between partitions.
+///
+/// The payload is [`Remote`], which identifies the remote rank and point.
 pub type Overlap = InMemorySieve<PointId, Remote>;
 
 /// Returns the partition point for a given rank (centralized for all modules).
@@ -14,6 +22,7 @@ pub fn partition_point(rank: usize) -> PointId {
 
 impl Overlap {
     /// Add an overlap arrow: `local_p --(rank,remote_p)--> partition(rank)`.
+    ///
     /// Ensures closure-of-support and invalidates caches as per Knepley & Karpeev 2009.
     pub fn add_link(&mut self, local: PointId, remote_rank: usize, remote: PointId) {
         let part_pt = partition_point(remote_rank);
@@ -104,10 +113,14 @@ impl Overlap {
 }
 
 /// Remote: (rank, remote_point) is exactly SF leaf→root as in PETSc SF.
+///
+/// This struct identifies a remote copy of a local point, including the remote rank and point ID.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Remote {
+    /// The remote MPI rank.
     pub rank: usize,
+    /// The remote point ID on that rank.
     pub remote_point: PointId,
 }
 

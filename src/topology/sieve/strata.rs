@@ -1,22 +1,41 @@
+//! Strata computation utilities for sieves.
+//!
+//! This module provides [`StrataCache`], a structure for storing precomputed height, depth, and strata
+//! information for points in a sieve, as well as [`compute_strata`], a function to compute these values
+//! for any sieve instance.
+
 use crate::topology::sieve::Sieve;
 use std::collections::HashMap;
 
-/// Precomputed stratum information.
+/// Precomputed stratum information for a sieve.
+///
+/// Stores the height, depth, and strata (points at each height) for efficient queries,
+/// as well as the diameter (maximum height) of the structure.
 #[derive(Clone, Debug)]
 pub struct StrataCache<P> {
+    /// Map from point to its height (distance from any zero-in-degree source).
     pub height:   HashMap<P,u32>,
+    /// Map from point to its depth (distance down to any zero-out-degree sink).
     pub depth:    HashMap<P,u32>,
-    pub strata:   Vec<Vec<P>>, // strata[h] = points at height h
+    /// Vectors of points at each height: `strata[h] = points at height h`.
+    pub strata:   Vec<Vec<P>>,
+    /// Maximum height (diameter) of the sieve.
     pub diameter: u32,
 }
 
 impl<P: Copy + Eq + std::hash::Hash + Ord> StrataCache<P> {
+    /// Create a new, empty `StrataCache`.
     pub fn new() -> Self {
         Self { height: HashMap::new(), depth: HashMap::new(), strata: Vec::new(), diameter: 0 }
     }
 }
 
-/// Compute strata for *any* S: on-the-fly, no cache.
+/// Compute strata information for any sieve instance on-the-fly (no cache).
+///
+/// Returns a [`StrataCache`] containing height, depth, strata, and diameter information for all points.
+///
+/// # Panics
+/// Panics if the sieve contains cycles (i.e., is not a DAG).
 pub fn compute_strata<S>(s: &S) -> StrataCache<S::Point>
 where
     S: Sieve + ?Sized,

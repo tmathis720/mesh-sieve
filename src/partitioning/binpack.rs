@@ -1,14 +1,19 @@
+//! Bin-packing and cluster assignment utilities for partitioning.
+//!
+//! This module provides algorithms for assigning clusters to parts using
+//! first-fit decreasing (FFD) bin-packing and adjacency-guided merging,
+//! supporting balanced and locality-aware partitioning.
+
 use rayon::prelude::ParallelSliceMut;
 use std::cmp::Reverse;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-// Ensure rand and ahash are available as dependencies in Cargo.toml
-// rand = { version = "0.8", features = ["std"], optional = true }
-// ahash = { version = "0.8", optional = true }
-// and add them to the partitioning feature if not already present.
-
 /// Represents a “cluster” as an item to be packed into one of `k` parts.
+///
+/// - `cid`: Cluster ID.
+/// - `load`: The load or weight of the cluster.
+/// - `adj`: Adjacency list of (neighbor cluster ID, edge weight) pairs.
 #[derive(Debug, Clone)]
 pub struct Item {
     pub cid: usize,
@@ -16,9 +21,18 @@ pub struct Item {
     pub adj: Vec<(usize, u64)>,
 }
 
-/// Given a slice of `Item`s (each with a distinct `cid`), a target number
-/// of parts `k`, and a balance tolerance `epsilon`, assign each cluster to
-/// one of `k` parts.  This is a *first‐fit decreasing* (FFD) style bin‐packing.
+/// Assigns each cluster to one of `k` parts using first-fit decreasing (FFD) bin-packing.
+///
+/// # Arguments
+/// - `items`: Slice of clusters to assign.
+/// - `k`: Number of parts.
+/// - `epsilon`: Allowed balance tolerance (e.g., 0.05 for 5% imbalance).
+///
+/// # Returns
+/// A vector mapping each cluster to a part, or an error if balance cannot be achieved.
+///
+/// # Errors
+/// Returns `PartitionerError::Unbalanced` if the resulting assignment exceeds the allowed tolerance.
 pub fn partition_clusters(
     items: &[Item],
     k: usize,
@@ -93,6 +107,20 @@ pub fn partition_clusters(
 }
 
 /// Phase 2 merge: adjacency-guided cluster assignment.
+///
+/// Assigns clusters to parts by merging based on adjacency weights, then fills remaining clusters
+/// to balance load.
+///
+/// # Arguments
+/// - `items`: Slice of clusters to assign.
+/// - `k`: Number of parts.
+/// - `epsilon`: Allowed balance tolerance.
+///
+/// # Returns
+/// A vector mapping each cluster to a part, or an error if no positive merge is possible or balance fails.
+///
+/// # Errors
+/// Returns `PartitionerError::NoPositiveMerge` or `PartitionerError::Unbalanced`.
 pub fn merge_clusters_into_parts(
     items: &[Item],
     k: usize,

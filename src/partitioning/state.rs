@@ -1,24 +1,38 @@
+//! Cluster ID management for partitioning algorithms.
+//!
+//! This module provides [`ClusterIds`], a concurrent union-find structure for tracking cluster
+//! assignments of vertices, supporting efficient parallel operations and path compression.
+
 use std::sync::atomic::AtomicU32;
 
 /// Stores cluster IDs for each vertex (1-to-1 with vertex index).
+///
+/// This structure is used for concurrent union-find operations in partitioning algorithms.
+/// Each vertex is associated with an atomic cluster ID, allowing for thread-safe updates.
 #[cfg(feature = "mpi-support")]
 pub struct ClusterIds {
+    /// Atomic cluster IDs for each vertex.
     pub ids: Vec<AtomicU32>,
 }
 
 #[cfg(feature = "mpi-support")]
 impl ClusterIds {
+    /// Create a new `ClusterIds` structure for `size` vertices, all initialized to 0.
     pub fn new(size: usize) -> Self {
         let ids = (0..size).map(|_| AtomicU32::new(0)).collect();
         Self { ids }
     }
+    /// Get the cluster ID for the vertex at `idx`.
     pub fn get(&self, idx: usize) -> u32 {
         self.ids[idx].load(std::sync::atomic::Ordering::Relaxed)
     }
+    /// Set the cluster ID for the vertex at `idx` to `val`.
     pub fn set(&self, idx: usize, val: u32) {
         self.ids[idx].store(val, std::sync::atomic::Ordering::Relaxed)
     }
-    /// Find the root of the set for idx, with path compression.
+    /// Find the root of the set for `idx`, with path compression.
+    ///
+    /// Returns the root cluster ID for the given vertex.
     pub fn find(&self, idx: usize) -> u32 {
         let mut root = self.get(idx);
         while root != self.get(root as usize) {
@@ -34,6 +48,8 @@ impl ClusterIds {
         root
     }
     /// Union two sets, returns the new root.
+    ///
+    /// Merges the sets containing `a` and `b`, returning the new root cluster ID.
     pub fn union(&self, a: usize, b: usize) -> u32 {
         let ra = self.find(a);
         let rb = self.find(b);

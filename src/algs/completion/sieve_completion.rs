@@ -1,4 +1,8 @@
 //! Complete missing sieve arrows across ranks by packing WireTriple.
+//!
+//! This module provides routines for synchronizing and completing sieve arrows
+//! across distributed ranks, using packed wire triples for efficient communication.
+//! It supports iterative completion until convergence and ensures DAG invariants.
 
 use crate::algs::communicator::Wait;
 use crate::algs::completion::partition_point;
@@ -10,11 +14,27 @@ use crate::topology::stratum::InvalidateCache;
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct WireTriple {
+    /// Source point (as u64).
     src: u64,
+    /// Destination point (as u64).
     dst: u64,
+    /// Remote rank.
     rank: usize,
 }
 
+/// Complete missing sieve arrows across ranks.
+///
+/// This function exchanges and integrates arrows between ranks using the provided communicator,
+/// updating the sieve with any missing arrows discovered via overlap links.
+///
+/// # Arguments
+/// - `sieve`: The in-memory sieve to complete.
+/// - `overlap`: The overlap structure describing remote relationships.
+/// - `comm`: The communicator for message passing.
+/// - `my_rank`: The current rank.
+///
+/// # Side Effects
+/// Modifies the sieve in place and ensures DAG invariants.
 pub fn complete_sieve(
     sieve: &mut crate::topology::sieve::InMemorySieve<
         crate::topology::point::PointId,
@@ -134,6 +154,16 @@ pub fn complete_sieve(
     crate::topology::utils::assert_dag(sieve);
 }
 
+/// Iteratively completes the sieve until no new points/arrows are added.
+///
+/// This function repeatedly calls [`complete_sieve`] until convergence,
+/// ensuring the sieve is fully synchronized across all ranks.
+///
+/// # Arguments
+/// - `sieve`: The in-memory sieve to complete.
+/// - `overlap`: The overlap structure.
+/// - `comm`: The communicator.
+/// - `my_rank`: The current rank.
 pub fn complete_sieve_until_converged(
     sieve: &mut crate::topology::sieve::InMemorySieve<
         crate::topology::point::PointId,

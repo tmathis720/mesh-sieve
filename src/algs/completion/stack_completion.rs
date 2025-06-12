@@ -1,10 +1,16 @@
 //! Complete the vertical‐stack arrows (mirror of section completion).
+//!
+//! This module provides routines for completing stack arrows in a distributed mesh,
+//! mirroring section completion logic. It handles symmetric communication of stack
+//! data between ranks using the [`Communicator`] trait.
 
 use std::collections::HashMap;
 use crate::algs::communicator::Wait;
 use crate::topology::sieve::sieve_trait::Sieve;
 
 /// A tightly-packed triple of (base, cap, payload).
+///
+/// Used for efficient serialization of stack arrows.
 #[repr(C, packed)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct WireTriple<P, Q, Pay>
@@ -18,8 +24,9 @@ where
     pay:  Pay,
 }
 
-/// Trait for extracting rank from overlap payloads
+/// Trait for extracting rank from overlap payloads.
 pub trait HasRank {
+    /// Returns the MPI rank associated with this payload.
     fn rank(&self) -> usize;
 }
 
@@ -27,6 +34,27 @@ impl HasRank for crate::overlap::overlap::Remote {
     fn rank(&self) -> usize { self.rank }
 }
 
+/// Complete the stack by exchanging arrows with all neighbor ranks.
+///
+/// This function performs symmetric communication of stack data, exchanging
+/// arrow counts and payloads with all ranks except `my_rank`. It uses the
+/// provided communicator for non-blocking send/receive operations.
+///
+/// # Type Parameters
+/// - `P`: Base point type (must be POD, hashable, etc.).
+/// - `Q`: Cap point type (must be POD, hashable, etc.).
+/// - `Pay`: Payload type (must be POD).
+/// - `C`: Communicator type.
+/// - `S`: Stack type.
+/// - `O`: Overlap sieve type.
+/// - `R`: Overlap payload type (must implement [`HasRank`]).
+///
+/// # Arguments
+/// - `stack`: The stack to complete.
+/// - `overlap`: The overlap sieve describing sharing relationships.
+/// - `comm`: The communicator for message passing.
+/// - `my_rank`: The current MPI rank.
+/// - `n_ranks`: Total number of ranks.
 pub fn complete_stack<P, Q, Pay, C, S, O, R>(
     stack: &mut S,
     overlap: &O,

@@ -1,4 +1,8 @@
 //! Stage 1 of section completion: exchange counts with each neighbor.
+//!
+//! This module provides helpers for exchanging the number of items to send/receive
+//! with each neighbor during distributed section completion. It supports both asymmetric
+//! and symmetric communication patterns.
 
 use crate::algs::communicator::Wait;
 
@@ -31,7 +35,7 @@ where
     sizes_in
 }
 
-/// Posts irecv/isend for the number of items to expect from each neighbor.
+/// Posts irecv/isend for the number of items to expect from each neighbor (symmetric version).
 /// Returns a map `nbr → u32` once all receives have completed.
 pub fn exchange_sizes_symmetric<C, T>(
     links: &std::collections::HashMap<usize, Vec<T>>,

@@ -1,4 +1,7 @@
-//! Re-export public algorithms.
+//! Algorithm module: re-exports public algorithms for mesh and partitioning operations.
+//!
+//! This module provides access to mesh completion, distribution, dual graph construction,
+//! partitioning, traversal, and lattice utilities.
 
 pub mod communicator;
 pub mod completion;

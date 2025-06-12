@@ -1,3 +1,11 @@
+//! Louvain-style clustering for distributed graph partitioning.
+//!
+//! This module provides a simple Louvain-style community detection algorithm for use in
+//! parallel and distributed partitioning. The clustering is controlled by [`PartitionerConfig`]
+//! and is intended for use with graphs implementing [`PartitionableGraph`].
+//!
+//! The main entry point is [`louvain_cluster`], which returns a vector of cluster IDs for each vertex.
+
 #![cfg(feature = "mpi-support")]
 
 
@@ -7,14 +15,19 @@ use rayon::iter::ParallelIterator;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+/// Internal cluster representation for Louvain clustering.
 #[derive(Debug, Clone)]
 struct Cluster {
-    id: u32, // consider removing or prefixing with _ if unused
+    /// Cluster ID.
+    id: u32,
+    /// Total volume (sum of degrees) of the cluster.
     volume: u64,
-    internal_edges: u64, // consider removing or prefixing with _ if unused
+    /// Number of internal edges (not currently used).
+    internal_edges: u64,
 }
 
 impl Cluster {
+    /// Create a new cluster with the given ID and initial volume.
     fn new(v: u32, deg: u64) -> Self {
         Cluster {
             id: v,
@@ -24,6 +37,22 @@ impl Cluster {
     }
 }
 
+/// Perform Louvain-style clustering on a partitionable graph.
+///
+/// Returns a vector of cluster IDs (one per vertex), with IDs remapped to a contiguous range.
+///
+/// # Arguments
+/// - `graph`: The input graph.
+/// - `cfg`: Configuration parameters for clustering.
+///
+/// # Returns
+/// A vector of cluster IDs for each vertex (indexed by vertex order in `graph.vertices()`).
+///
+/// # Parallelism
+/// This implementation is not fully parallel, but is suitable for moderate-sized graphs.
+///
+/// # Features
+/// Only available with the `mpi-support` feature enabled.
 pub fn louvain_cluster<G>(graph: &G, cfg: &PartitionerConfig) -> Vec<u32>
 where
     G: PartitionableGraph<VertexId = usize> + Sync,

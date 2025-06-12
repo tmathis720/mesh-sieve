@@ -1,4 +1,9 @@
-// Metrics skeleton for partitioning
+//! Partitioning metrics utilities.
+//!
+//! This module provides functions for evaluating the quality of graph partitionings,
+//! including edge cut and replication factor metrics. These are intended for debugging,
+//! testing, and CI validation of partitioning algorithms.
+
 #![cfg(feature = "mpi-support")]
 
 use super::{PartitionMap, PartitionableGraph};
@@ -7,6 +12,9 @@ use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 
 /// Returns the part ID for a given vertex.
+///
+/// # Panics
+/// Panics if the vertex is not present in the partition map.
 impl<V: Eq + Hash + Copy> PartitionMap<V> {
     pub fn part_of(&self, v: V) -> usize {
         *self.get(&v).expect("vertex not found in PartitionMap")
@@ -14,7 +22,16 @@ impl<V: Eq + Hash + Copy> PartitionMap<V> {
 }
 
 /// Computes the edge cut of a partitioning (O(E)).
+///
+/// The edge cut is the number of edges that cross between different parts.
 /// Intended for debug/CI use.
+///
+/// # Arguments
+/// - `g`: The partitioned graph.
+/// - `pm`: The partition map.
+///
+/// # Returns
+/// The number of edges crossing between parts.
 pub fn edge_cut<G>(g: &G, pm: &PartitionMap<G::VertexId>) -> usize
 where
     G: PartitionableGraph,
@@ -47,7 +64,16 @@ where
 }
 
 /// Computes the replication factor of a partitioning (O(E)).
-/// Intended for debug/CI use.
+///
+/// The replication factor is the average number of parts that each vertex is present in,
+/// accounting for ghosting/replication in distributed settings. Intended for debug/CI use.
+///
+/// # Arguments
+/// - `g`: The partitioned graph.
+/// - `pm`: The partition map.
+///
+/// # Returns
+/// The average replication factor as a floating-point value.
 pub fn replication_factor<G>(g: &G, pm: &PartitionMap<G::VertexId>) -> f64
 where
     G: PartitionableGraph,

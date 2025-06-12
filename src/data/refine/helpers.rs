@@ -1,10 +1,17 @@
 //! Helpers for pulling per-point slices out along a Sieve.
 //! (Previously lived in section.rs)
+//!
+//! This module provides utility functions for extracting slices of data
+//! associated with points in a mesh, following closure or star traversals
+//! of a [`Sieve`]. It also provides a read-only wrapper for section data.
 
 use crate::data::section::Map;
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
 
+/// Restrict a map along the closure of the given seed points.
+///
+/// Returns an iterator over `(PointId, &[V])` for all points in the closure.
 pub fn restrict_closure<'s, M, V: Clone + Default + 's>(
     sieve: &impl Sieve<Point = PointId>,
     map: &'s M,
@@ -16,6 +23,9 @@ where
     sieve.closure(seeds).map(move |p| (p, map.get(p)))
 }
 
+/// Restrict a map along the star of the given seed points.
+///
+/// Returns an iterator over `(PointId, &[V])` for all points in the star.
 pub fn restrict_star<'s, M, V: Clone + Default + 's>(
     sieve: &impl Sieve<Point = PointId>,
     map: &'s M,
@@ -27,6 +37,7 @@ where
     sieve.star(seeds).map(move |p| (p, map.get(p)))
 }
 
+/// Restrict a map along the closure of the given seed points, collecting results into a vector.
 pub fn restrict_closure_vec<'s, M, V: Clone + Default + 's>(
     sieve: &impl Sieve<Point = PointId>,
     map: &'s M,
@@ -38,6 +49,7 @@ where
     restrict_closure(sieve, map, seeds).collect()
 }
 
+/// Restrict a map along the star of the given seed points, collecting results into a vector.
 pub fn restrict_star_vec<'s, M, V: Clone + Default + 's>(
     sieve: &impl Sieve<Point = PointId>,
     map: &'s M,
@@ -49,12 +61,11 @@ where
     restrict_star(sieve, map, seeds).collect()
 }
 
-// Remove or update #[cfg(feature = "data_refine")] to avoid warning
-// #[cfg(feature = "data_refine")]
+/// Read-only wrapper for a section, implementing the [`Map`] trait.
 pub struct ReadOnlyMap<'a, V: Clone + Default> {
     pub section: &'a crate::data::section::Section<V>,
 }
-// #[cfg(feature = "data_refine")]
+
 impl<'a, V: Clone + Default> crate::data::section::Map<V> for ReadOnlyMap<'a, V> {
     fn get(&self, p: crate::topology::point::PointId) -> &[V] {
         self.section.restrict(p)

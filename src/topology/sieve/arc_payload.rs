@@ -1,20 +1,31 @@
 //! Wrapper sieve that presents Payload = Arc<P> for any Sieve<P>.
+//!
+//! This module provides [`SieveArcPayload`], a wrapper that adapts any [`Sieve`] implementation
+//! to use `Arc<P>` as its payload type, enabling shared ownership and efficient cloning of payloads.
+
 use super::sieve_trait::Sieve;
 use crate::topology::stratum::InvalidateCache;
 use std::sync::Arc;
 
+/// A wrapper sieve that presents `Payload = Arc<P>` for any inner sieve with payload `P`.
+///
+/// This allows payloads to be shared efficiently between multiple references,
+/// reducing unnecessary cloning and enabling shared ownership semantics.
 #[derive(Default, Clone)]
 pub struct SieveArcPayload<S: Sieve> {
+    /// The inner sieve being wrapped.
     pub inner: S,
 }
 
 impl<S: Sieve> SieveArcPayload<S> {
+    /// Creates a new `SieveArcPayload` wrapping the given sieve.
     pub fn new(inner: S) -> Self {
         Self { inner }
     }
 }
 
 impl<S: Sieve> InvalidateCache for SieveArcPayload<S> {
+    /// Invalidates the cache of the inner sieve.
     fn invalidate_cache(&mut self) {
         self.inner.invalidate_cache();
     }

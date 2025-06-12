@@ -1,5 +1,9 @@
 //! Partitioning wrappers for ParMETIS / Zoltan
-//! and native Onizuka-inspired partitioning (see partitioning/)
+//! and native Onizuka-inspired partitioning (see partitioning/).
+//!
+//! This module provides a unified interface for graph partitioning, including
+//! native algorithms and wrappers for external libraries. It also exposes
+//! partitioning metrics such as edge cut and replication factor.
 
 #[cfg(feature = "mpi-support")]
 pub use crate::partitioning::{
@@ -32,6 +36,8 @@ where
 }
 
 /// Compute the edge cut of a partitioning.
+///
+/// Returns the number of edges crossing between parts.
 #[cfg(feature = "mpi-support")]
 pub fn partition_edge_cut<G>(graph: &G, pm: &PartitionMap<G::VertexId>) -> usize
 where
@@ -42,6 +48,8 @@ where
 }
 
 /// Compute the replication factor of a partitioning.
+///
+/// Returns the average number of parts each vertex is present in.
 #[cfg(feature = "mpi-support")]
 pub fn partition_replication_factor<G>(graph: &G, pm: &PartitionMap<G::VertexId>) -> f64
 where

@@ -1,15 +1,31 @@
+//! METIS partitioning wrapper for dual graphs.
+//!
+//! This module provides a wrapper for partitioning dual graphs using METIS,
+//! exposing a safe Rust interface for METIS-based graph partitioning.
+
 use crate::algs::dual_graph::DualGraph;
 #[cfg(feature = "metis-support")]
 include!("../metis_bindings.rs"); // idx_t, METIS_PartGraphKway, etc.
 
 /// A wrapper around a METIS partition.
+///
+/// The `part` vector maps each vertex index to its assigned partition.
 pub struct MetisPartition {
-    /// for each vertex i, partition[i] ∈ [0..nparts)
+    /// For each vertex i, `part[i]` ∈ [0..nparts)
     pub part: Vec<i32>,
 }
 
 impl DualGraph {
     /// Partition this graph into `nparts` parts using METIS.
+    ///
+    /// # Arguments
+    /// - `nparts`: Number of partitions to create.
+    ///
+    /// # Returns
+    /// A [`MetisPartition`] containing the partition assignment for each vertex.
+    ///
+    /// # Panics
+    /// Panics if the METIS call fails.
     #[cfg(feature = "metis-support")]
     pub fn metis_partition(&self, nparts: i32) -> MetisPartition {
         let n = self.vwgt.len() as idx_t;

@@ -1,4 +1,28 @@
-//! Public prelude for sieve-rs: mesh/data-management library for PDE codes
+//! # mesh-sieve
+//!
+//! mesh-sieve is a modular, high-performance Rust library for mesh and data management, designed for scientific computing and PDE codes. It provides abstractions for mesh topology, field data, parallel partitioning, and communication, supporting both serial and MPI-based distributed workflows.
+//!
+//! ## Features
+//! - Mesh topology and Sieve data structures for flexible mesh connectivity
+//! - Atlas and Section types for mapping mesh points to data arrays
+//! - Pluggable communication backends (serial, Rayon, MPI) for ghost exchange and mesh distribution
+//! - Built-in support for graph partitioning (Metis, custom algorithms)
+//! - MPI integration for distributed mesh and data exchange
+//! - Extensive serial, parallel, and property-based testing
+//!
+//! ## Usage
+//! Add `mesh-sieve` as a dependency in your `Cargo.toml` and enable features as needed:
+//!
+//! ```toml
+//! [dependencies]
+//! mesh-sieve = "1.0.0"
+//! # Optional features:
+//! # features = ["mpi-support", "metis-support"]
+//! ```
+//!
+//! See the README and examples directory for usage patterns and integration with MPI.
+
+//! Public prelude for mesh-sieve: mesh/data-management library for PDE codes
 //!
 //! All Sieve implementations provide `points()`, `base_points()`, and `cap_points()` iterators for global point set access.
 

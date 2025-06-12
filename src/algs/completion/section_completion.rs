@@ -1,5 +1,7 @@
 //! High‐level “complete_section” that runs neighbour_links → exchange_sizes → exchange_data.
-
+//!
+//! This module provides the top-level routine for distributed section completion,
+//! orchestrating neighbor link discovery, size exchange, and data exchange phases.
 
 pub fn complete_section<V, D, C>(
     section: &mut crate::data::section::Section<V>,

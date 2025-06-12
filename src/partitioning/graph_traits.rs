@@ -1,9 +1,14 @@
-// Graph trait abstraction for partitioning
+//! Parallel graph trait abstraction for partitioning.
+//!
+//! This module defines the [`PartitionableGraph`] trait, which provides a parallel, read-only,
+//! thread-safe interface for graph structures used in partitioning algorithms. All methods must
+//! be safe for concurrent use and must not mutate the graph.
+
 use rayon::iter::{IndexedParallelIterator, ParallelIterator};
 use std::hash::Hash;
 
 /// Trait for graphs that can be partitioned in parallel.
-//
+///
 /// All methods are read-only, thread-safe, and require no interior mutability.
 /// Implementors must guarantee that all returned iterators are safe for concurrent use and do not mutate the graph.
 ///
@@ -31,6 +36,8 @@ pub trait PartitionableGraph: Sync {
     fn degree(&self, v: Self::VertexId) -> usize;
 
     /// Returns a parallel iterator over all undirected edges (u, v) with u < v.
+    ///
+    /// The returned iterator yields each undirected edge exactly once.
     fn edges(&self) -> impl ParallelIterator<Item = (Self::VertexId, Self::VertexId)> + '_
     where
         Self::VertexId: PartialOrd,

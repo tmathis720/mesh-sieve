@@ -1,4 +1,7 @@
-// src/topology/sieve/in_memory.rs
+//! In-memory implementation of the [`Sieve`] trait.
+//!
+//! This module provides [`InMemorySieve`], a simple and efficient in-memory representation
+//! of a sieve using hash maps for adjacency storage. It supports generic point and payload types.
 
 use super::sieve_trait::Sieve;
 use crate::topology::stratum::InvalidateCache;
@@ -6,13 +9,21 @@ use once_cell::sync::OnceCell;
 use std::collections::HashMap;
 use crate::topology::stratum::StrataCache;
 
+/// An in-memory sieve implementation using hash maps for adjacency storage.
+///
+/// # Type Parameters
+/// - `P`: The type of points in the sieve. Must implement `Ord`.
+/// - `T`: The type of payloads associated with arrows. Defaults to `()`.
 #[derive(Clone, Debug)]
 pub struct InMemorySieve<P, T=()>
 where
     P: Ord,
 {
+    /// Outgoing adjacency: maps each point to a vector of (destination, payload) pairs.
     pub adjacency_out: HashMap<P, Vec<(P,T)>>,
+    /// Incoming adjacency: maps each point to a vector of (source, payload) pairs.
     pub adjacency_in:  HashMap<P, Vec<(P,T)>>,
+    /// Cached strata information for the sieve.
     pub strata: OnceCell<StrataCache<P>>,
 }
 
@@ -27,7 +38,15 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T> Default for InMemorySieve<P,T> {
 }
 
 impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> InMemorySieve<P,T> {
+    /// Creates a new, empty `InMemorySieve`.
     pub fn new() -> Self { Self::default() }
+    /// Constructs an `InMemorySieve` from an iterator of arrows.
+    ///
+    /// # Example
+    /// ```
+    /// let arrows = vec![(1, 2, "a"), (1, 3, "b")];
+    /// let sieve = InMemorySieve::from_arrows(arrows);
+    /// ```
     pub fn from_arrows<I:IntoIterator<Item=(P,P,T)>>(arrows:I) -> Self {
         let mut sieve = Self::default();
         for (src, dst, payload) in arrows {
@@ -45,22 +64,70 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
     type ConeIter<'a> = ConeMapIter<'a, P, T> where Self: 'a;
     type SupportIter<'a> = ConeMapIter<'a, P, T> where Self: 'a;
 
+    /// Returns an iterator over the cone of a point.
+    ///
+    /// The cone of a point `p` is the set of all points that can be reached from `p`
+    /// by following arrows, along with the payloads of the arrows.
+    ///
+    /// # Example
+    /// ```
+    /// let mut s = InMemorySieve::<u32, ()>::new();
+    /// s.add_arrow(1, 2,());
+    /// let mut cone: Vec<_> = s.cone(1).map(|(d, _)| d).collect();
+    /// cone.sort();
+    /// assert_eq!(cone, vec![2]);
+    /// ```
     fn cone<'a>(&'a self, p: P) -> Self::ConeIter<'a> {
         fn map_fn<P, T>((dst, pay): &(P, T)) -> (P, &T) where P: Copy { (*dst, pay) }
         let f: fn(&(P, T)) -> (P, &T) = map_fn::<P, T>;
         self.adjacency_out.get(&p).map(|v| v.iter().map(f)).unwrap_or_else(|| [].iter().map(f))
     }
+    /// Returns an iterator over the support of a point.
+    ///
+    /// The support of a point `p` is the set of all points that can reach `p`
+    /// by following arrows in the reverse direction, along with the payloads of the arrows.
+    ///
+    /// # Example
+    /// ```
+    /// let mut s = InMemorySieve::<u32, ()>::new();
+    /// s.add_arrow(1, 2,());
+    /// let mut support: Vec<_> = s.support(2).map(|(u, _)| u).collect();
+    /// support.sort();
+    /// assert_eq!(support, vec![1]);
+    /// ```
     fn support<'a>(&'a self, p: P) -> Self::SupportIter<'a> {
         fn map_fn<P, T>((src, pay): &(P, T)) -> (P, &T) where P: Copy { (*src, pay) }
         let f: fn(&(P, T)) -> (P, &T) = map_fn::<P, T>;
         self.adjacency_in.get(&p).map(|v| v.iter().map(f)).unwrap_or_else(|| [].iter().map(f))
     }
+    /// Adds a new arrow from `src` to `dst` with the given `payload`.
+    ///
+    /// This method updates the outgoing adjacency of `src` and the incoming adjacency of `dst`.
+    /// It also invalidates the cache for strata information.
+    ///
+    /// # Example
+    /// ```
+    /// let mut s = InMemorySieve::<u32, char>::new();
+    /// s.add_arrow(1, 2, 'a');
+    /// ```
     fn add_arrow(&mut self, src: P, dst: P, payload: T) {
         self.adjacency_out.entry(src).or_default().push((dst, payload.clone()));
         self.adjacency_in.entry(dst).or_default().push((src, payload));
         self.invalidate_cache();
     }
 
+    /// Removes the arrow from `src` to `dst`, returning the associated payload if it existed.
+    ///
+    /// This method updates both the outgoing adjacency of `src` and the incoming adjacency of `dst`.
+    /// It also invalidates the cache for strata information.
+    ///
+    /// # Example
+    /// ```
+    /// let mut s = InMemorySieve::<u32, ()>::new();
+    /// s.add_arrow(1, 2, ());
+    /// assert_eq!(s.remove_arrow(1, 2), Some(()));
+    /// assert_eq!(s.remove_arrow(1, 2), None);
+    /// ```
     fn remove_arrow(&mut self, src: P, dst: P) -> Option<T> {
         let mut removed = None;
         if let Some(v) = self.adjacency_out.get_mut(&src) {
@@ -77,37 +144,110 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
         removed
     }
     // strata helpers now provided by Sieve trait default impls
+    /// Adds a point to the sieve, creating empty adjacencies for it.
+    ///
+    /// # Example
+    /// ```
+    /// let mut s = InMemorySieve::<u32, ()>::new();
+    /// s.add_point(1);
+    /// assert!(s.adjacency_out.contains_key(&1));
+    /// assert!(s.adjacency_in.contains_key(&1));
+    /// ```
     fn add_point(&mut self, p: P) {
         self.adjacency_out.entry(p).or_default();
         self.adjacency_in.entry(p).or_default();
         self.invalidate_cache();
     }
+    /// Removes a point and its associated arrows from the sieve.
+    ///
+    /// # Example
+    /// ```
+    /// let mut s = InMemorySieve::<u32, ()>::new();
+    /// s.add_arrow(1, 2, ());
+    /// s.remove_point(1);
+    /// assert!(!s.adjacency_out.contains_key(&1));
+    /// assert!(!s.adjacency_in.contains_key(&1));
+    /// ```
     fn remove_point(&mut self, p: P) {
         self.adjacency_out.remove(&p);
         self.adjacency_in.remove(&p);
         self.invalidate_cache();
     }
+    /// Adds a base point to the sieve, creating an empty outgoing adjacency for it.
+    ///
+    /// # Example
+    /// ```
+    /// let mut s = InMemorySieve::<u32, ()>::new();
+    /// s.add_base_point(1);
+    /// assert!(s.adjacency_out.contains_key(&1));
+    /// ```
     fn add_base_point(&mut self, p: P) {
         self.adjacency_out.entry(p).or_default();
         self.invalidate_cache();
     }
+    /// Adds a cap point to the sieve, creating an empty incoming adjacency for it.
+    ///
+    /// # Example
+    /// ```
+    /// let mut s = InMemorySieve::<u32, ()>::new();
+    /// s.add_cap_point(2);
+    /// assert!(s.adjacency_in.contains_key(&2));
+    /// ```
     fn add_cap_point(&mut self, p: P) {
         self.adjacency_in.entry(p).or_default();
         self.invalidate_cache();
     }
+    /// Removes a base point and its outgoing arrows from the sieve.
+    ///
+    /// # Example
+    /// ```
+    /// let mut s = InMemorySieve::<u32, ()>::new();
+    /// s.add_arrow(1, 2, ());
+    /// s.remove_base_point(1);
+    /// assert!(!s.adjacency_out.contains_key(&1));
+    /// ```
     fn remove_base_point(&mut self, p: P) {
         self.adjacency_out.remove(&p);
         self.invalidate_cache();
     }
+    /// Removes a cap point and its incoming arrows from the sieve.
+    ///
+    /// # Example
+    /// ```
+    /// let mut s = InMemorySieve::<u32, ()>::new();
+    /// s.add_arrow(1, 2, ());
+    /// s.remove_cap_point(2);
+    /// assert!(!s.adjacency_in.contains_key(&2));
+    /// ```
     fn remove_cap_point(&mut self, p: P) {
         self.adjacency_in.remove(&p);
         self.invalidate_cache();
     }
+    /// Sets the cone for a point, replacing any existing cone.
+    ///
+    /// This method takes ownership of the provided iterator, consuming it.
+    /// The iterator items are collected into a vector and stored as the new cone.
+    ///
+    /// # Example
+    /// ```
+    /// let mut s = InMemorySieve::<u32, ()>::new();
+    /// s.set_cone(1, vec![(2, ()), (3, ())]);
+    /// ```
     fn set_cone(&mut self, p: P, chain: impl IntoIterator<Item=(P, T)>) {
         self.adjacency_out.insert(p, chain.into_iter().collect());
         self.rebuild_support_from_out();
         self.invalidate_cache();
     }
+    /// Adds to the cone of a point, appending to any existing cone.
+    ///
+    /// This method takes ownership of the provided iterator, consuming it.
+    /// The iterator items are appended to the existing cone of the point.
+    ///
+    /// # Example
+    /// ```
+    /// let mut s = InMemorySieve::<u32, ()>::new();
+    /// s.add_cone(1, vec![(2, ()), (3, ())]);
+    /// ```
     fn add_cone(&mut self, p: P, chain: impl IntoIterator<Item=(P, T)>) {
         for (d, pay) in chain {
             self.adjacency_out.entry(p).or_default().push((d, pay));
@@ -115,6 +255,16 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
         self.rebuild_support_from_out();
         self.invalidate_cache();
     }
+    /// Sets the support for a point, replacing any existing support.
+    ///
+    /// This method takes ownership of the provided iterator, consuming it.
+    /// The iterator items are collected into a vector and stored as the new support.
+    ///
+    /// # Example
+    /// ```
+    /// let mut s = InMemorySieve::<u32, ()>::new();
+    /// s.set_support(2, vec![(1, ()), (3, ())]);
+    /// ```
     fn set_support(&mut self, q: P, chain: impl IntoIterator<Item=(P, T)>) {
         self.adjacency_in.insert(q, chain.into_iter().collect());
         // rebuild adjacency_out from adjacency_in
@@ -126,6 +276,16 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
         }
         self.invalidate_cache();
     }
+    /// Adds to the support of a point, appending to any existing support.
+    ///
+    /// This method takes ownership of the provided iterator, consuming it.
+    /// The iterator items are appended to the existing support of the point.
+    ///
+    /// # Example
+    /// ```
+    /// let mut s = InMemorySieve::<u32, ()>::new();
+    /// s.add_support(2, vec![(3, ()), (4, ())]);
+    /// ```
     fn add_support(&mut self, q: P, chain: impl IntoIterator<Item=(P, T)>) {
         for (src, pay) in chain {
             self.adjacency_in.entry(q).or_default().push((src, pay.clone()));
@@ -133,6 +293,16 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
         }
         self.invalidate_cache();
     }
+    /// Restricts the sieve to only include arrows originating from the given chain of base points.
+    ///
+    /// # Example
+    /// ```
+    /// let mut s = InMemorySieve::<u32, ()>::new();
+    /// s.add_arrow(1, 2, ());
+    /// s.add_arrow(3, 4, ());
+    /// let restricted = s.restrict_base(vec![1, 3]);
+    /// assert_eq!(restricted.arrows().count(), 2);
+    /// ```
     fn restrict_base(&self, chain: impl IntoIterator<Item=P>) -> Self {
         let mut out = Self::default();
         for p in chain {
@@ -144,6 +314,16 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
         }
         out
     }
+    /// Restricts the sieve to only include arrows ending at the given chain of cap points.
+    ///
+    /// # Example
+    /// ```
+    /// let mut s = InMemorySieve::<u32, ()>::new();
+    /// s.add_arrow(1, 2, ());
+    /// s.add_arrow(3, 4, ());
+    /// let restricted = s.restrict_cap(vec![2, 4]);
+    /// assert_eq!(restricted.arrows().count(), 2);
+    /// ```
     fn restrict_cap(&self, chain: impl IntoIterator<Item=P>) -> Self {
         let mut out = Self::default();
         for q in chain {
@@ -155,9 +335,29 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
         }
         out
     }
+    /// Returns an iterator over all points in the sieve.
+    ///
+    /// # Example
+    /// ```
+    /// let mut s = InMemorySieve::<u32, ()>::new();
+    /// s.add_arrow(1, 2, ());
+    /// let mut all_points: Vec<_> = s.points().collect();
+    /// all_points.sort();
+    /// assert_eq!(all_points, vec![1, 2]);
+    /// ```
     fn base_points<'a>(&'a self) -> Box<dyn Iterator<Item=P> + 'a> {
         Box::new(self.adjacency_out.keys().copied())
     }
+    /// Returns an iterator over all cap points in the sieve.
+    ///
+    /// # Example
+    /// ```
+    /// let mut s = InMemorySieve::<u32, ()>::new();
+    /// s.add_arrow(1, 2, ());
+    /// let mut all_caps: Vec<_> = s.cap_points().collect();
+    /// all_caps.sort();
+    /// assert_eq!(all_caps, vec![2]);
+    /// ```
     fn cap_points<'a>(&'a self) -> Box<dyn Iterator<Item=P> + 'a> {
         Box::new(self.adjacency_in.keys().copied())
     }

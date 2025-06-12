@@ -5,8 +5,8 @@ use rand::{SeedableRng, Rng};
 use rand::rngs::SmallRng;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
-use sieve_rs::partitioning::{partition, PartitionerConfig};
-use sieve_rs::partitioning::graph_traits::PartitionableGraph;
+use mesh_sieve::partitioning::{partition, PartitionerConfig};
+use mesh_sieve::partitioning::graph_traits::PartitionableGraph;
 
 // 1) Synthetic Erdos-Renyi graph
 struct RandomGraph {

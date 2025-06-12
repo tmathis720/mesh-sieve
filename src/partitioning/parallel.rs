@@ -1,3 +1,8 @@
+//! Parallel utilities for partitioning algorithms.
+//!
+//! This module provides helpers for thread-local random number generation and
+//! parallel execution patterns, supporting deterministic and efficient parallel partitioning.
+
 use ahash::AHasher;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
@@ -11,6 +16,8 @@ thread_local! {
 }
 
 /// Initializes the thread’s RNG from a global seed.
+///
+/// Should be called once per thread before using [`with_thread_rng`].
 pub fn init_thread_rng(global_seed: u64) {
     let mut hasher = AHasher::default();
     let thread_idx = rayon::current_thread_index().unwrap_or(0) as u64;
@@ -22,6 +29,9 @@ pub fn init_thread_rng(global_seed: u64) {
 }
 
 /// Returns a mutable reference to the SmallRng for this thread by running a closure.
+///
+/// # Panics
+/// Panics if the thread-local RNG has not been initialized.
 pub fn with_thread_rng<F, R>(f: F) -> R
 where
     F: FnOnce(&mut SmallRng) -> R,
@@ -36,6 +46,8 @@ where
 }
 
 /// A helper to spawn a Rayon parallel scope with each worker’s RNG initialized.
+///
+/// The closure `f` is executed within the parallel scope.
 pub fn parallel_scope_with_rng<F: FnOnce() + Send + Sync>(global_seed: u64, f: F) {
     rayon::scope(|s| {
         s.spawn(|_| init_thread_rng(global_seed));
@@ -44,6 +56,8 @@ pub fn parallel_scope_with_rng<F: FnOnce() + Send + Sync>(global_seed: u64, f: F
 }
 
 /// Executes `func(i, &item)` in parallel over `0..n`.
+///
+/// Calls the provided function for each item in the slice, passing the index and a reference.
 pub fn par_for_each_mutex<T, F>(data: &[T], func: F)
 where
     T: Sync,
@@ -56,6 +70,7 @@ where
 
 #[cfg(feature = "mpi-support")]
 pub mod onizuka_partitioning {
+    //! Parallel partitioning routines for Onizuka algorithms.
     use super::*;
     use crate::partitioning::binpack::Item;
     use crate::partitioning::{PartitionerConfig, PartitionMap};

@@ -1,11 +1,19 @@
 //! A generic array of values indexed by mesh points, supporting refine/assemble.
 //! (Extracted from section.rs)
+//!
+//! This module provides [`SievedArray`], a flexible structure for storing and
+//! manipulating per-point data in mesh refinement and assembly operations.
 
 use crate::data::atlas::Atlas;
 use crate::data::refine::delta::Delta;
 use crate::topology::arrow::Orientation;
 use crate::topology::point::PointId;
 
+/// A generic array of values indexed by mesh points, supporting refinement and assembly.
+///
+/// # Type Parameters
+/// - `P`: Point identifier type (must convert to [`PointId`]).
+/// - `V`: Value type stored for each point.
 #[derive(Clone, Debug)]
 pub struct SievedArray<P, V> {
     pub(crate) atlas: Atlas,
@@ -17,6 +25,7 @@ impl<P, V: Clone + Default> SievedArray<P, V>
 where
     P: Into<PointId> + Copy + Eq,
 {
+    /// Create a new `SievedArray` with the given atlas.
     pub fn new(atlas: Atlas) -> Self {
         let data = vec![V::default(); atlas.total_len()];
         Self {
@@ -25,22 +34,27 @@ where
             _phantom: std::marker::PhantomData,
         }
     }
+    /// Get a read-only slice for the given point.
     pub fn get(&self, p: PointId) -> &[V] {
         let (off, len) = self.atlas.get(p).expect("point not in atlas");
         &self.data[off..off + len]
     }
+    /// Get a mutable slice for the given point.
     pub fn get_mut(&mut self, p: PointId) -> &mut [V] {
         let (off, len) = self.atlas.get(p).expect("point not in atlas");
         &mut self.data[off..off + len]
     }
+    /// Set the values for the given point from a slice.
     pub fn set(&mut self, p: PointId, val: &[V]) {
         let tgt = self.get_mut(p);
         assert_eq!(tgt.len(), val.len());
         tgt.clone_from_slice(val);
     }
+    /// Iterate over all points and their associated slices.
     pub fn iter<'s>(&'s self) -> impl Iterator<Item = (PointId, &'s [V])> {
         self.atlas.points().map(move |p| (p, self.get(p)))
     }
+    /// Refine this array from a coarse array using a sifter (with orientations).
     pub fn refine_with_sifter(
         &mut self,
         coarse: &SievedArray<P, V>,
@@ -59,6 +73,7 @@ where
             }
         }
     }
+    /// Refine this array from a coarse array using a simple mapping (all forward).
     pub fn refine(&mut self, coarse: &SievedArray<P, V>, refinement: &[(P, Vec<P>)]) {
         let sifter: Vec<_> = refinement
             .iter()
@@ -148,6 +163,7 @@ impl<P, V: Clone + Default + Send + Sync> SievedArray<P, V>
 where
     P: Into<PointId> + Copy + Eq + Send + Sync,
 {
+    /// Parallel refinement using a sifter, enabled with the `rayon` feature.
     #[cfg(feature = "rayon")]
     pub fn refine_with_sifter_parallel(
         &mut self,

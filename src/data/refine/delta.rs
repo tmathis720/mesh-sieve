@@ -1,12 +1,23 @@
 //! A “delta” maps sources→dest slices, e.g. via Orientation permutation.
+//!
+//! This module defines the [`Delta`] trait for slice transformations and provides
+//! an implementation for [`Orientation`] to permute or reverse slices.
 
 use crate::topology::arrow::Orientation;
 
+/// Trait for applying a transformation (delta) from a source slice to a destination slice.
+///
+/// Implementors define how to map or permute values from `src` to `dest`.
 pub trait Delta<V: Clone + Default>: Sync {
+    /// Applies the delta transformation from `src` to `dest`.
     fn apply(&self, src: &[V], dest: &mut [V]);
 }
 
 impl<V: Clone + Default> Delta<V> for Orientation {
+    /// Applies the orientation to map `src` to `dest`.
+    ///
+    /// - `Forward`: copies `src` to `dest` as-is.
+    /// - `Reverse`: copies `src` to `dest` in reverse order.
     fn apply(&self, src: &[V], dest: &mut [V]) {
         match self {
             Orientation::Forward => dest.clone_from_slice(src),

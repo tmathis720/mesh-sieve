@@ -1,5 +1,8 @@
 //! Set-lattice helpers: meet, join, adjacency and helpers.
 //! All output vectors are **sorted & deduplicated** for deterministic behaviour.
+//!
+//! This module provides utilities for set-lattice operations on mesh topologies,
+//! including adjacency queries and helpers for use with [`Sieve`] structures.
 
 use crate::algs::traversal::star;
 use crate::topology::point::PointId;
@@ -8,7 +11,9 @@ use crate::topology::sieve::Sieve;
 type P = PointId;
 
 /// Cells adjacent to `p` that are **not** `p` itself.
+///
 /// Adjacent = share a face/edge (= “support” of cone items).
+/// Returns a sorted, deduplicated vector of adjacent cells.
 pub fn adjacent<S>(sieve: &S, p: P) -> Vec<P>
 where
     S: Sieve<Point = P>,
