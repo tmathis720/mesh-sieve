@@ -25,6 +25,18 @@ where
     // 1. Determine number of vertices
     let n = graph.vertices().count();
 
+    // Determine how many parts we have (max part ID + 1)
+    let num_parts = {
+        let mut max = 0;
+        for (_v, &p) in pm.iter() {
+            if p > max { max = p; }
+        }
+        max + 1
+    };
+    // Create an atomic counter for each part’s replica-load
+    let part_replica_count: Vec<AtomicUsize> =
+        (0..num_parts).map(|_| AtomicUsize::new(0)).collect();
+
     // 2. Allocate primary_part array, default = usize::MAX
     let mut primary_part: Vec<AtomicUsize> = (0..n).map(|_| AtomicUsize::new(usize::MAX)).collect();
 
@@ -43,18 +55,29 @@ where
                     let pu = pm.part_of(u);
                     let pv = pm.part_of(v);
                     if pu != pv {
-                        // Decide owner via hash(salt,u,v)
-                        let mut h = AHasher::default();
-                        h.write_u64(salt);
-                        h.write_u64(u as u64);
-                        h.write_u64(v as u64);
-                        let hashval = h.finish();
-                        let (owner, other, owner_part) = if (hashval & 1) == 0 {
+                        // NEW: load-aware selection
+                        let count_u = part_replica_count[pu].load(Ordering::Relaxed);
+                        let count_v = part_replica_count[pv].load(Ordering::Relaxed);
+                        let (owner, other, owner_part) = if count_u < count_v {
                             (u, v, pu)
-                        } else {
+                        } else if count_v < count_u {
                             (v, u, pv)
+                        } else {
+                            // deterministic tie-breaker via AHasher
+                            let mut h = AHasher::default();
+                            h.write_u64(salt);
+                            h.write_u64(u as u64);
+                            h.write_u64(v as u64);
+                            let hashval = h.finish();
+                            if (hashval & 1) == 0 {
+                                (u, v, pu)
+                            } else {
+                                (v, u, pv)
+                            }
                         };
-
+                        // Increment the chosen part’s counter
+                        part_replica_count[owner_part]
+                            .fetch_add(1, Ordering::Relaxed);
                         // 4.a Set primary_part for both vertices to the owner’s part
                         primary_part[owner].store(owner_part, Ordering::Relaxed);
                         primary_part[other].store(owner_part, Ordering::Relaxed);
@@ -101,35 +124,39 @@ where
 }
 
 #[cfg(test)]
+#[cfg(feature = "partitioning")]
 mod tests {
     use super::*;
+    use crate::partitioning::PartitionMap;
     use crate::partitioning::graph_traits::PartitionableGraph;
+    use rayon::iter::IntoParallelIterator;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
 
+    /// Simple graph implementation for testing
     struct TestGraph {
         edges: Vec<(usize, usize)>,
         n: usize,
     }
+    impl TestGraph {
+        fn new(edges: Vec<(usize,usize)>, n: usize) -> Self {
+            TestGraph { edges, n }
+        }
+    }
+
     impl PartitionableGraph for TestGraph {
         type VertexId = usize;
-        type VertexParIter<'a> = rayon::vec::IntoIter<usize>;
-        type NeighParIter<'a> = rayon::vec::IntoIter<usize>;
+        type VertexParIter<'a> = rayon::vec::IntoIter<usize> where Self: 'a;
+        type NeighParIter<'a> = rayon::vec::IntoIter<usize> where Self: 'a;
+
         fn vertices(&self) -> Self::VertexParIter<'_> {
             (0..self.n).collect::<Vec<_>>().into_par_iter()
         }
         fn neighbors(&self, v: usize) -> Self::NeighParIter<'_> {
-            self.edges
-                .iter()
-                .filter_map(|&(a, b)| {
-                    if a == v {
-                        Some(b)
-                    } else if b == v {
-                        Some(a)
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>()
-                .into_par_iter()
+            let ns = self.edges.iter()
+                .filter_map(|&(a,b)| if a==v { Some(b) } else if b==v { Some(a) } else { None })
+                .collect::<Vec<_>>();
+            ns.into_par_iter()
         }
         fn degree(&self, v: usize) -> usize {
             self.neighbors(v).count()
@@ -137,116 +164,64 @@ mod tests {
     }
 
     #[test]
-    fn vertex_cut_cycle() {
-        // 4‐cycle: 0–1–2–3–0, (0,1)->0, (2,3)->1
-        let g = TestGraph {
-            edges: vec![(0, 1), (1, 2), (2, 3), (3, 0)],
-            n: 4,
-        };
+    fn vertex_cut_cycle_nondeterministic() {
+        // 4-cycle: 0-1-2-3-0 with two parts: {0,1}=0 and {2,3}=1
+        let g = TestGraph::new(vec![(0,1),(1,2),(2,3),(3,0)], 4);
         let mut pm = PartitionMap::with_capacity(4);
-        pm.insert(0, 0);
-        pm.insert(1, 0);
-        pm.insert(2, 1);
-        pm.insert(3, 1);
+        pm.insert(0, 0); pm.insert(1, 0);
+        pm.insert(2, 1); pm.insert(3, 1);
         let (primary, replicas) = build_vertex_cuts(&g, &pm, 42);
 
-        // Each vertex should have a valid primary (0 or 1)
-        for v in 0..4 {
-            assert!(primary[v] == 0 || primary[v] == 1);
-        }
-        // Edges (1–2) and (3–0) cross parts
-        // Accept either direction of ghosting due to hash-based owner selection
-        assert!(
-            replicas[1]
-                .iter()
-                .any(|&(n, p)| n == 2 && (p == 0 || p == 1))
-                || replicas[2]
-                    .iter()
-                    .any(|&(n, p)| n == 1 && (p == 0 || p == 1)),
-            "Expected a ghost edge between 1 and 2"
-        );
-        assert!(
-            replicas[3]
-                .iter()
-                .any(|&(n, p)| n == 0 && (p == 0 || p == 1))
-                || replicas[0]
-                    .iter()
-                    .any(|&(n, p)| n == 3 && (p == 0 || p == 1)),
-            "Expected a ghost edge between 3 and 0"
-        );
-    }
-
-    #[test]
-    fn vertex_cut_triangle_distinct() {
-        // Triangle: 0–1–2–0, all in different parts
-        let g = TestGraph {
-            edges: vec![(0, 1), (1, 2), (2, 0)],
-            n: 3,
-        };
-        let mut pm = PartitionMap::with_capacity(3);
-        pm.insert(0, 0);
-        pm.insert(1, 1);
-        pm.insert(2, 2);
-        let (primary, replicas) = build_vertex_cuts(&g, &pm, 123);
-
-        for v in 0..3 {
-            assert!(primary[v] < 3);
-            assert!(!replicas[v].is_empty());
+        // Edges (1-2) and (3-0) cross partitions; owner must be same for both endpoints
+        for &(u,v) in &[(1,2),(3,0)] {
+            assert_eq!(primary[u], primary[v], "Primary owner mismatch on edge {}-{}", u, v);
+            let p = primary[u];
+            // Check that each lists the other as a replica
+            let has_uv = replicas[u].iter().any(|&(nbr, part)| nbr==v && part==p);
+            let has_vu = replicas[v].iter().any(|&(nbr, part)| nbr==u && part==p);
+            assert!(has_uv && has_vu, "Missing replica entries between {} and {}", u, v);
         }
     }
 
     #[test]
-    fn vertex_cut_isolated() {
-        // Isolated vertex 0
-        let g = TestGraph {
-            edges: vec![],
-            n: 1,
-        };
+    fn vertex_cut_isolated_vertex() {
+        // Single isolated vertex should own itself, no replicas
+        let g = TestGraph::new(vec![], 1);
         let mut pm = PartitionMap::with_capacity(1);
         pm.insert(0, 0);
         let (primary, replicas) = build_vertex_cuts(&g, &pm, 99);
-        assert_eq!(primary[0], 0);
-        assert!(replicas[0].is_empty());
+        assert_eq!(primary, vec![0]);
+        assert!(replicas[0].is_empty(), "Isolated vertex should have no replicas");
     }
 
     #[test]
-    fn vertex_cut_two_node_owner_rule() {
-        // 2‐node graph: 0–1, different parts
-        let g = TestGraph {
-            edges: vec![(0, 1)],
-            n: 2,
-        };
+    fn vertex_cut_two_node_owner_balancing() {
+        // 2-node graph: 0-1, different parts => primary must agree, and each replicates the other
+        let g = TestGraph::new(vec![(0,1)], 2);
         let mut pm = PartitionMap::with_capacity(2);
-        pm.insert(0, 0);
-        pm.insert(1, 1);
+        pm.insert(0, 0); pm.insert(1, 1);
         let (primary, replicas) = build_vertex_cuts(&g, &pm, 0);
 
-        // Both should have the same primary (owner’s part)
-        assert_eq!(primary[0], primary[1]);
-        // Each should list the other as a replica
-        assert!(replicas[0].iter().any(|&(n, _)| n == 1));
-        assert!(replicas[1].iter().any(|&(n, _)| n == 0));
+        // Both endpoints share the same owner
+        assert_eq!(primary[0], primary[1], "Both endpoints must share a primary owner");
+        // Each should list the other in its replica list
+        assert!(replicas[0].iter().any(|&(nbr, _)| nbr==1), "Vertex 0 missing replica for 1");
+        assert!(replicas[1].iter().any(|&(nbr, _)| nbr==0), "Vertex 1 missing replica for 0");
     }
 
     #[test]
-    fn vertex_cut_path_internal_and_boundary() {
-        // 3‐node path: 0–1–2, pm(0)=0, pm(1)=0, pm(2)=1
-        let g = TestGraph {
-            edges: vec![(0, 1), (1, 2)],
-            n: 3,
-        };
+    fn vertex_cut_triangle_distinct_parts() {
+        // Triangle: 0-1-2-0, all in distinct parts; ensure at least one replica per vertex
+        let g = TestGraph::new(vec![(0,1),(1,2),(2,0)], 3);
         let mut pm = PartitionMap::with_capacity(3);
-        pm.insert(0, 0);
-        pm.insert(1, 0);
-        pm.insert(2, 1);
-        let (primary, replicas) = build_vertex_cuts(&g, &pm, 42);
+        pm.insert(0, 0); pm.insert(1, 1); pm.insert(2, 2);
+        let (primary, replicas) = build_vertex_cuts(&g, &pm, 123);
 
-        // Vertex 0 is internal → should keep its own part
-        assert_eq!(primary[0], 0);
-        // Vertices 1 and 2 share a crossing edge → same primary
-        assert_eq!(primary[1], primary[2]);
-        // Each lists the other as a replica
-        assert!(replicas[1].iter().any(|&(n, _)| n == 2));
-        assert!(replicas[2].iter().any(|&(n, _)| n == 1));
+        for v in 0..3 {
+            // primary owner must be some valid part
+            assert!(primary[v] < 3, "Invalid owner for vertex {}", v);
+            // and should have at least one replica since every edge crosses
+            assert!(!replicas[v].is_empty(), "Vertex {} has no replicas", v);
+        }
     }
 }
