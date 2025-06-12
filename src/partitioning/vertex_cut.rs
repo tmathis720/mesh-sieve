@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// Returns `(Vec<PartId>, Vec<Vec<(VertexId, PartId)>>)`:
 /// - `primary_owner[v]` is the primary owner’s part ID for vertex v.
 /// - `replicas[v]` is a Vec of `(neighbor_vertex, neighbor_part)` that need ghosting.
-#[cfg(feature = "partitioning")]
+#[cfg(feature = "mpi-support")]
 pub fn build_vertex_cuts<G>(
     graph: &G,
     pm: &PartitionMap<G::VertexId>,
@@ -124,7 +124,7 @@ where
 }
 
 #[cfg(test)]
-#[cfg(feature = "partitioning")]
+#[cfg(feature = "mpi-support")]
 mod tests {
     use super::*;
     use crate::partitioning::PartitionMap;

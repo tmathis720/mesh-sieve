@@ -1,4 +1,4 @@
-#![cfg(feature = "partitioning")]
+#![cfg(feature = "mpi-support")]
 
 
 use crate::partitioning::PartitionerConfig;
@@ -181,6 +181,10 @@ mod tests {
             seed_factor: 2.0,
             rng_seed: 123,
             max_iters: 10,
+            epsilon: 0.05,
+            enable_phase1: true,
+            enable_phase2: true,
+            enable_phase3: true,
         };
         let clustering = louvain_cluster(&pg, &cfg);
         let unique_clusters: Vec<u32> = {
@@ -209,6 +213,10 @@ mod tests {
             seed_factor: 1.0,
             rng_seed: 42,
             max_iters: 5,
+            epsilon: 0.05,
+            enable_phase1: true,
+            enable_phase2: true,
+            enable_phase3: true,
         };
         let clustering = louvain_cluster(&pg, &cfg);
         assert_eq!(clustering.len(), 5);

@@ -1,5 +1,5 @@
 // Metrics skeleton for partitioning
-#![cfg(feature = "partitioning")]
+#![cfg(feature = "mpi-support")]
 
 use super::{PartitionMap, PartitionableGraph};
 use rayon::iter::ParallelIterator;
@@ -93,7 +93,7 @@ where
 }
 
 #[cfg(test)]
-#[cfg(feature = "partitioning")]
+#[cfg(feature = "mpi-support")]
 mod tests {
     use super::*;
     use crate::partitioning::graph_traits::PartitionableGraph;

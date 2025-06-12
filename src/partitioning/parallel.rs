@@ -54,8 +54,53 @@ where
     });
 }
 
-#[cfg(feature = "partitioning")]
-mod onizuka_partitioning {
+#[cfg(feature = "mpi-support")]
+pub mod onizuka_partitioning {
     use super::*;
+    use crate::partitioning::binpack::Item;
+    use crate::partitioning::{PartitionerConfig, PartitionMap};
+    use crate::partitioning::graph_traits::PartitionableGraph;
+    use crate::partitioning::PartitionerError;
 
+    /// Phase 2 parallel merge that seeds each thread’s RNG and then
+    /// does the adjacency-aware cluster merge.
+    pub fn parallel_merge_clusters_into_parts(
+        items: &[Item],
+        cfg: &PartitionerConfig,
+    ) -> Result<Vec<usize>, PartitionerError> {
+        let mut part_assignment = None;
+        let mut error = None;
+        parallel_scope_with_rng(cfg.rng_seed, || {
+            match crate::partitioning::binpack::merge_clusters_into_parts(
+                items,
+                cfg.n_parts,
+                cfg.epsilon,
+            ) {
+                Ok(assign) => part_assignment = Some(assign),
+                Err(e) => error = Some(e),
+            }
+        });
+        if let Some(e) = error {
+            Err(e)
+        } else {
+            Ok(part_assignment.expect("Parallel merge did not produce a result"))
+        }
+    }
+
+    /// Phase 3 parallel vertex-cut: seeds each worker’s RNG with salt,
+    /// then performs load-aware owner selection in parallel.
+    pub fn parallel_build_vertex_cuts<G>(
+        graph: &G,
+        pm: &PartitionMap<G::VertexId>,
+        salt: u64,
+    ) -> (Vec<usize>, Vec<Vec<(G::VertexId, usize)>>)
+    where
+        G: PartitionableGraph<VertexId = usize> + Sync,
+    {
+        let mut result = None;
+        parallel_scope_with_rng(salt, || {
+            result = Some(crate::partitioning::vertex_cut::build_vertex_cuts(graph, pm, salt));
+        });
+        result.expect("Parallel vertex cut did not produce a result")
+    }
 }
