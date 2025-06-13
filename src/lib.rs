@@ -50,4 +50,5 @@ pub mod prelude {
     #[cfg(feature="rayon")]
     pub use crate::algs::communicator::RayonComm;
     pub use crate::algs::completion::{complete_sieve, complete_section, complete_stack};
+    pub use crate::algs::rcm::distributed_rcm;
 }

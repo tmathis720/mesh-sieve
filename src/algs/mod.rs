@@ -11,6 +11,7 @@ pub mod lattice;
 pub mod metis_partition;
 pub mod partition;
 pub mod traversal;
+pub mod rcm;
 
 pub use completion::complete_section;
 pub use lattice::adjacent;
