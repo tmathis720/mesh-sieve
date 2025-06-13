@@ -42,7 +42,7 @@ use crate::algs::communicator::Communicator;
 /// ```
 /// # Example (MPI)
 /// ```ignore
-/// #![cfg(feature="mpi")]
+/// #![cfg(feature="mpi-support")]
 /// use mesh_sieve::algs::communicator::MpiComm;
 /// // ... same as above, but use MpiComm::new() and run with mpirun -n 2 ...
 /// ```
