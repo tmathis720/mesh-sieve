@@ -27,12 +27,12 @@ impl FakeSieve {
 impl Sieve for FakeSieve {
     type Point = Tiny;
     type Payload = ();
-    fn cone<'a>(&'a self, p: Self::Point) -> Box<dyn Iterator<Item = (Self::Point, &'a Self::Payload)> + 'a> {
+    fn cone<'a>(&'a mut self, p: Self::Point) -> Box<dyn Iterator<Item = (Self::Point, &'a Self::Payload)> + 'a> {
         Box::new(self.arrows.iter().filter_map(move |(src, dst)| {
             if *src == p { Some((*dst, &())) } else { None }
         }))
     }
-    fn support<'a>(&'a self, p: Self::Point) -> Box<dyn Iterator<Item = (Self::Point, &'a Self::Payload)> + 'a> {
+    fn support<'a>(&'a mut self, p: Self::Point) -> Box<dyn Iterator<Item = (Self::Point, &'a Self::Payload)> + 'a> {
         Box::new(self.arrows.iter().filter_map(move |(src, dst)| {
             if *dst == p { Some((*src, &())) } else { None }
         }))
@@ -42,7 +42,7 @@ impl Sieve for FakeSieve {
 
 #[test]
 fn default_points_methods_work() {
-    let s = FakeSieve::new(&[(1,2), (2,3)]);
+    let mut s = FakeSieve::new(&[(1,2), (2,3)]);
     let mut pts: Vec<_> = s.points().collect();
     pts.sort_by_key(|x| x.0);
     assert_eq!(pts, vec![Tiny(1), Tiny(2), Tiny(3)]);
@@ -56,18 +56,18 @@ fn default_points_methods_work() {
 
 #[test]
 fn default_closure_and_star_work() {
-    let s = FakeSieve::new(&[(1,2), (2,3)]);
-    let mut closure: Vec<_> = Sieve::closure(&s, Tiny(1)).collect();
+    let mut s = FakeSieve::new(&[(1,2), (2,3)]);
+    let mut closure: Vec<_> = Sieve::closure(&mut s, Tiny(1)).collect();
     closure.sort_by_key(|x| x.0);
     assert_eq!(closure, vec![Tiny(1), Tiny(2), Tiny(3)]);
-    let mut star: Vec<_> = Sieve::star(&s, Tiny(3)).collect();
+    let mut star: Vec<_> = Sieve::star(&mut s, Tiny(3)).collect();
     star.sort_by_key(|x| x.0);
     assert_eq!(star, vec![Tiny(3), Tiny(2), Tiny(1)]);
 }
 
 #[test]
 fn default_meet_and_join_work() {
-    let s = FakeSieve::new(&[(1,2), (2,3), (1,4)]);
+    let mut s = FakeSieve::new(&[(1,2), (2,3), (1,4)]);
     // meet(2,4) should be empty (no separator)
     let sep: Vec<_> = s.meet(Tiny(2), Tiny(4)).collect();
     assert!(sep.is_empty());
@@ -79,7 +79,7 @@ fn default_meet_and_join_work() {
 
 #[test]
 fn default_height_depth_diameter() {
-    let s = FakeSieve::new(&[(1,2), (2,3), (1,4)]);
+    let mut s = FakeSieve::new(&[(1,2), (2,3), (1,4)]);
     assert_eq!(s.height(Tiny(1)), 2);
     assert_eq!(s.depth(Tiny(3)), 2);
     assert_eq!(s.diameter(), 2);
@@ -87,7 +87,7 @@ fn default_height_depth_diameter() {
 
 #[test]
 fn genericity_on_non_pointid() {
-    let s = FakeSieve::new(&[(10,11), (11,12)]);
+    let mut s = FakeSieve::new(&[(10,11), (11,12)]);
     let pts: HashSet<_> = s.points().collect();
     assert!(pts.contains(&Tiny(10)) && pts.contains(&Tiny(12)));
 }

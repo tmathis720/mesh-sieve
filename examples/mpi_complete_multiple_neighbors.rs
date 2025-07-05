@@ -47,7 +47,7 @@ pub fn main() {
         sec.set(PointId::new(2), &[2]);
     }
     let delta = CopyDelta;
-    complete_section(&mut sec, &ovlp, &comm, &delta, rank, size);
+    complete_section(&mut sec, &mut ovlp, &comm, &delta, rank, size);
     match rank {
         0 => {
             assert_eq!(sec.restrict(PointId::new(1))[0], 1);

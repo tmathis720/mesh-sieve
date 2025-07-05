@@ -14,7 +14,7 @@ type P = PointId;
 ///
 /// Adjacent = share a face/edge (= “support” of cone items).
 /// Returns a sorted, deduplicated vector of adjacent cells.
-pub fn adjacent<S>(sieve: &S, p: P) -> Vec<P>
+pub fn adjacent<S>(sieve: &mut S, p: P) -> Vec<P>
 where
     S: Sieve<Point = P>,
 {
@@ -59,9 +59,9 @@ mod tests {
 
     #[test]
     fn adjacent_symmetry() {
-        let (s, a, b) = simple_pair();
-        let adj_a = adjacent(&s, a);
-        let adj_b = adjacent(&s, b);
+        let (mut s, a, b) = simple_pair();
+        let adj_a = adjacent(&mut s, a);
+        let adj_b = adjacent(&mut s, b);
         assert!(adj_a.contains(&b));
         assert!(adj_b.contains(&a));
     }

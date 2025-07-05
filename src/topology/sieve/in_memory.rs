@@ -56,7 +56,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> InMemorySieve<P,T> {
     }
 }
 
-type ConeMapIter<'a, P, T> = std::iter::Map<std::slice::Iter<'a, (P, T)>, fn(&'a (P, T)) -> (P, &'a T)>;
+type ConeMapIter<'a, P, T> = std::iter::Map<std::slice::Iter<'a, (P, T)>, fn(&'a (P, T)) -> (P, T)>;
 
 impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
     type Point = P;
@@ -78,8 +78,8 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
     /// assert_eq!(cone, vec![2]);
     /// ```
     fn cone<'a>(&'a self, p: P) -> Self::ConeIter<'a> {
-        fn map_fn<P, T>((dst, pay): &(P, T)) -> (P, &T) where P: Copy { (*dst, pay) }
-        let f: fn(&(P, T)) -> (P, &T) = map_fn::<P, T>;
+        fn map_fn<P: Copy, T: Clone>((dst, pay): &(P, T)) -> (P, T) { (*dst, pay.clone()) }
+        let f: fn(&(P, T)) -> (P, T) = map_fn::<P, T>;
         self.adjacency_out.get(&p).map(|v| v.iter().map(f)).unwrap_or_else(|| [].iter().map(f))
     }
     /// Returns an iterator over the support of a point.
@@ -96,8 +96,8 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
     /// assert_eq!(support, vec![1]);
     /// ```
     fn support<'a>(&'a self, p: P) -> Self::SupportIter<'a> {
-        fn map_fn<P, T>((src, pay): &(P, T)) -> (P, &T) where P: Copy { (*src, pay) }
-        let f: fn(&(P, T)) -> (P, &T) = map_fn::<P, T>;
+        fn map_fn<P: Copy, T: Clone>((src, pay): &(P, T)) -> (P, T) { (*src, pay.clone()) }
+        let f: fn(&(P, T)) -> (P, T) = map_fn::<P, T>;
         self.adjacency_in.get(&p).map(|v| v.iter().map(f)).unwrap_or_else(|| [].iter().map(f))
     }
     /// Adds a new arrow from `src` to `dst` with the given `payload`.
@@ -483,11 +483,11 @@ mod covering_api_tests {
         s.set_cone(1, vec![(2, 10), (3, 20)]);
         let mut cone: Vec<_> = s.cone(1).collect();
         cone.sort_by_key(|(d, _)| *d);
-        assert_eq!(cone, vec![(2, &10), (3, &20)]);
+        assert_eq!(cone, vec![(2, 10), (3, 20)]);
         s.add_cone(1, vec![(4, 30)]);
         let mut cone: Vec<_> = s.cone(1).collect();
         cone.sort_by_key(|(d, _)| *d);
-        assert_eq!(cone, vec![(2, &10), (3, &20), (4, &30)]);
+        assert_eq!(cone, vec![(2, 10), (3, 20), (4, 30)]);
     }
 
     #[test]
@@ -496,11 +496,11 @@ mod covering_api_tests {
         s.set_support(5, vec![(1, 100), (2, 200)]);
         let mut support: Vec<_> = s.support(5).collect();
         support.sort_by_key(|(src, _)| *src);
-        assert_eq!(support, vec![(1, &100), (2, &200)]);
+        assert_eq!(support, vec![(1, 100), (2, 200)]);
         s.add_support(5, vec![(3, 300)]);
         let mut support: Vec<_> = s.support(5).collect();
         support.sort_by_key(|(src, _)| *src);
-        assert_eq!(support, vec![(1, &100), (2, &200), (3, &300)]);
+        assert_eq!(support, vec![(1, 100), (2, 200), (3, 300)]);
     }
 
     #[test]
@@ -512,15 +512,15 @@ mod covering_api_tests {
         let base = s.restrict_base(vec![1]);
         let mut cone: Vec<_> = base.cone(1).collect();
         cone.sort_by_key(|(d, _)| *d);
-        assert_eq!(cone, vec![(2, &10), (3, &20)]);
+        assert_eq!(cone, vec![(2, 10), (3, 20)]);
         assert!(base.cone(4).next().is_none());
         let cap = s.restrict_cap(vec![2, 3]);
         let mut support2: Vec<_> = cap.support(2).collect();
         support2.sort_by_key(|(src, _)| *src);
-        assert_eq!(support2, vec![(1, &10)]);
+        assert_eq!(support2, vec![(1, 10)]);
         let mut support3: Vec<_> = cap.support(3).collect();
         support3.sort_by_key(|(src, _)| *src);
-        assert_eq!(support3, vec![(1, &20)]);
+        assert_eq!(support3, vec![(1, 20)]);
         assert!(cap.support(5).next().is_none());
     }
 

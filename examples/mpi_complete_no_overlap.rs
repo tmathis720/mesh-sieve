@@ -29,9 +29,9 @@ fn main() {
     if rank == 2 {
         sec.set(PointId::new(2), &[42]);
     }
-    let ovlp = Overlap::default();
+    let mut ovlp = Overlap::default();
     let delta = CopyDelta;
-    complete_section(&mut sec, &ovlp, &comm, &delta, rank, size);
+    complete_section(&mut sec, &mut ovlp, &comm, &delta, rank, size);
     if rank == 2 {
         assert_eq!(sec.restrict(PointId::new(2))[0], 42);
         println!("[rank 2] complete_section_no_overlap passed");

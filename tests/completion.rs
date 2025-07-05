@@ -22,11 +22,11 @@ fn ghost_update_self() {
     let mut sec = Section::<u32>::new(atlas);
     sec.set(p0, &[42]);
 
-    let comm = RayonComm::new(0);
+    let mut comm = RayonComm::new(0);
     let delta = CopyDelta;
 
     // Should complete without deadlock and leave the value intact.
-    complete_section(&mut sec, &ovlp, &comm, &delta, 0, 1);
+    complete_section(&mut sec, &mut ovlp, &mut comm, &delta, 0, 1);
 
     assert_eq!(sec.restrict(p0)[0], 42);
 }

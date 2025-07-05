@@ -240,16 +240,16 @@ mod tests {
     impl Sieve for MockSieve {
         type Point = usize;
         type Payload = ();
-        type ConeIter<'a> = Box<dyn Iterator<Item = (Self::Point, &'a Self::Payload)> + 'a>;
-        type SupportIter<'a> = Box<dyn Iterator<Item = (Self::Point, &'a Self::Payload)> + 'a>;
+        type ConeIter<'a> = Box<dyn Iterator<Item = (Self::Point, Self::Payload)> + 'a>;
+        type SupportIter<'a> = Box<dyn Iterator<Item = (Self::Point, Self::Payload)> + 'a>;
 
         fn base_points(&self) -> Box<dyn Iterator<Item = Self::Point> + '_> {
             Box::new(0..self.adj.len())
         }
-        fn cone(&self, p: Self::Point) -> Self::ConeIter<'_> {
-            Box::new(self.adj[p].iter().map(|&q| (q, &())))
+        fn cone<'a>(&'a self, p: Self::Point) -> Self::ConeIter<'a> {
+            Box::new(self.adj[p].iter().map(move |&q| (q, ())))
         }
-        fn support(&self, _p: Self::Point) -> Self::SupportIter<'_> {
+        fn support<'a>(&'a self, _p: Self::Point) -> Self::SupportIter<'a> {
             // For undirected mock, support is the same as cone
             Box::new(std::iter::empty())
         }

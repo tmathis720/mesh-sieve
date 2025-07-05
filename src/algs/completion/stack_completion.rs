@@ -78,9 +78,9 @@ pub fn complete_stack<P, Q, Pay, C, S, O, R>(
         let mut has_owned = false;
         let mut owned_caps = Vec::new();
         for (cap, pay) in stack.lift(base) {
-            if *pay != Pay::default() {
+            if pay != Pay::default() {
                 has_owned = true;
-                owned_caps.push((cap, *pay));
+                owned_caps.push((cap, pay));
             }
         }
         if !has_owned {

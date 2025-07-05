@@ -36,7 +36,7 @@ impl<P: Copy + Eq + std::hash::Hash + Ord> StrataCache<P> {
 ///
 /// # Panics
 /// Panics if the sieve contains cycles (i.e., is not a DAG).
-pub fn compute_strata<S>(s: &S) -> StrataCache<S::Point>
+pub fn compute_strata<S>(s: &mut S) -> StrataCache<S::Point>
 where
     S: Sieve + ?Sized,
     S::Point: Copy + Eq + std::hash::Hash + Ord,

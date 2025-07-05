@@ -216,6 +216,7 @@ mod tests {
                 panic!("test_exchange_data_rayon_comm: thread 1 panicked: {:?}", e1);
             }
             _ => panic!("test_exchange_data_rayon_comm: thread join failed or deadlocked"),
+            // unreachable: all cases are covered above
         }
     }
 }

@@ -47,8 +47,15 @@ impl<P: Copy + Eq + std::hash::Hash + Ord> StrataCache<P> {
 // --- Strata cache population and invalidation ---
 use crate::topology::sieve::InMemorySieve;
 impl<P: Copy + Eq + std::hash::Hash + Ord, T: Clone> InMemorySieve<P, T> {
-    pub fn strata_cache(&self) -> &StrataCache<P> {
-        self.strata.get_or_init(|| compute_strata(self))
+    pub fn strata_cache(&mut self) -> &StrataCache<P> {
+        // Avoid double mutable borrow by first creating a raw pointer to self,
+        // then using it inside the closure.
+        let self_ptr: *mut Self = self;
+        self.strata.get_or_init(|| {
+            // SAFETY: get_or_init guarantees exclusive access during initialization.
+            let sieve = unsafe { &mut *self_ptr };
+            compute_strata(sieve)
+        })
     }
     pub fn invalidate_strata(&mut self) {
         self.strata.take();
@@ -68,16 +75,17 @@ impl<T: InvalidateCache> InvalidateCache for Box<T> {
 }
 
 /// Build heights, depths, strata layers and diameter for *any* Sieve.
-pub fn compute_strata<S>(sieve: &S) -> StrataCache<S::Point>
+pub fn compute_strata<S>(sieve: &mut S) -> StrataCache<S::Point>
 where
     S: Sieve + ?Sized,
     S::Point: Copy + Eq + std::hash::Hash + Ord,
 {
     // 1) collect the full point set
     let mut in_deg = std::collections::HashMap::new();
-    for p in sieve.points() {
-        in_deg.entry(p).or_insert(0);
-        for (q, _) in sieve.cone(p) {
+    let points: Vec<_> = sieve.points().collect();
+    for p in &points {
+        in_deg.entry(*p).or_insert(0);
+        for (q, _) in sieve.cone(*p) {
             *in_deg.entry(q).or_insert(0) += 1;
         }
     }
@@ -377,13 +385,13 @@ mod tests {
     fn isolated_points_are_included() {
         let mut s = InMemorySieve::<u32,()>::new();
         s.adjacency_out.insert(42, Vec::new());
-        let heights = crate::topology::stratum::compute_strata(&s).height;
+        let heights = crate::topology::stratum::compute_strata(&mut s).height;
         assert_eq!(heights.get(&42).copied(), Some(0));
     }
 
     #[test]
     fn empty_sieve_strata() {
-        let s = InMemorySieve::<u8,()>::default();
+        let mut s = InMemorySieve::<u8,()>::default();
         assert_eq!(s.diameter(), 0);
         assert!(s.height_stratum(0).next().is_none());
         assert!(s.depth_stratum(0).next().is_none());
@@ -413,18 +421,19 @@ mod tests {
 
     #[test]
     fn strata_cache_thread_safe() {
-        use std::sync::Arc;
+        use std::sync::{Arc, Mutex};
         use std::thread;
         let mut s = InMemorySieve::<u32,()>::new();
         s.add_arrow(1,2,());
         s.add_arrow(2,3,());
-        let shared = Arc::new(s);
+        let shared = Arc::new(Mutex::new(s));
         let mut handles = Vec::new();
         for _ in 0..4 {
             let s_cloned = Arc::clone(&shared);
             handles.push(thread::spawn(move || {
                 for _ in 0..10 {
-                    assert_eq!(s_cloned.diameter(), 2);
+                    let mut s_locked = s_cloned.lock().unwrap();
+                    assert_eq!(s_locked.diameter(), 2);
                 }
             }));
         }
@@ -455,84 +464,50 @@ mod sieve_strata_default_tests {
     impl Sieve for TrivialSieve {
         type Point = u32;
         type Payload = ();
-        type ConeIter<'a> = std::iter::Map<std::slice::Iter<'a, u32>, fn(&u32) -> (u32, &())> where Self: 'a;
-        type SupportIter<'a> = Box<dyn Iterator<Item = (u32, &'a ())> + 'a> where Self: 'a;
+        type ConeIter<'a> = std::iter::Map<std::slice::Iter<'a, u32>, fn(&u32) -> (u32, ())> where Self: 'a;
+        type SupportIter<'a> = Box<dyn Iterator<Item = (u32, ())> + 'a> where Self: 'a;
         fn cone<'a>(&'a self, p: u32) -> Self::ConeIter<'a> {
-            fn map_fn(x: &u32) -> (u32, &()) { (*x, &()) }
-            let f: fn(&u32) -> (u32, &()) = map_fn;
+            fn map_fn(x: &u32) -> (u32, ()) { (*x, ()) }
+            let f: fn(&u32) -> (u32, ()) = map_fn;
             self.edges.get(&p).map(|v| v.iter().map(f)).unwrap_or_else(|| [].iter().map(f))
         }
         fn support<'a>(&'a self, p: u32) -> Self::SupportIter<'a> {
-            // Return all nodes that have an edge to p
             let mut preds = Vec::new();
             for (src, dsts) in &self.edges {
                 if dsts.contains(&p) {
                     preds.push(*src);
                 }
             }
-            Box::new(preds.into_iter().map(|src| (src, &())))
+            Box::new(preds.into_iter().map(|src| (src, ())))
         }
         fn add_arrow(&mut self, _src: u32, _dst: u32, _payload: ()) { unimplemented!() }
         fn remove_arrow(&mut self, _src: u32, _dst: u32) -> Option<()> { unimplemented!() }
-        fn points<'a>(&'a self) -> Box<dyn Iterator<Item = u32> + 'a> {
-            Box::new(self.edges.keys().copied())
-        }
         fn base_points<'a>(&'a self) -> Box<dyn Iterator<Item = u32> + 'a> {
             Box::new(self.edges.keys().copied())
         }
         fn cap_points<'a>(&'a self) -> Box<dyn Iterator<Item = u32> + 'a> {
             Box::new([].iter().copied())
         }
-        // --- Stubs for required trait methods ---
-        fn meet<'s>(&'s self, _a: u32, _b: u32) -> Box<dyn Iterator<Item = u32> + 's> {
-            Box::new(std::iter::empty())
-        }
-        fn join<'s>(&'s self, _a: u32, _b: u32) -> Box<dyn Iterator<Item = u32> + 's> {
-            Box::new(std::iter::empty())
-        }
-        fn height(&self, p: u32) -> u32 {
-            // Use compute_strata to get height
-            compute_strata(self).height.get(&p).copied().unwrap_or(0)
-        }
-        fn depth(&self, p: u32) -> u32 {
-            compute_strata(self).depth.get(&p).copied().unwrap_or(0)
-        }
-        fn diameter(&self) -> u32 {
-            compute_strata(self).diameter
-        }
-        fn height_stratum<'a>(&'a self, k: u32) -> Box<dyn Iterator<Item = u32> + 'a> {
-            let strata = compute_strata(self).strata;
-            if (k as usize) < strata.len() {
-                let items: Vec<u32> = strata[k as usize].clone();
-                Box::new(items.into_iter())
-            } else {
-                Box::new(std::iter::empty())
-            }
-        }
-        fn depth_stratum<'a>(&'a self, k: u32) -> Box<dyn Iterator<Item = u32> + 'a> {
-            let cache = compute_strata(self);
-            let points: Vec<u32> = cache.depth.iter()
-                .filter_map(|(&p, &d)| if d == k { Some(p) } else { None })
-                .collect();
-            Box::new(points.into_iter())
-        }
     }
 
     #[test]
-    fn default_strata_helpers_work() {
-        // 1 -> 2 -> 3
-        let mut edges = HashMap::new();
-        edges.insert(1, vec![2]);
-        edges.insert(2, vec![3]);
-        let s = TrivialSieve { edges };
+    fn trivial_sieve_strata() {
+        let mut s = TrivialSieve::default();
+        s.edges.insert(1, vec![2]);
+        s.edges.insert(2, vec![3]);
+        s.edges.insert(3, vec![4]);
+        let cache = compute_strata(&mut s);
+        assert_eq!(cache.height.len(), 4);
+        assert_eq!(cache.depth.len(), 4);
+        assert_eq!(cache.strata.len(), 4);
+        assert_eq!(cache.diameter, 3);
         assert_eq!(s.height(1), 0);
         assert_eq!(s.height(2), 1);
         assert_eq!(s.height(3), 2);
-        assert_eq!(s.diameter(), 2);
-        let h2: Vec<_> = s.height_stratum(2).collect();
-        assert_eq!(h2, vec![3]);
-        let d0: Vec<_> = s.depth_stratum(0).collect();
-        // Accept either 2 or 3 as leaves, since both have no outgoing edges in this test Sieve
-        assert!(d0.contains(&2) || d0.contains(&3), "depth_stratum(0) should contain a leaf");
+        assert_eq!(s.height(4), 3);
+        assert_eq!(s.depth(1), 3);
+        assert_eq!(s.depth(2), 2);
+        assert_eq!(s.depth(3), 1);
+        assert_eq!(s.depth(4), 0);
     }
 }

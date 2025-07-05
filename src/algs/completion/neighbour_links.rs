@@ -11,7 +11,7 @@ use std::collections::HashMap;
 /// that you must send or receive.
 pub fn neighbour_links<V: Clone + Default + PartialEq>(
     section: &Section<V>,
-    ovlp: &Overlap,
+    ovlp: &mut Overlap,
     my_rank: usize,
 ) -> HashMap<usize, Vec<(PointId, PointId)>> {
     let mut out: HashMap<usize, Vec<(PointId, PointId)>> = HashMap::new();
@@ -103,8 +103,8 @@ mod tests {
     fn owner_rank_links_to_ghost() {
         // Rank 0 owns 1, ghosted to rank 1 as 101
         let section = make_section(&[1]);
-        let ovlp = make_overlap(0, 1, &[1], &[101]);
-        let links = neighbour_links(&section, &ovlp, 0);
+        let mut ovlp = make_overlap(0, 1, &[1], &[101]);
+        let links = neighbour_links(&section, &mut ovlp, 0);
         assert_eq!(links.len(), 1);
         assert_eq!(links[&1], vec![(PointId::new(1), PointId::new(101))]);
     }
@@ -113,8 +113,8 @@ mod tests {
     fn ghost_rank_receives_from_owner() {
         // Rank 1 owns nothing, but receives 1 as 101 from rank 0
         let section = make_section(&[]); // ghost owns nothing
-        let ovlp = make_overlap(0, 1, &[1], &[101]);
-        let links = neighbour_links(&section, &ovlp, 1);
+        let mut ovlp = make_overlap(0, 1, &[1], &[101]);
+        let links = neighbour_links(&section, &mut ovlp, 1);
         println!("links for ghost rank: {:?}", links);
         assert_eq!(links.len(), 1);
         assert_eq!(links[&0], vec![(PointId::new(101), PointId::new(1))]);
@@ -124,8 +124,8 @@ mod tests {
     fn no_links_for_isolated_rank() {
         // Rank 2 owns 2, but no overlap
         let section = make_section(&[2]);
-        let ovlp = InMemorySieve::<PointId, Remote>::default();
-        let links = neighbour_links(&section, &ovlp, 2);
+        let mut ovlp = InMemorySieve::<PointId, Remote>::default();
+        let links = neighbour_links(&section, &mut ovlp, 2);
         assert!(links.is_empty());
     }
 
@@ -150,7 +150,7 @@ mod tests {
                 remote_point: PointId::new(201),
             },
         );
-        let links = neighbour_links(&section, &ovlp, 0);
+        let links = neighbour_links(&section, &mut ovlp, 0);
         assert_eq!(links.len(), 2);
         assert_eq!(links[&1], vec![(PointId::new(1), PointId::new(101))]);
         assert_eq!(links[&2], vec![(PointId::new(2), PointId::new(201))]);

@@ -28,8 +28,8 @@ pub trait Sieve: Default + InvalidateCache
     type Point: Copy + Eq + std::hash::Hash + Ord;
     type Payload;
 
-    type ConeIter<'a>: Iterator<Item = (Self::Point, &'a Self::Payload)> where Self: 'a;
-    type SupportIter<'a>: Iterator<Item = (Self::Point, &'a Self::Payload)> where Self: 'a;
+    type ConeIter<'a>: Iterator<Item = (Self::Point, Self::Payload)> where Self: 'a;
+    type SupportIter<'a>: Iterator<Item = (Self::Point, Self::Payload)> where Self: 'a;
 
     /// Outgoing arrows from `p`.
     fn cone<'a>(&'a self, p: Self::Point) -> Self::ConeIter<'a>;
@@ -224,7 +224,7 @@ pub trait Sieve: Default + InvalidateCache
 
     // --- strata helpers (default impl via compute_strata) ---
     /// Distance from any zero-in-degree “source” to `p`.
-    fn height(&self, p: Self::Point) -> u32
+    fn height(&mut self, p: Self::Point) -> u32
     where Self::Point: Ord, Self: Sized
     {
         crate::topology::sieve::strata::compute_strata(self)
@@ -232,7 +232,7 @@ pub trait Sieve: Default + InvalidateCache
     }
 
     /// Distance from `p` down to any zero-out-degree “sink”.
-    fn depth(&self, p: Self::Point) -> u32
+    fn depth(&mut self, p: Self::Point) -> u32
     where Self::Point: Ord, Self: Sized
     {
         crate::topology::sieve::strata::compute_strata(self)
@@ -240,14 +240,14 @@ pub trait Sieve: Default + InvalidateCache
     }
 
     /// Maximum height (diameter of the DAG).
-    fn diameter(&self) -> u32
+    fn diameter(&mut self) -> u32
     where Self: Sized
     {
         crate::topology::sieve::strata::compute_strata(self).diameter
     }
 
     /// Iterator over all points at height `k`.
-    fn height_stratum<'a>(&'a self, k: u32) -> Box<dyn Iterator<Item=Self::Point> + 'a>
+    fn height_stratum<'a>(&'a mut self, k: u32) -> Box<dyn Iterator<Item=Self::Point> + 'a>
     where Self: Sized
     {
         let cache = crate::topology::sieve::strata::compute_strata(self);
@@ -258,7 +258,7 @@ pub trait Sieve: Default + InvalidateCache
     }
 
     /// Iterator over all points at depth `k`.
-    fn depth_stratum<'a>(&'a self, k: u32) -> Box<dyn Iterator<Item=Self::Point> + 'a>
+    fn depth_stratum<'a>(&'a mut self, k: u32) -> Box<dyn Iterator<Item=Self::Point> + 'a>
     where Self::Point: Ord, Self: Sized
     {
         let cache = crate::topology::sieve::strata::compute_strata(self);
@@ -354,7 +354,7 @@ pub trait Sieve: Default + InvalidateCache
         let mut out = Self::default();
         for p in chain {
             for (dst, pay) in self.cone(p) {
-                out.add_arrow(p, dst, (*pay).clone());
+                out.add_arrow(p, dst, pay.clone());
             }
         }
         out
@@ -365,7 +365,7 @@ pub trait Sieve: Default + InvalidateCache
         let mut out = Self::default();
         for q in chain {
             for (src, pay) in self.support(q) {
-                out.add_arrow(src, q, (*pay).clone());
+                out.add_arrow(src, q, pay.clone());
             }
         }
         out

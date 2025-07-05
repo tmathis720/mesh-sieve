@@ -39,7 +39,7 @@ fn main() {
         overlap.add_arrow(PodU64(1), PodU64(1), DummyRemote { rank: 0, remote_point: PodU64(1) });
     }
     complete_stack(&mut stack, &overlap, &comm, rank, size);
-    let arrows: Vec<_> = stack.lift(PodU64(1)).map(|(cap, pay)| (cap, *pay)).collect();
+    let arrows: Vec<_> = stack.lift(PodU64(1)).map(|(cap, pay)| (cap, pay)).collect();
     assert!(arrows.contains(&(PodU64(101), DummyPayload(42))));
     println!("[rank {}] complete_stack_two_ranks passed", rank);
 }

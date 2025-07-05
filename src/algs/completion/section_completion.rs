@@ -5,7 +5,7 @@
 
 pub fn complete_section<V, D, C>(
     section: &mut crate::data::section::Section<V>,
-    overlap: &crate::overlap::overlap::Overlap,
+    overlap: &mut crate::overlap::overlap::Overlap,
     comm: &C,
     _delta: &D,
     my_rank: usize,
