@@ -4,7 +4,7 @@ use crate::mesh_error::MeshSieveError;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Checks if the sieve is a DAG. Returns Err if a cycle is found.
-pub fn check_dag<P: Copy + Eq + std::hash::Hash + Ord, T>(s: &InMemorySieve<P, T>) -> Result<(), MeshSieveError> {
+pub fn check_dag<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T>(s: &InMemorySieve<P, T>) -> Result<(), MeshSieveError> {
     // Kahn's algorithm: count in-degrees
     let mut in_deg = HashMap::new();
     // Initialize in-degrees to 0 for all vertices

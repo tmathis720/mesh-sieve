@@ -83,7 +83,7 @@ pub trait Stack {
 ///
 /// Also embeds two `InMemorySieve`s to represent the base and cap topologies themselves.
 #[derive(Clone, Debug)]
-pub struct InMemoryStack<B: Copy + Eq + std::hash::Hash + Ord, C: Copy + Eq + std::hash::Hash + Ord, P = ()> {
+pub struct InMemoryStack<B: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, C: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, P = ()> {
     /// Underlying base sieve (e.g., mesh connectivity).
     pub base: InMemorySieve<B, P>,
     /// Underlying cap sieve (e.g., DOF connectivity).
@@ -96,8 +96,8 @@ pub struct InMemoryStack<B: Copy + Eq + std::hash::Hash + Ord, C: Copy + Eq + st
 
 impl<B, C, P> InMemoryStack<B, C, P>
 where
-    B: Copy + Eq + std::hash::Hash + Ord,
-    C: Copy + Eq + std::hash::Hash + Ord,
+    B: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    C: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
 {
     /// Creates an empty `InMemoryStack` with no arrows.
     pub fn new() -> Self {
@@ -113,8 +113,8 @@ where
 /// Provides a default implementation for `InMemoryStack`.
 impl<B, C, P: Clone> Default for InMemoryStack<B, C, P>
 where
-    B: Copy + Eq + std::hash::Hash + Ord,
-    C: Copy + Eq + std::hash::Hash + Ord,
+    B: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    C: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
 {
     /// Returns an empty `InMemoryStack`.
     fn default() -> Self {
@@ -129,8 +129,8 @@ where
 
 impl<B, C, P> Stack for InMemoryStack<B, C, P>
 where
-    B: Copy + Eq + std::hash::Hash + Ord,
-    C: Copy + Eq + std::hash::Hash + Ord,
+    B: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    C: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
     P: Clone,
 {
     type Point = B;
@@ -211,8 +211,8 @@ where
 /// Provides accessors for base and cap points for testability.
 impl<B, C, P> InMemoryStack<B, C, P>
 where
-    B: Copy + Eq + std::hash::Hash + Ord,
-    C: Copy + Eq + std::hash::Hash + Ord,
+    B: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    C: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
     P: Clone,
 {
     /// Returns an iterator over all base points with at least one upward arrow.
@@ -325,8 +325,8 @@ fn composed_stack_no_leak() {
 
 impl<B, C, P> InvalidateCache for InMemoryStack<B, C, P>
 where
-    B: Copy + Eq + std::hash::Hash + Ord,
-    C: Copy + Eq + std::hash::Hash + Ord,
+    B: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    C: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
     P: Clone,
 {
     fn invalidate_cache(&mut self) {
@@ -347,8 +347,8 @@ mod tests {
     #[test]
     fn add_and_lift_drop() {
         let mut stack = InMemoryStack::<V, Dof, i32>::new();
-        stack.add_arrow(V(1), Dof(10), 42);
-        stack.add_arrow(V(1), Dof(11), 43);
+        let _ = stack.add_arrow(V(1), Dof(10), 42);
+        let _ = stack.add_arrow(V(1), Dof(11), 43);
         let mut lifted: Vec<_> = stack.lift(V(1)).collect();
         lifted.sort_by_key(|(dof, _)| dof.0);
         assert_eq!(lifted, vec![(Dof(10), 42), (Dof(11), 43)]);
@@ -358,7 +358,7 @@ mod tests {
     #[test]
     fn remove_arrow_behavior() {
         let mut stack = InMemoryStack::<V, Dof, i32>::new();
-        stack.add_arrow(V(1), Dof(10), 99);
+        let _ = stack.add_arrow(V(1), Dof(10), 99);
         assert_eq!(stack.remove_arrow(V(1), Dof(10)).unwrap(), Some(99));
         // Double remove returns None
         assert_eq!(stack.remove_arrow(V(1), Dof(10)).unwrap(), None);
@@ -378,12 +378,12 @@ mod tests {
         struct C(u32);
         // Stack1: A → B
         let mut s1 = InMemoryStack::<A, B, i32>::new();
-        s1.add_arrow(A(1), B(10), 2);
-        s1.add_arrow(A(1), B(11), 3);
+        let _ = s1.add_arrow(A(1), B(10), 2);
+        let _ = s1.add_arrow(A(1), B(11), 3);
         // Stack2: B → C
         let mut s2 = InMemoryStack::<B, C, i32>::new();
-        s2.add_arrow(B(10), C(100), 5);
-        s2.add_arrow(B(11), C(101), 7);
+        let _ = s2.add_arrow(B(10), C(100), 5);
+        let _ = s2.add_arrow(B(11), C(101), 7);
         // Compose: payloads are summed
         let composed = ComposedStack::new(&s1, &s2, |p1, p2| p1 + p2);
         let mut lifted: Vec<_> = composed.lift(A(1)).collect();
@@ -396,9 +396,9 @@ mod tests {
     #[test]
     fn stack_cache_cleared_on_mutation() {
         let mut s = InMemoryStack::<u32, u32, i32>::new();
-        s.add_arrow(1, 10, 2);
+        let _ = s.add_arrow(1, 10, 2);
         let d0 = s.base_mut().unwrap().diameter().unwrap();
-        s.add_arrow(2, 11, 3);
+        let _ = s.add_arrow(2, 11, 3);
         let d1 = s.base_mut().unwrap().diameter().unwrap();
         assert!(d1 >= d0);
     }
@@ -410,7 +410,7 @@ mod tests {
         assert!(s.base_points().next().is_none());
         assert!(s.cap_points().next().is_none());
         // add arrow 1→10
-        s.add_arrow(1,10,());
+        let _ = s.add_arrow(1,10,());
         let bases: Vec<_> = s.base_points().collect();
         let caps:  Vec<_> = s.cap_points().collect();
         assert_eq!(bases, vec![1]);
@@ -503,7 +503,7 @@ mod tests {
     #[test]
     fn stack_vertical_arrows_are_correct() {
         let mut s = InMemoryStack::<u32,u32,i32>::new();
-        s.add_arrow(2, 20, 5);
+        let _ = s.add_arrow(2, 20, 5);
         // The stack's lift and drop reflect the vertical arrows
         let lifted: Vec<_> = s.lift(2).collect();
         assert_eq!(lifted, vec![(20, 5)]);

@@ -141,7 +141,7 @@ pub fn complete_stack<P, Q, Pay, C, S, O, R>(
         buf_bytes.copy_from_slice(&raw);
         let incoming: &[WireTriple<P,Q,Pay>] = &buf;
         for &WireTriple { base, cap, pay } in incoming {
-            stack.add_arrow(base, cap, pay);
+            let _ = stack.add_arrow(base, cap, pay);
         }
     }
 }

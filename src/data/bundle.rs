@@ -154,8 +154,8 @@ mod tests {
         section.set(PointId::new(1).unwrap(), &[10]);
         section.set(PointId::new(2).unwrap(), &[20]);
         let mut stack = InMemoryStack::<PointId, PointId, Orientation>::new();
-        stack.add_arrow(PointId::new(1).unwrap(), PointId::new(101).unwrap(), Orientation::Forward);
-        stack.add_arrow(PointId::new(2).unwrap(), PointId::new(102).unwrap(), Orientation::Forward);
+        let _ = stack.add_arrow(PointId::new(1).unwrap(), PointId::new(101).unwrap(), Orientation::Forward);
+        let _ = stack.add_arrow(PointId::new(2).unwrap(), PointId::new(102).unwrap(), Orientation::Forward);
         let mut bundle = Bundle { stack, section, delta: CopyDelta };
         // Refine: push base values to cap
         bundle.refine([PointId::new(1).unwrap(), PointId::new(2).unwrap()]);
@@ -187,7 +187,7 @@ mod tests {
         let mut section = Section::<i32>::new(atlas.clone());
         section.set(PointId::new(1).unwrap(), &[10,20]);
         let mut stack = InMemoryStack::<PointId,PointId,Orientation>::new();
-        stack.add_arrow(PointId::new(1).unwrap(), PointId::new(101).unwrap(), Orientation::Forward);
+        let _ = stack.add_arrow(PointId::new(1).unwrap(), PointId::new(101).unwrap(), Orientation::Forward);
         let mut bundle = Bundle { stack, section, delta: CopyDelta };
         bundle.refine([PointId::new(1).unwrap()]);
         let vals = bundle.section.restrict(PointId::new(101).unwrap());
@@ -203,7 +203,7 @@ mod tests {
         let mut section = Section::<i32>::new(atlas.clone());
         section.set(PointId::new(1).unwrap(), &[1,2]);
         let mut stack = InMemoryStack::<PointId,PointId,Orientation>::new();
-        stack.add_arrow(PointId::new(1).unwrap(), PointId::new(101).unwrap(), Orientation::Reverse);
+        let _ = stack.add_arrow(PointId::new(1).unwrap(), PointId::new(101).unwrap(), Orientation::Reverse);
         let mut bundle = Bundle { stack, section, delta: CopyDelta };
         bundle.refine([PointId::new(1).unwrap()]);
         // Should get reversed [2,1]
@@ -221,8 +221,8 @@ mod tests {
         section.set(PointId::new(101).unwrap(), &[5]);
         section.set(PointId::new(102).unwrap(), &[7]);
         let mut stack = InMemoryStack::<PointId,PointId,Orientation>::new();
-        stack.add_arrow(PointId::new(1).unwrap(), PointId::new(101).unwrap(), Orientation::Forward);
-        stack.add_arrow(PointId::new(1).unwrap(), PointId::new(102).unwrap(), Orientation::Forward);
+        let _ = stack.add_arrow(PointId::new(1).unwrap(), PointId::new(101).unwrap(), Orientation::Forward);
+        let _ = stack.add_arrow(PointId::new(1).unwrap(), PointId::new(102).unwrap(), Orientation::Forward);
         let mut bundle = Bundle { stack, section, delta: AddDelta };
         bundle.assemble([PointId::new(1).unwrap()]);
         // base receives sum 5+7
@@ -239,8 +239,8 @@ mod tests {
         section.set(PointId::new(101).unwrap(), &[8]);
         section.set(PointId::new(102).unwrap(), &[9]);
         let mut stack = InMemoryStack::<PointId,PointId,Orientation>::new();
-        stack.add_arrow(PointId::new(1).unwrap(), PointId::new(101).unwrap(), Orientation::Forward);
-        stack.add_arrow(PointId::new(1).unwrap(), PointId::new(102).unwrap(), Orientation::Forward);
+        let _ = stack.add_arrow(PointId::new(1).unwrap(), PointId::new(101).unwrap(), Orientation::Forward);
+        let _ = stack.add_arrow(PointId::new(1).unwrap(), PointId::new(102).unwrap(), Orientation::Forward);
         let bundle = Bundle { stack, section, delta: CopyDelta };
         let mut vec: Vec<_> = bundle.dofs(PointId::new(1).unwrap()).collect();
         vec.sort_by_key(|(cap,_)| cap.get());

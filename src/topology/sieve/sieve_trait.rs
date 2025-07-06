@@ -26,9 +26,9 @@ pub use crate::topology::stratum::InvalidateCache;
 /// - Lattice operations (meet, join)
 /// - Strata helpers (height, depth, diameter)
 pub trait Sieve: Default + InvalidateCache
-    where Self::Point: Ord
+    where Self::Point: Ord + std::fmt::Debug
 {
-    type Point: Copy + Eq + std::hash::Hash + Ord;
+    type Point: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug;
     type Payload;
 
     type ConeIter<'a>: Iterator<Item = (Self::Point, Self::Payload)> where Self: 'a;
@@ -230,7 +230,7 @@ pub trait Sieve: Default + InvalidateCache
     fn height(&mut self, p: Self::Point) -> Result<u32, MeshSieveError>
     where Self::Point: Ord, Self: Sized
     {
-        let cache = compute_strata(self);
+        let cache = compute_strata(self)?;
         Ok(cache.height.get(&p).copied().unwrap_or(0))
     }
 
@@ -238,7 +238,7 @@ pub trait Sieve: Default + InvalidateCache
     fn depth(&mut self, p: Self::Point) -> Result<u32, MeshSieveError>
     where Self::Point: Ord, Self: Sized
     {
-        let cache = compute_strata(self);
+        let cache = compute_strata(self)?;
         Ok(cache.depth.get(&p).copied().unwrap_or(0))
     }
 
@@ -246,7 +246,7 @@ pub trait Sieve: Default + InvalidateCache
     fn diameter(&mut self) -> Result<u32, MeshSieveError>
     where Self: Sized
     {
-        Ok(compute_strata(self).diameter)
+        Ok(compute_strata(self)?.diameter)
     }
 
     /// Iterator over all points at height `k`.
@@ -256,7 +256,7 @@ pub trait Sieve: Default + InvalidateCache
     ) -> Result<Box<dyn Iterator<Item=Self::Point> + 'a>, MeshSieveError>
     where Self: Sized
     {
-        let cache = compute_strata(self);
+        let cache = compute_strata(self)?;
         let items = cache
             .strata
             .get(k as usize)
@@ -272,7 +272,7 @@ pub trait Sieve: Default + InvalidateCache
     ) -> Result<Box<dyn Iterator<Item=Self::Point> + 'a>, MeshSieveError>
     where Self::Point: Ord, Self: Sized
     {
-        let cache = compute_strata(self);
+        let cache = compute_strata(self)?;
         let pts: Vec<_> = cache
             .depth
             .iter()

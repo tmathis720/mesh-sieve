@@ -17,7 +17,7 @@ use crate::topology::stratum::StrataCache;
 #[derive(Clone, Debug)]
 pub struct InMemorySieve<P, T=()>
 where
-    P: Ord,
+    P: Ord + std::fmt::Debug,
 {
     /// Outgoing adjacency: maps each point to a vector of (destination, payload) pairs.
     pub adjacency_out: HashMap<P, Vec<(P,T)>>,
@@ -27,7 +27,7 @@ where
     pub strata: OnceCell<StrataCache<P>>,
 }
 
-impl<P: Copy+Eq+std::hash::Hash+Ord, T> Default for InMemorySieve<P,T> {
+impl<P: Copy+Eq+std::hash::Hash+Ord+std::fmt::Debug, T> Default for InMemorySieve<P,T> {
     fn default() -> Self {
         Self {
             adjacency_out: HashMap::new(),
@@ -37,7 +37,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T> Default for InMemorySieve<P,T> {
     }
 }
 
-impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> InMemorySieve<P,T> {
+impl<P: Copy+Eq+std::hash::Hash+Ord+std::fmt::Debug, T:Clone> InMemorySieve<P,T> {
     /// Creates a new, empty `InMemorySieve`.
     pub fn new() -> Self { Self::default() }
     /// Constructs an `InMemorySieve` from an iterator of arrows.
@@ -47,7 +47,10 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> InMemorySieve<P,T> {
     /// let arrows = vec![(1, 2, "a"), (1, 3, "b")];
     /// let sieve = InMemorySieve::from_arrows(arrows);
     /// ```
-    pub fn from_arrows<I:IntoIterator<Item=(P,P,T)>>(arrows:I) -> Self {
+    pub fn from_arrows<I: IntoIterator<Item = (P, P, T)>>(arrows: I) -> Self
+    where
+        T: Clone,
+    {
         let mut sieve = Self::default();
         for (src, dst, payload) in arrows {
             sieve.add_arrow(src, dst, payload);
@@ -58,7 +61,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> InMemorySieve<P,T> {
 
 type ConeMapIter<'a, P, T> = std::iter::Map<std::slice::Iter<'a, (P, T)>, fn(&'a (P, T)) -> (P, T)>;
 
-impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
+impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemorySieve<P,T> {
     type Point = P;
     type Payload = T;
     type ConeIter<'a> = ConeMapIter<'a, P, T> where Self: 'a;
@@ -363,7 +366,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord, T:Clone> Sieve for InMemorySieve<P,T> {
     }
 }
 
-impl<P: Copy+Eq+std::hash::Hash+Ord, T: Clone> InMemorySieve<P, T> {
+impl<P: Copy+Eq+std::hash::Hash+Ord+std::fmt::Debug, T: Clone> InMemorySieve<P, T> {
     fn rebuild_support_from_out(&mut self) {
         self.adjacency_in.clear();
         for (&src, outs) in &self.adjacency_out {

@@ -60,7 +60,7 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> InMemoryS
     }
 }
 
-impl<P: Copy + Eq + std::hash::Hash + Ord, T: Clone> InvalidateCache for InMemorySieve<P, T> {
+impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> InvalidateCache for InMemorySieve<P, T> {
     fn invalidate_cache(&mut self) {
         // wipe strata cache
         self.strata.take();
