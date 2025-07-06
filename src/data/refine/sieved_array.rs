@@ -199,17 +199,17 @@ mod tests {
     fn pt(i: u64) -> PointId { PointId::new(i).unwrap() }
     fn make_sieved() -> SievedArray<PointId, i32> {
         let mut atlas = Atlas::default();
-        atlas.insert(pt(1), 2);
-        atlas.insert(pt(2), 2);
-        atlas.insert(pt(3), 2);
+        atlas.try_insert(pt(1), 2).unwrap();
+        atlas.try_insert(pt(2), 2).unwrap();
+        atlas.try_insert(pt(3), 2).unwrap();
         SievedArray::new(atlas)
     }
 
     #[test]
     fn sieved_array_basic_get_set_iter() {
         let mut atlas = Atlas::default();
-        atlas.insert(pt(1),2);
-        atlas.insert(pt(2),1);
+        atlas.try_insert(pt(1),2).unwrap();
+        atlas.try_insert(pt(2),1).unwrap();
         let mut arr = SievedArray::<PointId,i32>::new(atlas);
         arr.set(pt(1), &[1,2]);
         arr.set(pt(2), &[3]);
@@ -223,8 +223,8 @@ mod tests {
     fn sieved_array_refine_with_sifter_forward_and_reverse() {
         // coarse pt 1 len=2: data [10,20]
         // fine pts 2,3 len=2
-        let mut cat = Atlas::default(); cat.insert(pt(1),2);
-        let mut fat = Atlas::default(); fat.insert(pt(2),2); fat.insert(pt(3),2);
+        let mut cat = Atlas::default(); cat.try_insert(pt(1),2).unwrap();
+        let mut fat = Atlas::default(); fat.try_insert(pt(2),2).unwrap(); fat.try_insert(pt(3),2).unwrap();
         let mut coarse = SievedArray::new(cat);
         let mut fine   = SievedArray::new(fat);
         coarse.set(pt(1), &[10,20]);

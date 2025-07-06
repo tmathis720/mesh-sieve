@@ -73,7 +73,7 @@ mod tests {
     fn make_section(points: &[u64]) -> Section<i32> {
         let mut atlas = Atlas::default();
         for &p in points {
-            atlas.insert(PointId::new(p).unwrap(), 1);
+            atlas.try_insert(PointId::new(p).unwrap(), 1).expect("Failed to insert point into atlas");
         }
         let mut section = Section::new(atlas);
         for &p in points {

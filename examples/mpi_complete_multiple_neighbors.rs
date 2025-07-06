@@ -23,19 +23,19 @@ pub fn main() {
     // Insert all points into atlas before constructing Section
     match rank {
         0 => {
-            atlas.insert(PointId::new(1).unwrap(), 1);
-            atlas.insert(PointId::new(2).unwrap(), 1);
+            atlas.try_insert(PointId::new(1).unwrap(), 1).unwrap();
+            atlas.try_insert(PointId::new(2).unwrap(), 1).unwrap();
             ovlp.add_link(PointId::new(1).unwrap(), 1, PointId::new(101).unwrap());
             ovlp.add_link(PointId::new(2).unwrap(), 2, PointId::new(201).unwrap());
         }
         1 => {
-            atlas.insert(PointId::new(101).unwrap(), 1); // local
-            atlas.insert(PointId::new(1).unwrap(), 1);   // remote (from rank 0)
+            atlas.try_insert(PointId::new(101).unwrap(), 1).unwrap(); // local
+            atlas.try_insert(PointId::new(1).unwrap(), 1).unwrap();   // remote (from rank 0)
             ovlp.add_link(PointId::new(101).unwrap(), 0, PointId::new(1).unwrap());
         }
         2 => {
-            atlas.insert(PointId::new(201).unwrap(), 1); // local
-            atlas.insert(PointId::new(2).unwrap(), 1);   // remote (from rank 0)
+            atlas.try_insert(PointId::new(201).unwrap(), 1).unwrap(); // local
+            atlas.try_insert(PointId::new(2).unwrap(), 1).unwrap();   // remote (from rank 0)
             ovlp.add_link(PointId::new(201).unwrap(), 0, PointId::new(2).unwrap());
         }
         _ => {}

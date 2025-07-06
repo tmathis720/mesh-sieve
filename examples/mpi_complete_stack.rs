@@ -33,7 +33,7 @@ fn main() {
     let mut stack = InMemoryStack::<PodU64, PodU64, DummyPayload>::new();
     let mut overlap = InMemorySieve::<PodU64, DummyRemote>::default();
     if rank == 0 {
-        stack.add_arrow(PodU64(1), PodU64(101), DummyPayload(42));
+        let _ = stack.add_arrow(PodU64(1), PodU64(101), DummyPayload(42));
         overlap.add_arrow(PodU64(1), PodU64(1), DummyRemote { rank: 1, remote_point: PodU64(1) });
     } else {
         overlap.add_arrow(PodU64(1), PodU64(1), DummyRemote { rank: 0, remote_point: PodU64(1) });

@@ -21,5 +21,14 @@ pub enum MeshSieveError {
     /// The mesh topology contains a cycle; expected a DAG.
     #[error("Topology error: cycle detected in mesh (expected DAG)")]
     CycleDetected,
+    /// Attempt to insert a zero-length slice, which is invalid.
+    #[error("Atlas error: zero-length slice is not allowed")]
+    ZeroLengthSlice,
+    /// Attempt to insert a point that’s already in the atlas.
+    #[error("Atlas error: point {0:?} already present")]
+    DuplicatePoint(crate::topology::point::PointId),
+    /// Internal invariant broken: point in order but missing from map.
+    #[error("Atlas internal error: missing length for point {0:?}")]
+    MissingAtlasPoint(crate::topology::point::PointId),
     // TODO: Add more error variants as needed for other modules.
 }

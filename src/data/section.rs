@@ -76,7 +76,7 @@ impl<V: Clone + Default> Section<V> {
 
     /// Add a new point to the section, resizing data as needed.
     pub fn add_point(&mut self, p: PointId, len: usize) {
-        self.atlas.insert(p, len);
+        self.atlas.try_insert(p, len).expect("Failed to insert point into atlas");
         self.data.resize(self.atlas.total_len(), V::default());
         crate::topology::stratum::InvalidateCache::invalidate_cache(self);
     }
@@ -85,7 +85,7 @@ impl<V: Clone + Default> Section<V> {
     pub fn remove_point(&mut self, p: PointId) {
         // Take a snapshot of the old atlas for correct offsets
         let old_atlas = self.atlas.clone();
-        self.atlas.remove_point(p);
+        let _ = self.atlas.remove_point(p);
         // Rebuild data: allocate new vec, copy each remaining slice from old data
         let mut new_data = Vec::with_capacity(self.atlas.total_len());
         for pid in self.atlas.points() {
@@ -160,8 +160,8 @@ mod tests {
 
     fn make_section() -> Section<f64> {
         let mut atlas = Atlas::default();
-        atlas.insert(PointId::new(1).unwrap(), 2); // 2 dof
-        atlas.insert(PointId::new(2).unwrap(), 1);
+        atlas.try_insert(PointId::new(1).unwrap(), 2).unwrap(); // 2 dof
+        atlas.try_insert(PointId::new(2).unwrap(), 1).unwrap();
         Section::<f64>::new(atlas)
     }
 
@@ -216,8 +216,8 @@ mod tests {
     #[test]
     fn section_round_trip_and_scatter() {
         let mut atlas = Atlas::default();
-        atlas.insert(PointId::new(1).unwrap(), 2);
-        atlas.insert(PointId::new(2).unwrap(), 1);
+        atlas.try_insert(PointId::new(1).unwrap(), 2).unwrap();
+        atlas.try_insert(PointId::new(2).unwrap(), 1).unwrap();
         let mut s = Section::<f64>::new(atlas.clone());
         // set and restrict
         s.set(PointId::new(1).unwrap(), &[1.1, 2.2]);
@@ -235,7 +235,7 @@ mod tests {
     fn section_map_trait_and_readonly() {
         use super::Map;
         let mut atlas = Atlas::default();
-        atlas.insert(PointId::new(1).unwrap(), 1);
+        atlas.try_insert(PointId::new(1).unwrap(), 1).unwrap();
         let mut s = Section::<i32>::new(atlas);
         s.set(PointId::new(1).unwrap(), &[42]);
         // Map trait get
@@ -247,7 +247,7 @@ mod tests {
     #[test]
     fn add_point_expands_and_defaults() {
         let mut atlas = Atlas::default();
-        atlas.insert(PointId::new(1).unwrap(), 2);
+        atlas.try_insert(PointId::new(1).unwrap(), 2).unwrap();
         let mut s = Section::<i32>::new(atlas.clone());
         // initial capacity = 2
         assert_eq!(s.iter().count(), 1);
@@ -268,9 +268,9 @@ mod tests {
     fn remove_point_compacts_and_forgets() {
         // build atlas with 3 points, lengths [2,1,2]
         let mut atlas = Atlas::default();
-        atlas.insert(PointId::new(1).unwrap(), 2);
-        atlas.insert(PointId::new(2).unwrap(), 1);
-        atlas.insert(PointId::new(3).unwrap(), 2);
+        atlas.try_insert(PointId::new(1).unwrap(), 2).unwrap();
+        atlas.try_insert(PointId::new(2).unwrap(), 1).unwrap();
+        atlas.try_insert(PointId::new(3).unwrap(), 2).unwrap();
         let mut s = Section::<i32>::new(atlas);
         // set some dummy values
         s.set(PointId::new(1).unwrap(), &[10,11]);

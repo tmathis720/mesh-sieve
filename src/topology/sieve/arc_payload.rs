@@ -2,6 +2,19 @@
 //!
 //! This module provides [`SieveArcPayload`], a wrapper that adapts any [`Sieve`] implementation
 //! to use `Arc<P>` as its payload type, enabling shared ownership and efficient cloning of payloads.
+//!
+//! # Example
+//! ```rust
+//! use mesh_sieve::topology::sieve::arc_payload::SieveArcPayload;
+//! use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
+//! use mesh_sieve::topology::sieve::Sieve;
+//! use mesh_sieve::topology::point::PointId;
+//! let mut s = SieveArcPayload::new(InMemorySieve::<PointId, u32>::default());
+//! s.add_arrow(PointId::new(1).unwrap(), PointId::new(2).unwrap(), std::sync::Arc::new(42));
+//! let d = s.diameter()?;
+//! assert_eq!(d, 1);
+//! # Ok::<(), mesh_sieve::mesh_error::MeshSieveError>(())
+//! ```
 
 use super::sieve_trait::Sieve;
 use crate::topology::stratum::InvalidateCache;

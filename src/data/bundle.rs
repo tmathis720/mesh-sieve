@@ -146,10 +146,10 @@ mod tests {
     #[test]
     fn bundle_basic_refine_and_assemble() {
         let mut atlas = Atlas::default();
-        atlas.insert(PointId::new(1).unwrap(), 1);
-        atlas.insert(PointId::new(2).unwrap(), 1);
-        atlas.insert(PointId::new(101).unwrap(), 1); // cap DOF for 1
-        atlas.insert(PointId::new(102).unwrap(), 1); // cap DOF for 2
+        atlas.try_insert(PointId::new(1).unwrap(), 1).unwrap();
+        atlas.try_insert(PointId::new(2).unwrap(), 1).unwrap();
+        atlas.try_insert(PointId::new(101).unwrap(), 1).unwrap(); // cap DOF for 1
+        atlas.try_insert(PointId::new(102).unwrap(), 1).unwrap(); // cap DOF for 2
         let mut section = Section::<i32>::new(atlas.clone());
         section.set(PointId::new(1).unwrap(), &[10]);
         section.set(PointId::new(2).unwrap(), &[20]);
@@ -182,8 +182,8 @@ mod tests {
     #[test]
     fn multiple_dofs_only_first_moved() {
         let mut atlas = Atlas::default();
-        atlas.insert(PointId::new(1).unwrap(), 2);
-        atlas.insert(PointId::new(101).unwrap(), 2);
+        atlas.try_insert(PointId::new(1).unwrap(), 2).unwrap();
+        atlas.try_insert(PointId::new(101).unwrap(), 2).unwrap();
         let mut section = Section::<i32>::new(atlas.clone());
         section.set(PointId::new(1).unwrap(), &[10,20]);
         let mut stack = InMemoryStack::<PointId,PointId,Orientation>::new();
@@ -198,8 +198,8 @@ mod tests {
     #[test]
     fn reverse_orientation_refine() {
         let mut atlas = Atlas::default();
-        atlas.insert(PointId::new(1).unwrap(), 2);
-        atlas.insert(PointId::new(101).unwrap(), 2);
+        atlas.try_insert(PointId::new(1).unwrap(), 2).unwrap();
+        atlas.try_insert(PointId::new(101).unwrap(), 2).unwrap();
         let mut section = Section::<i32>::new(atlas.clone());
         section.set(PointId::new(1).unwrap(), &[1,2]);
         let mut stack = InMemoryStack::<PointId,PointId,Orientation>::new();
@@ -214,9 +214,9 @@ mod tests {
     fn assemble_with_add_delta() {
         use crate::overlap::delta::AddDelta;
         let mut atlas = Atlas::default();
-        atlas.insert(PointId::new(1).unwrap(), 1);
-        atlas.insert(PointId::new(101).unwrap(), 1);
-        atlas.insert(PointId::new(102).unwrap(), 1);
+        atlas.try_insert(PointId::new(1).unwrap(), 1).unwrap();
+        atlas.try_insert(PointId::new(101).unwrap(), 1).unwrap();
+        atlas.try_insert(PointId::new(102).unwrap(), 1).unwrap();
         let mut section = Section::<i32>::new(atlas.clone());
         section.set(PointId::new(101).unwrap(), &[5]);
         section.set(PointId::new(102).unwrap(), &[7]);
@@ -232,9 +232,9 @@ mod tests {
     #[test]
     fn dofs_iterator() {
         let mut atlas = Atlas::default();
-        atlas.insert(PointId::new(1).unwrap(), 1);
-        atlas.insert(PointId::new(101).unwrap(), 1);
-        atlas.insert(PointId::new(102).unwrap(), 1);
+        atlas.try_insert(PointId::new(1).unwrap(), 1).unwrap();
+        atlas.try_insert(PointId::new(101).unwrap(), 1).unwrap();
+        atlas.try_insert(PointId::new(102).unwrap(), 1).unwrap();
         let mut section = Section::<i32>::new(atlas.clone());
         section.set(PointId::new(101).unwrap(), &[8]);
         section.set(PointId::new(102).unwrap(), &[9]);

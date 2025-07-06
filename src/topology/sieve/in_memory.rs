@@ -43,9 +43,12 @@ impl<P: Copy+Eq+std::hash::Hash+Ord+std::fmt::Debug, T:Clone> InMemorySieve<P,T>
     /// Constructs an `InMemorySieve` from an iterator of arrows.
     ///
     /// # Example
-    /// ```rust,ignore
+    /// ```rust
+    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
+    /// use mesh_sieve::topology::sieve::Sieve;
     /// let arrows = vec![(1, 2, "a"), (1, 3, "b")];
     /// let sieve = InMemorySieve::from_arrows(arrows);
+    /// assert_eq!(sieve.cone(1).count(), 2);
     /// ```
     pub fn from_arrows<I: IntoIterator<Item = (P, P, T)>>(arrows: I) -> Self
     where
@@ -73,7 +76,9 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// by following arrows, along with the payloads of the arrows.
     ///
     /// # Example
-    /// ```rust,ignore
+    /// ```rust
+    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
+    /// use mesh_sieve::topology::sieve::Sieve;
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_arrow(1, 2,());
     /// let mut cone: Vec<_> = s.cone(1).map(|(d, _)| d).collect();
@@ -91,7 +96,9 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// by following arrows in the reverse direction, along with the payloads of the arrows.
     ///
     /// # Example
-    /// ```rust,ignore
+    /// ```rust
+    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
+    /// use mesh_sieve::topology::sieve::Sieve;
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_arrow(1, 2,());
     /// let mut support: Vec<_> = s.support(2).map(|(u, _)| u).collect();
@@ -109,9 +116,12 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// It also invalidates the cache for strata information.
     ///
     /// # Example
-    /// ```rust,ignore
+    /// ```rust
+    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
+    /// use mesh_sieve::topology::sieve::Sieve;
     /// let mut s = InMemorySieve::<u32, char>::new();
     /// s.add_arrow(1, 2, 'a');
+    /// assert_eq!(s.cone(1).count(), 1);
     /// ```
     fn add_arrow(&mut self, src: P, dst: P, payload: T) {
         self.adjacency_out.entry(src).or_default().push((dst, payload.clone()));
@@ -125,7 +135,9 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// It also invalidates the cache for strata information.
     ///
     /// # Example
-    /// ```rust,ignore
+    /// ```rust
+    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
+    /// use mesh_sieve::topology::sieve::Sieve;
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_arrow(1, 2, ());
     /// assert_eq!(s.remove_arrow(1, 2), Some(()));
@@ -150,7 +162,9 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// Adds a point to the sieve, creating empty adjacencies for it.
     ///
     /// # Example
-    /// ```rust,ignore
+    /// ```rust
+    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
+    /// use mesh_sieve::topology::sieve::Sieve;
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_point(1);
     /// assert!(s.adjacency_out.contains_key(&1));
@@ -164,7 +178,9 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// Removes a point and its associated arrows from the sieve.
     ///
     /// # Example
-    /// ```rust,ignore
+    /// ```rust
+    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
+    /// use mesh_sieve::topology::sieve::Sieve;
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_arrow(1, 2, ());
     /// s.remove_point(1);
@@ -179,7 +195,9 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// Adds a base point to the sieve, creating an empty outgoing adjacency for it.
     ///
     /// # Example
-    /// ```rust,ignore
+    /// ```rust
+    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
+    /// use mesh_sieve::topology::sieve::Sieve;
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_base_point(1);
     /// assert!(s.adjacency_out.contains_key(&1));
@@ -191,7 +209,9 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// Adds a cap point to the sieve, creating an empty incoming adjacency for it.
     ///
     /// # Example
-    /// ```rust,ignore
+    /// ```rust
+    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
+    /// use mesh_sieve::topology::sieve::Sieve;
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_cap_point(2);
     /// assert!(s.adjacency_in.contains_key(&2));
@@ -203,7 +223,9 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// Removes a base point and its outgoing arrows from the sieve.
     ///
     /// # Example
-    /// ```rust,ignore
+    /// ```rust
+    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
+    /// use mesh_sieve::topology::sieve::Sieve;
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_arrow(1, 2, ());
     /// s.remove_base_point(1);
@@ -216,7 +238,9 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// Removes a cap point and its incoming arrows from the sieve.
     ///
     /// # Example
-    /// ```rust,ignore
+    /// ```rust
+    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
+    /// use mesh_sieve::topology::sieve::Sieve;
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_arrow(1, 2, ());
     /// s.remove_cap_point(2);
@@ -232,9 +256,14 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// The iterator items are collected into a vector and stored as the new cone.
     ///
     /// # Example
-    /// ```rust,ignore
+    /// ```rust
+    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
+    /// use mesh_sieve::topology::sieve::Sieve;
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.set_cone(1, vec![(2, ()), (3, ())]);
+    /// let mut cone: Vec<_> = s.cone(1).collect();
+    /// cone.sort_by_key(|(d, _)| *d);
+    /// assert_eq!(cone, vec![(2, ()), (3, ())]);
     /// ```
     fn set_cone(&mut self, p: P, chain: impl IntoIterator<Item=(P, T)>) {
         self.adjacency_out.insert(p, chain.into_iter().collect());
@@ -247,9 +276,14 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// The iterator items are appended to the existing cone of the point.
     ///
     /// # Example
-    /// ```rust,ignore
+    /// ```rust
+    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
+    /// use mesh_sieve::topology::sieve::Sieve;
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_cone(1, vec![(2, ()), (3, ())]);
+    /// let mut cone: Vec<_> = s.cone(1).collect();
+    /// cone.sort_by_key(|(d, _)| *d);
+    /// assert_eq!(cone, vec![(2, ()), (3, ())]);
     /// ```
     fn add_cone(&mut self, p: P, chain: impl IntoIterator<Item=(P, T)>) {
         for (d, pay) in chain {
@@ -264,9 +298,14 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// The iterator items are collected into a vector and stored as the new support.
     ///
     /// # Example
-    /// ```rust,ignore
+    /// ```rust
+    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
+    /// use mesh_sieve::topology::sieve::Sieve;
     /// let mut s = InMemorySieve::<u32, ()>::new();
-    /// s.set_support(2, vec![(1, ()), (3, ())]);
+    /// s.set_support(5, vec![(1, ()), (2, ())]);
+    /// let mut support: Vec<_> = s.support(5).collect();
+    /// support.sort_by_key(|(src, _)| *src);
+    /// assert_eq!(support, vec![(1, ()), (2, ())]);
     /// ```
     fn set_support(&mut self, q: P, chain: impl IntoIterator<Item=(P, T)>) {
         self.adjacency_in.insert(q, chain.into_iter().collect());
@@ -285,9 +324,14 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// The iterator items are appended to the existing support of the point.
     ///
     /// # Example
-    /// ```rust,ignore
+    /// ```rust
+    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
+    /// use mesh_sieve::topology::sieve::Sieve;
     /// let mut s = InMemorySieve::<u32, ()>::new();
-    /// s.add_support(2, vec![(3, ()), (4, ())]);
+    /// s.add_support(5, vec![(3, ())]);
+    /// let mut support: Vec<_> = s.support(5).collect();
+    /// support.sort_by_key(|(src, _)| *src);
+    /// assert_eq!(support, vec![(3, ())]);
     /// ```
     fn add_support(&mut self, q: P, chain: impl IntoIterator<Item=(P, T)>) {
         for (src, pay) in chain {
@@ -299,12 +343,14 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// Restricts the sieve to only include arrows originating from the given chain of base points.
     ///
     /// # Example
-    /// ```rust,ignore
+    /// ```rust
+    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
+    /// use mesh_sieve::topology::sieve::Sieve;
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_arrow(1, 2, ());
     /// s.add_arrow(3, 4, ());
     /// let restricted = s.restrict_base(vec![1, 3]);
-    /// assert_eq!(restricted.arrows().count(), 2);
+    /// assert_eq!(restricted.cone(1).count() + restricted.cone(3).count(), 2);
     /// ```
     fn restrict_base(&self, chain: impl IntoIterator<Item=P>) -> Self {
         let mut out = Self::default();
@@ -320,12 +366,14 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// Restricts the sieve to only include arrows ending at the given chain of cap points.
     ///
     /// # Example
-    /// ```rust,ignore
+    /// ```rust
+    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
+    /// use mesh_sieve::topology::sieve::Sieve;
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_arrow(1, 2, ());
     /// s.add_arrow(3, 4, ());
     /// let restricted = s.restrict_cap(vec![2, 4]);
-    /// assert_eq!(restricted.arrows().count(), 2);
+    /// assert_eq!(restricted.support(2).count() + restricted.support(4).count(), 2);
     /// ```
     fn restrict_cap(&self, chain: impl IntoIterator<Item=P>) -> Self {
         let mut out = Self::default();
@@ -341,7 +389,9 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// Returns an iterator over all points in the sieve.
     ///
     /// # Example
-    /// ```rust,ignore
+    /// ```rust
+    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
+    /// use mesh_sieve::topology::sieve::Sieve;
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_arrow(1, 2, ());
     /// let mut all_points: Vec<_> = s.points().collect();
@@ -354,7 +404,9 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// Returns an iterator over all cap points in the sieve.
     ///
     /// # Example
-    /// ```rust,ignore
+    /// ```rust
+    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
+    /// use mesh_sieve::topology::sieve::Sieve;
     /// let mut s = InMemorySieve::<u32, ()>::new();
     /// s.add_arrow(1, 2, ());
     /// let mut all_caps: Vec<_> = s.cap_points().collect();

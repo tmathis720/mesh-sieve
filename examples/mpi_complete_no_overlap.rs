@@ -23,7 +23,7 @@ fn main() {
     }
     let mut atlas = Atlas::default();
     if rank == 2 {
-        atlas.insert(PointId::new(2).unwrap(), 1);
+        atlas.try_insert(PointId::new(2).unwrap(), 1).expect("Failed to insert into atlas");
     }
     let mut sec = Section::<u32>::new(atlas);
     if rank == 2 {

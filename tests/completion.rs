@@ -18,7 +18,7 @@ fn ghost_update_self() {
 
     // Build a section with one value = 42
     let mut atlas = Atlas::default();
-    atlas.insert(p0, 1);
+    atlas.try_insert(p0, 1).expect("Failed to insert point into atlas");
     let mut sec = Section::<u32>::new(atlas);
     sec.set(p0, &[42]);
 

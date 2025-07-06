@@ -91,7 +91,9 @@ mod tests {
         s.add_arrow(v(1), v(2), ());
         s.add_arrow(v(2), v(3), ());
         let mut atlas = Atlas::default();
-        atlas.insert(v(1),1); atlas.insert(v(2),1); atlas.insert(v(3),1);
+        atlas.try_insert(v(1),1).unwrap();
+        atlas.try_insert(v(2),1).unwrap();
+        atlas.try_insert(v(3),1).unwrap();
         let mut sec = Section::<i32>::new(atlas);
         sec.set(v(1), &[10]); sec.set(v(2), &[20]); sec.set(v(3), &[30]);
         // restrict_closure

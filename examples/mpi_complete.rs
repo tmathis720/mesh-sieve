@@ -38,11 +38,11 @@ fn main() {
     // so that after complete_section() each rank can see both values.
     let mut atlas = Atlas::default();
     if rank == 0 {
-        atlas.insert(p0, 1);  // my owned DOF
-        atlas.insert(p1, 1);  // ghost DOF
+        atlas.try_insert(p0, 1).expect("Failed to insert p0 into atlas");  // my owned DOF
+        atlas.try_insert(p1, 1).expect("Failed to insert p1 into atlas");  // ghost DOF
     } else {
-        atlas.insert(p1, 1);
-        atlas.insert(p0, 1);
+        atlas.try_insert(p1, 1).expect("Failed to insert p1 into atlas");
+        atlas.try_insert(p0, 1).expect("Failed to insert p0 into atlas");
     }
     let mut sec = Section::<u32>::new(atlas);
 

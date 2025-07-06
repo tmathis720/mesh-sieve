@@ -5,6 +5,7 @@
 //! for packing degrees‐of‐freedom (DOFs) or other per‐point data into a
 //! single contiguous `Vec` for efficient storage and communication.
 
+use crate::mesh_error::MeshSieveError;
 use crate::topology::point::PointId;
 use crate::topology::stratum::InvalidateCache;
 use std::collections::HashMap;
@@ -36,40 +37,40 @@ impl Atlas {
     /// Returns the starting `offset` of this point’s slice in the
     /// underlying data buffer.
     ///
-    /// # Panics
-    /// - if `len == 0`, since zero‐length slices are reserved/invalid.
-    /// - if `p` has already been inserted.
+    /// # Errors
+    /// Returns `Err(ZeroLengthSlice)` if `len == 0`,
+    /// or `Err(DuplicatePoint(p))` if `p` was already present.
     ///
     /// # Example
-    /// ```rust,ignore
-    /// # use mesh_sieve::data::atlas::Atlas;
-    /// # use mesh_sieve::topology::point::PointId;
+    /// ```rust
+    /// # fn try_main() -> Result<(), mesh_sieve::mesh_error::MeshSieveError> {
+    /// use mesh_sieve::data::atlas::Atlas;
+    /// use mesh_sieve::topology::point::PointId;
     /// let mut atlas = Atlas::default();
-    /// let p = PointId::new(7);
-    /// let offset = atlas.insert(p, 3);
+    /// let p = PointId::new(7)?;
+    /// let offset = atlas.try_insert(p, 3)?;
     /// assert_eq!(offset, 0);
     /// assert_eq!(atlas.total_len(), 3);
+    /// # Ok(())
+    /// # }
     /// ```
-    pub fn insert(&mut self, p: PointId, len: usize) -> usize {
-        // Reserve length must be positive.
-        assert!(len > 0, "len==0 reserved");
-        // Prevent inserting the same point twice.
-        assert!(!self.map.contains_key(&p), "point already present");
-
-        // The starting offset is the current total length.
+    pub fn try_insert(&mut self, p: PointId, len: usize) -> Result<usize, MeshSieveError> {
+        if len == 0 {
+            return Err(MeshSieveError::ZeroLengthSlice);
+        }
+        if self.map.contains_key(&p) {
+            return Err(MeshSieveError::DuplicatePoint(p));
+        }
         let offset = self.total_len;
-
-        // Record the mapping and update insertion order.
         self.map.insert(p, (offset, len));
         self.order.push(p);
-
-        // Advance total length by this slice’s length.
         self.total_len += len;
-
-        // Invalidate caches in any structure built on this Atlas (e.g., Section, SievedArray, etc.)
         InvalidateCache::invalidate_cache(self);
-
-        offset
+        Ok(offset)
+    }
+    #[deprecated(note = "Use `try_insert` which returns Result instead of panicking")]
+    pub fn insert(&mut self, p: PointId, len: usize) -> usize {
+        self.try_insert(p, len).expect("Atlas::insert panicked; use try_insert")
     }
 
     /// Look up the slice descriptor `(offset, len)` for point `p`.
@@ -99,14 +100,19 @@ impl Atlas {
     }
 
     /// Remove a point and its slice from the atlas, recomputing all offsets.
-    pub fn remove_point(&mut self, p: PointId) {
+    pub fn remove_point(&mut self, p: PointId) -> Result<(), MeshSieveError> {
         let _ = self.map.remove(&p);
         self.order.retain(|&x| x != p);
         // Compute new offsets for all remaining points
         let mut next_offset = 0;
         let mut new_offsets = Vec::with_capacity(self.order.len());
         for &pt in &self.order {
-            let len = self.map.get(&pt).map(|&(_, len)| len).unwrap();
+            let len = match self.map.get(&pt) {
+                Some(&(_, len)) => len,
+                None => {
+                    return Err(MeshSieveError::MissingAtlasPoint(pt));
+                }
+            };
             new_offsets.push((pt, next_offset, len));
             next_offset += len;
         }
@@ -116,6 +122,7 @@ impl Atlas {
         }
         self.total_len = next_offset;
         InvalidateCache::invalidate_cache(self);
+        Ok(())
     }
 }
 
@@ -128,11 +135,11 @@ mod tests {
     fn insert_and_lookup() {
         let mut a = Atlas::default();
         let p1 = PointId::new(1).unwrap();
-        let off1 = a.insert(p1, 3);
-        assert_eq!(off1, 0);
+        let off1 = a.try_insert(p1, 3);
+        assert_eq!(off1, Ok(0));
         let p2 = PointId::new(2).unwrap();
-        let off2 = a.insert(p2, 5);
-        assert_eq!(off2, 3);
+        let off2 = a.try_insert(p2, 5);
+        assert_eq!(off2, Ok(3));
 
         assert_eq!(a.get(p1), Some((0, 3)));
         assert_eq!(a.get(p2), Some((3, 5)));
@@ -141,10 +148,9 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
     fn zero_len_rejected() {
         let mut a = Atlas::default();
-        a.insert(PointId::new(7).unwrap(), 0);
+        assert_eq!(a.try_insert(PointId::new(7).unwrap(), 0), Err(MeshSieveError::ZeroLengthSlice));
     }
 
     #[test]
@@ -152,9 +158,9 @@ mod tests {
         use crate::topology::stratum::InvalidateCache;
         use crate::topology::point::PointId;
         let mut atlas = Atlas::default();
-        atlas.insert(PointId::new(1).unwrap(), 2);
+        let _ = atlas.try_insert(PointId::new(1).unwrap(), 2);
         InvalidateCache::invalidate_cache(&mut atlas); // Should be a no-op
-        atlas.insert(PointId::new(2).unwrap(), 1);
+        let _ = atlas.try_insert(PointId::new(2).unwrap(), 1);
         // No panic, and points are present
         assert_eq!(atlas.get(PointId::new(1).unwrap()), Some((0, 2)));
         assert_eq!(atlas.get(PointId::new(2).unwrap()), Some((2, 1)));
@@ -166,10 +172,10 @@ mod tests {
         let p1 = PointId::new(1).unwrap();
         let p2 = PointId::new(2).unwrap();
         let p3 = PointId::new(3).unwrap();
-        a.insert(p1, 3);
-        a.insert(p2, 5);
-        a.insert(p3, 2);
-        a.remove_point(p2);
+        let _ = a.try_insert(p1, 3);
+        let _ = a.try_insert(p2, 5);
+        let _ = a.try_insert(p3, 2);
+        a.remove_point(p2).unwrap();
         // p1 and p3 remain, with p3's offset updated
         assert_eq!(a.get(p1), Some((0, 3)));
         assert_eq!(a.get(p3), Some((3, 2)));
@@ -178,13 +184,12 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "point already present")]
     fn duplicate_insert_panics() {
         let mut a = Atlas::default();
         let p = PointId::new(42).unwrap();
-        a.insert(p, 1);
+        let _ = a.try_insert(p, 1);
         // inserting the same point again must panic
-        a.insert(p, 2);
+        assert_eq!(a.try_insert(p, 2), Err(MeshSieveError::DuplicatePoint(p)));
     }
 
     #[test]
@@ -200,9 +205,9 @@ mod tests {
     fn remove_nonexistent_point_is_noop() {
         let mut a = Atlas::default();
         let p1 = PointId::new(1).unwrap();
-        a.insert(p1, 3);
+        let _ = a.try_insert(p1, 3);
         let pre_len = a.total_len();
-        a.remove_point(PointId::new(999).unwrap()); // does not exist
+        a.remove_point(PointId::new(999).unwrap()).unwrap(); // does not exist
         // should be unchanged
         assert_eq!(a.total_len(), pre_len);
         assert_eq!(a.get(p1), Some((0,3)));
@@ -214,16 +219,16 @@ mod tests {
         let p1 = PointId::new(1).unwrap();
         let p2 = PointId::new(2).unwrap();
         let p3 = PointId::new(3).unwrap();
-        a.insert(p1, 2);
-        a.insert(p2, 4);
-        a.insert(p3, 1);
+        a.try_insert(p1, 2).unwrap();
+        a.try_insert(p2, 4).unwrap();
+        a.try_insert(p3, 1).unwrap();
         // remove first
-        a.remove_point(p1);
+        a.remove_point(p1).unwrap();
         assert_eq!(a.points().collect::<Vec<_>>(), vec![p2, p3]);
         assert_eq!(a.get(p2), Some((0,4)));
         assert_eq!(a.get(p3), Some((4,1)));
         // remove last
-        a.remove_point(p3);
+        a.remove_point(p3).unwrap();
         assert_eq!(a.points().collect::<Vec<_>>(), vec![p2]);
         assert_eq!(a.get(p2), Some((0,4)));
         assert_eq!(a.total_len(), 4);
@@ -234,16 +239,16 @@ mod tests {
         let mut a = Atlas::default();
         let pts = [PointId::new(10).unwrap(), PointId::new(20).unwrap()];
         for &p in &pts {
-            a.insert(p, 5);
+            a.try_insert(p, 5).unwrap();
         }
         for &p in &pts {
-            a.remove_point(p);
+            a.remove_point(p).unwrap();
         }
         // now empty
         assert!(a.points().next().is_none());
         assert_eq!(a.total_len(), 0);
         // reinsert anew
-        let off = a.insert(PointId::new(30).unwrap(), 7);
+        let off = a.try_insert(PointId::new(30).unwrap(), 7).unwrap();
         assert_eq!(off, 0);
         assert_eq!(a.points().collect::<Vec<_>>(), vec![PointId::new(30).unwrap()]);
     }
@@ -251,8 +256,8 @@ mod tests {
     #[test]
     fn serde_roundtrip() {
         let mut a = Atlas::default();
-        a.insert(PointId::new(5).unwrap(), 3);
-        a.insert(PointId::new(6).unwrap(), 2);
+        a.try_insert(PointId::new(5).unwrap(), 3).unwrap();
+        a.try_insert(PointId::new(6).unwrap(), 2).unwrap();
         let ser = serde_json::to_string(&a).expect("serialize");
         let de: Atlas = serde_json::from_str(&ser).expect("deserialize");
         assert_eq!(de.get(PointId::new(5).unwrap()), Some((0,3)));
