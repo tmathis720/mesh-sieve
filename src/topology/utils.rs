@@ -1,9 +1,10 @@
 //! Utility helpers for topology, including DAG assertion.
 use crate::topology::sieve::InMemorySieve;
+use crate::mesh_error::MeshSieveError;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-/// Panics if the sieve contains a cycle (not a DAG).
-pub fn assert_dag<P: Copy + Eq + std::hash::Hash + Ord, T>(s: &InMemorySieve<P, T>) {
+/// Checks if the sieve is a DAG. Returns Err if a cycle is found.
+pub fn check_dag<P: Copy + Eq + std::hash::Hash + Ord, T>(s: &InMemorySieve<P, T>) -> Result<(), MeshSieveError> {
     // Kahn's algorithm: count in-degrees
     let mut in_deg = HashMap::new();
     // Initialize in-degrees to 0 for all vertices
@@ -40,30 +41,32 @@ pub fn assert_dag<P: Copy + Eq + std::hash::Hash + Ord, T>(s: &InMemorySieve<P, 
     // If we have seen all vertices, then the sieve is a DAG
     // If not, it contains a cycle
     if seen.len() != in_deg.len() {
-        panic!("Sieve contains a cycle: not a DAG");
+        return Err(MeshSieveError::CycleDetected);
     }
+    Ok(())
 }
 
 #[cfg(test)]
 mod assert_dag_tests {
-    use super::assert_dag;
+    use super::check_dag;
     use crate::topology::sieve::InMemorySieve;
     use crate::topology::point::PointId;
     use crate::topology::sieve::sieve_trait::Sieve;
+    use crate::mesh_error::MeshSieveError;
 
-    fn v(x: u64) -> PointId { PointId::new(x) }
+    fn v(x: u64) -> PointId { PointId::new(x).unwrap() }
 
     #[test]
     fn empty_sieve_is_dag() {
         let s = InMemorySieve::<PointId, ()>::default();
-        assert_dag(&s);
+        check_dag(&s).unwrap();
     }
 
     #[test]
     fn singleton_node_is_dag() {
         let mut s = InMemorySieve::<PointId, ()>::default();
         s.adjacency_out.insert(v(1), Vec::new());
-        assert_dag(&s);
+        check_dag(&s).unwrap();
     }
 
     #[test]
@@ -71,24 +74,24 @@ mod assert_dag_tests {
         let mut s = InMemorySieve::<u32, ()>::new();
         s.add_arrow(1,2,());
         s.add_arrow(2,3,());
-        assert_dag(&s);
+        check_dag(&s).unwrap();
     }
 
     #[test]
-    #[should_panic(expected = "Sieve contains a cycle")]
-    fn two_node_cycle_panics() {
+    fn two_node_cycle_errors() {
         let mut s = InMemorySieve::<u32, ()>::new();
         s.add_arrow(1,2,());
         s.add_arrow(2,1,());
-        assert_dag(&s);
+        let err = check_dag(&s).unwrap_err();
+        assert!(matches!(err, MeshSieveError::CycleDetected));
     }
 
     #[test]
-    #[should_panic(expected = "Sieve contains a cycle")]
-    fn self_loop_panics() {
+    fn self_loop_errors() {
         let mut s = InMemorySieve::<u32, ()>::new();
         s.add_arrow(5,5,());
-        assert_dag(&s);
+        let err = check_dag(&s).unwrap_err();
+        assert!(matches!(err, MeshSieveError::CycleDetected));
     }
 
     #[test]
@@ -97,26 +100,26 @@ mod assert_dag_tests {
         s.add_arrow(1,2,());
         s.add_arrow(3,4,());
         s.add_arrow(6,5,());
-        assert_dag(&s);
+        check_dag(&s).unwrap();
     }
 
     #[test]
-    #[should_panic(expected = "Sieve contains a cycle")]
-    fn embedded_cycle_panics() {
+    fn embedded_cycle_errors() {
         let mut s = InMemorySieve::<u32, ()>::new();
         s.add_arrow(1,2,());
         s.add_arrow(2,3,());
         s.add_arrow(4,5,());
         s.add_arrow(5,6,());
         s.add_arrow(6,4,());
-        assert_dag(&s);
+        let err = check_dag(&s).unwrap_err();
+        assert!(matches!(err, MeshSieveError::CycleDetected));
     }
 
     #[test]
-    fn repeated_assert_dag_no_panic() {
+    fn repeated_check_dag_no_error() {
         let mut s = InMemorySieve::<u32, ()>::new();
         s.add_arrow(1,2,());
-        assert_dag(&s);
-        assert_dag(&s);
+        check_dag(&s).unwrap();
+        check_dag(&s).unwrap();
     }
 }

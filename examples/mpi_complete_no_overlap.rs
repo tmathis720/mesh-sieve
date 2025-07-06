@@ -23,17 +23,17 @@ fn main() {
     }
     let mut atlas = Atlas::default();
     if rank == 2 {
-        atlas.insert(PointId::new(2), 1);
+        atlas.insert(PointId::new(2).unwrap(), 1);
     }
     let mut sec = Section::<u32>::new(atlas);
     if rank == 2 {
-        sec.set(PointId::new(2), &[42]);
+        sec.set(PointId::new(2).unwrap(), &[42]);
     }
     let mut ovlp = Overlap::default();
     let delta = CopyDelta;
     complete_section(&mut sec, &mut ovlp, &comm, &delta, rank, size);
     if rank == 2 {
-        assert_eq!(sec.restrict(PointId::new(2))[0], 42);
+        assert_eq!(sec.restrict(PointId::new(2).unwrap())[0], 42);
         println!("[rank 2] complete_section_no_overlap passed");
     }
 }

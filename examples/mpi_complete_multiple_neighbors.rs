@@ -23,43 +23,43 @@ pub fn main() {
     // Insert all points into atlas before constructing Section
     match rank {
         0 => {
-            atlas.insert(PointId::new(1), 1);
-            atlas.insert(PointId::new(2), 1);
-            ovlp.add_link(PointId::new(1), 1, PointId::new(101));
-            ovlp.add_link(PointId::new(2), 2, PointId::new(201));
+            atlas.insert(PointId::new(1).unwrap(), 1);
+            atlas.insert(PointId::new(2).unwrap(), 1);
+            ovlp.add_link(PointId::new(1).unwrap(), 1, PointId::new(101).unwrap());
+            ovlp.add_link(PointId::new(2).unwrap(), 2, PointId::new(201).unwrap());
         }
         1 => {
-            atlas.insert(PointId::new(101), 1); // local
-            atlas.insert(PointId::new(1), 1);   // remote (from rank 0)
-            ovlp.add_link(PointId::new(101), 0, PointId::new(1));
+            atlas.insert(PointId::new(101).unwrap(), 1); // local
+            atlas.insert(PointId::new(1).unwrap(), 1);   // remote (from rank 0)
+            ovlp.add_link(PointId::new(101).unwrap(), 0, PointId::new(1).unwrap());
         }
         2 => {
-            atlas.insert(PointId::new(201), 1); // local
-            atlas.insert(PointId::new(2), 1);   // remote (from rank 0)
-            ovlp.add_link(PointId::new(201), 0, PointId::new(2));
+            atlas.insert(PointId::new(201).unwrap(), 1); // local
+            atlas.insert(PointId::new(2).unwrap(), 1);   // remote (from rank 0)
+            ovlp.add_link(PointId::new(201).unwrap(), 0, PointId::new(2).unwrap());
         }
         _ => {}
     }
     // Now construct Section after all atlas.insert
     let mut sec = Section::<u32>::new(atlas);
     if rank == 0 {
-        sec.set(PointId::new(1), &[1]);
-        sec.set(PointId::new(2), &[2]);
+        sec.set(PointId::new(1).unwrap(), &[1]);
+        sec.set(PointId::new(2).unwrap(), &[2]);
     }
     let delta = CopyDelta;
     complete_section(&mut sec, &mut ovlp, &comm, &delta, rank, size);
     match rank {
         0 => {
-            assert_eq!(sec.restrict(PointId::new(1))[0], 1);
-            assert_eq!(sec.restrict(PointId::new(2))[0], 2);
+            assert_eq!(sec.restrict(PointId::new(1).unwrap())[0], 1);
+            assert_eq!(sec.restrict(PointId::new(2).unwrap())[0], 2);
             println!("[rank 0] complete_section_multiple_neighbors passed");
         }
         1 => {
-            assert_eq!(sec.restrict(PointId::new(101))[0], 1);
+            assert_eq!(sec.restrict(PointId::new(101).unwrap())[0], 1);
             println!("[rank 1] complete_section_multiple_neighbors passed");
         }
         2 => {
-            assert_eq!(sec.restrict(PointId::new(201))[0], 2);
+            assert_eq!(sec.restrict(PointId::new(201).unwrap())[0], 2);
             println!("[rank 2] complete_section_multiple_neighbors passed");
         }
         _ => {}

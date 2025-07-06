@@ -146,25 +146,25 @@ mod tests {
 
         // Build Atlas and Section for each rank
         let mut atlas0 = Atlas::default();
-        atlas0.insert(PointId::new(10), 1);
-        atlas0.insert(PointId::new(20), 1);
+        atlas0.insert(PointId::new(10).unwrap(), 1);
+        atlas0.insert(PointId::new(20).unwrap(), 1);
         let mut section0 = Section::new(atlas0);
-        section0.set(PointId::new(10), &[DummyValue(5)]);
-        section0.set(PointId::new(20), &[DummyValue(0)]);
+        section0.set(PointId::new(10).unwrap(), &[DummyValue(5)]);
+        section0.set(PointId::new(20).unwrap(), &[DummyValue(0)]);
         let mut atlas1 = Atlas::default();
-        atlas1.insert(PointId::new(10), 1);
-        atlas1.insert(PointId::new(20), 1);
+        atlas1.insert(PointId::new(10).unwrap(), 1);
+        atlas1.insert(PointId::new(20).unwrap(), 1);
         let mut section1 = Section::new(atlas1);
-        section1.set(PointId::new(10), &[DummyValue(0)]);
-        section1.set(PointId::new(20), &[DummyValue(7)]);
+        section1.set(PointId::new(10).unwrap(), &[DummyValue(0)]);
+        section1.set(PointId::new(20).unwrap(), &[DummyValue(7)]);
 
         // Links and recv_counts for each rank
         let mut links0 = HashMap::new();
-        links0.insert(1, vec![(PointId::new(10), PointId::new(20))]);
+        links0.insert(1, vec![(PointId::new(10).unwrap(), PointId::new(20).unwrap())]);
         let mut recv_counts0 = HashMap::new();
         recv_counts0.insert(1, 1);
         let mut links1 = HashMap::new();
-        links1.insert(0, vec![(PointId::new(20), PointId::new(10))]);
+        links1.insert(0, vec![(PointId::new(20).unwrap(), PointId::new(10).unwrap())]);
         let mut recv_counts1 = HashMap::new();
         recv_counts1.insert(0, 1);
 
@@ -178,8 +178,8 @@ mod tests {
                 &mut section0,
             );
             (
-                section0.restrict(PointId::new(10))[0],
-                section0.restrict(PointId::new(20))[0],
+                section0.restrict(PointId::new(10).unwrap())[0],
+                section0.restrict(PointId::new(20).unwrap())[0],
             )
         });
         let t1 = std::thread::spawn(move || {
@@ -191,8 +191,8 @@ mod tests {
                 &mut section1,
             );
             (
-                section1.restrict(PointId::new(10))[0],
-                section1.restrict(PointId::new(20))[0],
+                section1.restrict(PointId::new(10).unwrap())[0],
+                section1.restrict(PointId::new(20).unwrap())[0],
             )
         });
         let t0_res = t0.join();

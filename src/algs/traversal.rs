@@ -98,7 +98,7 @@ mod tests {
 
     /// helper that builds a toy 2-triangle mesh used in many tests
     fn tiny_mesh() -> InMemorySieve<Point, ()> {
-        let v = |i| PointId::new(i);
+        let v = |i| PointId::new(i).unwrap();
         let mut s = InMemorySieve::<Point, ()>::default();
         // triangle 10 (verts 1,2,3)
         s.add_arrow(v(10), v(1), ());
@@ -120,15 +120,15 @@ mod tests {
     #[test]
     fn closure_contains_cone() {
         let s = tiny_mesh();
-        let cl = closure(&s, [PointId::new(10)]);
-        assert!(cl.contains(&PointId::new(1)));
-        assert!(cl.contains(&PointId::new(2)));
+        let cl = closure(&s, [PointId::new(10).unwrap()]);
+        assert!(cl.contains(&PointId::new(1).unwrap()));
+        assert!(cl.contains(&PointId::new(2).unwrap()));
     }
 
     #[test]
     fn link_disjoint_from_cone_and_support() {
         let s = tiny_mesh();
-        let p = PointId::new(10);
+        let p = PointId::new(10).unwrap();
         let lk = link(&s, p);
         let cone: Vec<_> = s.cone(p).map(|(q, _)| q).collect();
         let sup: Vec<_> = s.support(p).map(|(q, _)| q).collect();

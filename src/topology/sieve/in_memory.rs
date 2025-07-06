@@ -528,9 +528,9 @@ mod covering_api_tests {
     fn cache_invalidation_on_mutation() {
         let mut s = InMemorySieve::<u32, ()>::new();
         s.add_arrow(1, 2, ());
-        let d0 = s.diameter();
+        let d0 = s.diameter().unwrap();
         s.add_point(3);
-        let d1 = s.diameter();
+        let d1 = s.diameter().unwrap();
         assert!(d1 <= d0 + 1);
         s.remove_point(1);
         let _ = s.diameter(); // should not panic

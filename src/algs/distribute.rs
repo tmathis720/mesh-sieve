@@ -29,16 +29,16 @@ use crate::algs::communicator::Communicator;
 /// use mesh_sieve::topology::point::PointId;
 /// use mesh_sieve::algs::distribute_mesh;
 /// let mut global = InMemorySieve::<PointId,()>::default();
-/// global.add_arrow(PointId::new(1), PointId::new(2), ());
-/// global.add_arrow(PointId::new(2), PointId::new(3), ());
+/// global.add_arrow(PointId::new(1).unwrap(), PointId::new(2).unwrap(), ());
+/// global.add_arrow(PointId::new(2).unwrap(), PointId::new(3).unwrap(), ());
 /// let parts = vec![0,1,1];
 /// let comm = NoComm;
 /// let (local, overlap) = distribute_mesh(&global, &parts, &comm);
-/// assert_eq!(local.cone(PointId::new(1)).count(), 0);
-/// assert_eq!(local.cone(PointId::new(2)).count(), 0);
-/// assert_eq!(local.cone(PointId::new(3)).count(), 0);
-/// let ghosts: Vec<_> = overlap.support(PointId::new(2)).collect();
-/// assert!(ghosts.iter().any(|&(src, ref rem)| src == PointId::new(3) && rem.rank == 1), "Expected ghost link (3, rank 1) in overlap");
+/// assert_eq!(local.cone(PointId::new(1).unwrap()).count(), 0);
+/// assert_eq!(local.cone(PointId::new(2).unwrap()).count(), 0);
+/// assert_eq!(local.cone(PointId::new(3).unwrap()).count(), 0);
+/// let ghosts: Vec<_> = overlap.support(PointId::new(2).unwrap()).collect();
+/// assert!(ghosts.iter().any(|&(src, ref rem)| src == PointId::new(3).unwrap() && rem.rank == 1), "Expected ghost link (3, rank 1) in overlap");
 /// ```
 /// # Example (MPI)
 /// ```ignore
@@ -59,9 +59,10 @@ where
     let _n_ranks = comm.size();
     // 1) Build the “overlap” sieve
     let mut overlap = InMemorySieve::<PointId,Remote>::default();
-    for p in mesh.points() {
+    for res in mesh.points() {
+        let p = res;
         let owner = parts[p.get() as usize - 1];
-        let part_pt = PointId::new((owner as u64) + 1);
+        let part_pt = PointId::new((owner as u64) + 1).unwrap();
         if owner != my_rank && p != part_pt {
             overlap.add_arrow(p, part_pt, Remote { rank: owner, remote_point: p });
         }

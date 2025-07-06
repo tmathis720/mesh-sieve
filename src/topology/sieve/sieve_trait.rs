@@ -4,7 +4,10 @@
 //! for representing and manipulating mesh topologies. The trait supports generic point and payload types,
 //! and includes methods for traversing, mutating, and querying the structure.
 
-use crate::topology::stratum::InvalidateCache;
+use crate::mesh_error::MeshSieveError;
+use crate::topology::sieve::strata::compute_strata;
+
+pub use crate::topology::stratum::InvalidateCache;
 
 /// Core bidirectional incidence API for mesh topology.
 ///
@@ -224,49 +227,58 @@ pub trait Sieve: Default + InvalidateCache
 
     // --- strata helpers (default impl via compute_strata) ---
     /// Distance from any zero-in-degree “source” to `p`.
-    fn height(&mut self, p: Self::Point) -> u32
+    fn height(&mut self, p: Self::Point) -> Result<u32, MeshSieveError>
     where Self::Point: Ord, Self: Sized
     {
-        crate::topology::sieve::strata::compute_strata(self)
-            .height.get(&p).copied().unwrap_or(0)
+        let cache = compute_strata(self);
+        Ok(cache.height.get(&p).copied().unwrap_or(0))
     }
 
     /// Distance from `p` down to any zero-out-degree “sink”.
-    fn depth(&mut self, p: Self::Point) -> u32
+    fn depth(&mut self, p: Self::Point) -> Result<u32, MeshSieveError>
     where Self::Point: Ord, Self: Sized
     {
-        crate::topology::sieve::strata::compute_strata(self)
-            .depth.get(&p).copied().unwrap_or(0)
+        let cache = compute_strata(self);
+        Ok(cache.depth.get(&p).copied().unwrap_or(0))
     }
 
     /// Maximum height (diameter of the DAG).
-    fn diameter(&mut self) -> u32
+    fn diameter(&mut self) -> Result<u32, MeshSieveError>
     where Self: Sized
     {
-        crate::topology::sieve::strata::compute_strata(self).diameter
+        Ok(compute_strata(self).diameter)
     }
 
     /// Iterator over all points at height `k`.
-    fn height_stratum<'a>(&'a mut self, k: u32) -> Box<dyn Iterator<Item=Self::Point> + 'a>
+    fn height_stratum<'a>(
+        &'a mut self,
+        k: u32
+    ) -> Result<Box<dyn Iterator<Item=Self::Point> + 'a>, MeshSieveError>
     where Self: Sized
     {
-        let cache = crate::topology::sieve::strata::compute_strata(self);
-        let items: Vec<_> = cache.strata.get(k as usize)
-            .map(|v| v.iter().copied().collect())
-            .unwrap_or_else(Vec::new);
-        Box::new(items.into_iter())
+        let cache = compute_strata(self);
+        let items = cache
+            .strata
+            .get(k as usize)
+            .cloned()
+            .unwrap_or_default();
+        Ok(Box::new(items.into_iter()))
     }
 
     /// Iterator over all points at depth `k`.
-    fn depth_stratum<'a>(&'a mut self, k: u32) -> Box<dyn Iterator<Item=Self::Point> + 'a>
+    fn depth_stratum<'a>(
+        &'a mut self,
+        k: u32
+    ) -> Result<Box<dyn Iterator<Item=Self::Point> + 'a>, MeshSieveError>
     where Self::Point: Ord, Self: Sized
     {
-        let cache = crate::topology::sieve::strata::compute_strata(self);
-        let pts: Vec<_> = cache.depth.into_iter()
-            .filter(|&(_,d)| d==k)
-            .map(|(p,_)| p)
+        let cache = compute_strata(self);
+        let pts: Vec<_> = cache
+            .depth
+            .iter()
+            .filter_map(|(&p, &d)| if d == k { Some(p) } else { None })
             .collect();
-        Box::new(pts.into_iter())
+        Ok(Box::new(pts.into_iter()))
     }
 
     /// # Strata helpers example
@@ -276,26 +288,26 @@ pub trait Sieve: Default + InvalidateCache
     /// # use mesh_sieve::topology::point::PointId;
     /// let mut s = InMemorySieve::<PointId,()>::default();
     /// // 1→2→3→4
-    /// s.add_arrow(PointId::new(1), PointId::new(2), ());
-    /// s.add_arrow(PointId::new(2), PointId::new(3), ());
-    /// s.add_arrow(PointId::new(3), PointId::new(4), ());
-    /// assert_eq!(s.height(PointId::new(4)), 3);
-    /// assert_eq!(s.depth(PointId::new(1)), 3);
-    /// assert_eq!(s.diameter(), 3);
-    /// let h2: Vec<_> = s.height_stratum(2).collect();
-    /// let d1: Vec<_> = s.depth_stratum(1).collect();
+    /// s.add_arrow(PointId::new(1).unwrap(), PointId::new(2).unwrap(), ());
+    /// s.add_arrow(PointId::new(2).unwrap(), PointId::new(3).unwrap(), ());
+    /// s.add_arrow(PointId::new(3).unwrap(), PointId::new(4).unwrap(), ());
+    /// assert_eq!(s.height(PointId::new(4).unwrap())?, 3);
+    /// assert_eq!(s.depth(PointId::new(1).unwrap())?, 3);
+    /// assert_eq!(s.diameter()?, 3);
+    /// let h2: Vec<_> = s.height_stratum(2)?.collect();
+    /// let d1: Vec<_> = s.depth_stratum(1)?.collect();
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
-    /// # Panics
-    /// Strata helpers will panic if used on a Sieve that is not a DAG (directed acyclic graph).
-    /// For example, if there are cycles like `1→2→1`, or if there are bidirectional arrows like `1→2` and `2→1`.
+    /// # Errors
+    /// These methods now return `Err(MeshSieveError::CycleDetected)` on cycles (or other topology errors), instead of panicking.
     ///
     /// # Performance
     /// These helpers are relatively expensive, as they require analyzing the entire Sieve structure.
     /// For incremental or real-time applications, consider caching the results.
     ///
     /// # Example
-    /// ```
+    /// ```rust
     /// use mesh_sieve::topology::sieve::{Sieve, InMemorySieve};
     /// let mut s = InMemorySieve::<u32>::default();
     /// s.add_arrow(1, 2, ());
@@ -306,11 +318,12 @@ pub trait Sieve: Default + InvalidateCache
     /// // 1→2→3→4→5
     /// //    ↘
     /// //      ↙
-    /// assert_eq!(s.height(5), 4);
-    /// assert_eq!(s.depth(1), 4);
-    /// assert_eq!(s.diameter(), 4);
-    /// let h2: Vec<_> = s.height_stratum(2).collect();
-    /// let d1: Vec<_> = s.depth_stratum(1).collect();
+    /// assert_eq!(s.height(5)?, 4);
+    /// assert_eq!(s.depth(1)?, 4);
+    /// assert_eq!(s.diameter()?, 4);
+    /// let h2: Vec<_> = s.height_stratum(2)?.collect();
+    /// let d1: Vec<_> = s.depth_stratum(1)?.collect();
+    /// Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     /// Insert a brand-new point `p` into the domain (no arrows yet).
     fn add_point(&mut self, _p: Self::Point) where Self: InvalidateCache {}

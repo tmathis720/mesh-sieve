@@ -12,7 +12,8 @@
 //! - Implementations of common traits (`Debug`, `Display`, ordering,
 //!   hashing) so `PointId` can be used in maps, sets, and printed easily.
 
-use std::{fmt, num::NonZeroU64};
+use crate::mesh_error::MeshSieveError;
+use std::{convert::TryFrom, fmt, num::NonZeroU64};
 ///
 /// # PETSc SF semantics
 /// In the context of parallel mesh distribution (see Knepley & Karpeev 2009),
@@ -31,31 +32,54 @@ pub struct PointId(NonZeroU64);
 impl PointId {
     /// Creates a new `PointId` from a raw `u64` value.
     ///
-    /// # Panics
-    ///
-    /// Panics if `raw == 0`. We reserve 0 as an invalid or sentinel value.
+    /// Returns an error if `raw == 0`. We reserve 0 as an invalid or sentinel value.
     ///
     /// # Example
     ///
     /// ```rust
     /// # use mesh_sieve::topology::point::PointId;
-    /// let p = PointId::new(1);
+    /// # fn try_example() -> Result<(), mesh_sieve::mesh_error::MeshSieveError> {
+    /// let p = PointId::new(1)?;
     /// assert_eq!(p.get(), 1);
+    /// # Ok(())
+    /// # }
     /// ```
     #[inline]
-    pub fn new(raw: u64) -> Self {
-        // NonZeroU64::new returns Option; `expect` panics if raw == 0
-        PointId(NonZeroU64::new(raw).expect("PointId must be non-zero"))
+    pub fn new(raw: u64) -> Result<Self, MeshSieveError> {
+        NonZeroU64::new(raw)
+            .map(PointId)
+            .ok_or(MeshSieveError::InvalidPointId)
     }
 
-    /// Returns the inner `u64` value of this `PointId`.
-    ///
-    /// This is a cheap, const-time getter. Use it when you need to inspect
-    /// or print the raw integer, but prefer to work with `PointId` otherwise
-    /// for type safety.
+    /// Returns the underlying `u64` value of this `PointId`.
     #[inline]
-    pub const fn get(self) -> u64 {
+    pub fn get(&self) -> u64 {
         self.0.get()
+    }
+
+    /// # Safety
+    /// Caller must ensure `raw != 0`.
+    #[inline]
+    pub unsafe fn new_unchecked(raw: u64) -> Self {
+        // SAFETY: caller must guarantee raw != 0
+        PointId(unsafe { NonZeroU64::new_unchecked(raw) })
+    }
+}
+
+impl TryFrom<u64> for PointId {
+    type Error = MeshSieveError;
+    #[inline]
+    fn try_from(raw: u64) -> Result<Self, MeshSieveError> {
+        PointId::new(raw)
+    }
+}
+
+impl TryFrom<usize> for PointId {
+    type Error = MeshSieveError;
+    #[inline]
+    fn try_from(raw: usize) -> Result<Self, MeshSieveError> {
+        let raw64 = u64::try_from(raw).map_err(|_| MeshSieveError::InvalidPointId)?;
+        PointId::new(raw64)
     }
 }
 
@@ -117,28 +141,58 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_zero_panics() {
-        // Attempting to create with 0 should panic
-        assert!(std::panic::catch_unwind(|| PointId::new(0)).is_err());
+    fn new_zero_returns_error() {
+        // Attempting to create with 0 should return an error
+        assert!(PointId::new(0).is_err());
     }
 
     #[test]
     fn new_and_get() {
-        let p = PointId::new(42);
+        let p = PointId::new(42).unwrap();
         assert_eq!(p.get(), 42);
     }
 
     #[test]
+    fn try_from_u64_success() -> Result<(), MeshSieveError> {
+        let p = PointId::try_from(42u64)?;
+        assert_eq!(p.get(), 42);
+        Ok(())
+    }
+
+    #[test]
+    fn try_from_u64_zero_fails() {
+        assert_eq!(
+            PointId::try_from(0u64).unwrap_err(),
+            MeshSieveError::InvalidPointId
+        );
+    }
+
+    #[test]
+    fn try_from_usize_success() -> Result<(), MeshSieveError> {
+        let p = PointId::try_from(123usize)?;
+        assert_eq!(p.get(), 123);
+        Ok(())
+    }
+
+    #[test]
+    fn try_from_usize_zero_fails() {
+        assert_eq!(
+            PointId::try_from(0usize).unwrap_err(),
+            MeshSieveError::InvalidPointId
+        );
+    }
+
+    #[test]
     fn debug_and_display() {
-        let p = PointId::new(7);
+        let p = PointId::new(7).unwrap();
         assert_eq!(format!("{:?}", p), "PointId(7)");
         assert_eq!(format!("{}", p), "7");
     }
 
     #[test]
     fn ordering_and_hash() {
-        let a = PointId::new(1);
-        let b = PointId::new(2);
+        let a = PointId::new(1).unwrap();
+        let b = PointId::new(2).unwrap();
         // Ordering
         assert!(a < b);
         // HashSet support
@@ -154,18 +208,20 @@ mod tests {
 mod serde_tests {
     use super::*;
     #[test]
-    fn json_roundtrip() {
-        let p = PointId::new(123);
-        let s = serde_json::to_string(&p).unwrap();
-        let p2: PointId = serde_json::from_str(&s).unwrap();
+    fn json_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+        let p = PointId::new(123)?;
+        let s = serde_json::to_string(&p)?;
+        let p2: PointId = serde_json::from_str(&s)?;
         assert_eq!(p2, p);
+        Ok(())
     }
     #[test]
-    fn bincode_roundtrip() {
-        let p = PointId::new(456);
-        let bytes = bincode::serialize(&p).unwrap();
-        let p2: PointId = bincode::deserialize(&bytes).unwrap();
+    fn bincode_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+        let p = PointId::new(456)?;
+        let bytes = bincode::serialize(&p)?;
+        let p2: PointId = bincode::deserialize(&bytes)?;
         assert_eq!(p2, p);
+        Ok(())
     }
 }
 
@@ -188,7 +244,7 @@ mod copy_clone_eq_tests {
     use super::*;
     #[test]
     fn copy_and_clone() {
-        let p = PointId::new(5);
+        let p = PointId::new(5).unwrap();
         let q = p;
         let r = p.clone();
         assert_eq!(p, q);
@@ -196,9 +252,9 @@ mod copy_clone_eq_tests {
     }
     #[test]
     fn eq_and_neq() {
-        let p = PointId::new(8);
-        let q = PointId::new(8);
-        let r = PointId::new(9);
+        let p = PointId::new(8).unwrap();
+        let q = PointId::new(8).unwrap();
+        let r = PointId::new(9).unwrap();
         assert_eq!(p, p);
         assert_eq!(p, q);
         assert_ne!(p, r);
@@ -210,7 +266,7 @@ mod edge_case_tests {
     use super::*;
     #[test]
     fn max_value() {
-        let p = PointId::new(u64::MAX);
+        let p = PointId::new(u64::MAX).unwrap();
         assert_eq!(p.get(), u64::MAX);
     }
 }
@@ -218,3 +274,4 @@ mod edge_case_tests {
 // Add these to dev-dependencies in Cargo.toml:
 // serde_json = "1.0"
 // bincode = "1.3"
+// thiserror = "1.0"

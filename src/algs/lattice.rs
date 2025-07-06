@@ -40,7 +40,7 @@ mod tests {
 
     fn simple_pair() -> (InMemorySieve<P, ()>, P, P) {
         // two triangles sharing an edge
-        let v = |i| PointId::new(i);
+        let v = |i| PointId::new(i).unwrap();
         let t1 = v(10);
         let t2 = v(11);
         let mut s = InMemorySieve::<P, ()>::default();

@@ -19,8 +19,8 @@ fn main() {
 
     // 1) Build a toy global mesh: two arrows 1→2 and 3→4
     let mut global = InMemorySieve::<PointId,()>::default();
-    global.add_arrow(PointId::new(1), PointId::new(2), ());
-    global.add_arrow(PointId::new(3), PointId::new(4), ());
+    global.add_arrow(PointId::new(1).unwrap(), PointId::new(2).unwrap(), ());
+    global.add_arrow(PointId::new(3).unwrap(), PointId::new(4).unwrap(), ());
 
     // 2) Partition map: rank 0 owns {1,2}, rank 1 owns {3,4}
     let parts = (0u64..5).map(|i| if i<=2 { 0 } else { 1 }).collect::<Vec<_>>();
@@ -31,20 +31,20 @@ fn main() {
     // 4) Each rank should see its submesh plus one overlap arrow
     let my_pts: Vec<_> = local.points().collect();
     println!("[rank {}] local points: {:?}", rank, my_pts);
-    let partition_pt = PointId::new((rank as u64) + 1);
+    let partition_pt = PointId::new((rank as u64) + 1).unwrap();
     let ovl_pts: Vec<_> = overlap.cone(partition_pt)
-                                 .map(|(p,_)| p)
+                                 .map(|(p,_)| p.clone())
                                  .collect();
     println!("[rank {}] overlap points: {:?}", rank, ovl_pts);
 
     // Assert: rank 0 sees only PointId(1)→PointId(2) locally,
     //         plus an overlap link from 3→partition(1)
     if rank==0 {
-        assert!(local.points().any(|p| p==PointId::new(1)));
+        assert!(local.points().any(|p| p == PointId::new(1).unwrap()));
         assert!(ovl_pts.is_empty());
     } else {
-        assert!(local.points().any(|p| p==PointId::new(3)));
-        assert!(ovl_pts.contains(&PointId::new(1)));
+        assert!(local.points().any(|p| p == PointId::new(3).unwrap()));
+        assert!(ovl_pts.contains(&PointId::new(1).unwrap()));
     }
 
     println!("[rank {}] distribute_mesh test passed", rank);

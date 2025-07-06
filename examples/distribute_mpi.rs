@@ -19,8 +19,8 @@ fn main() {
     }
     // Build a simple mesh: 1->2, 2->3
     let mut global = InMemorySieve::<PointId,()>::default();
-    global.add_arrow(PointId::new(1), PointId::new(2), ());
-    global.add_arrow(PointId::new(2), PointId::new(3), ());
+    global.add_arrow(PointId::new(1).unwrap(), PointId::new(2).unwrap(), ());
+    global.add_arrow(PointId::new(2).unwrap(), PointId::new(3).unwrap(), ());
     // Partition map: 1→0, 2→1, 3→1
     let parts = vec![0,1,1];
     let (local, overlap) = distribute_mesh(&global, &parts, &comm);

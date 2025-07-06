@@ -82,7 +82,7 @@ mod tests {
     use crate::topology::sieve::in_memory::InMemorySieve;
     use crate::data::section::Map;
 
-    fn v(i: u64) -> PointId { PointId::new(i) }
+    fn v(i: u64) -> PointId { PointId::new(i).unwrap() }
 
     #[test]
     fn restrict_helpers_basic() {

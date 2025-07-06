@@ -21,8 +21,8 @@ fn main() {
     }
 
     // 2) Define two mesh points: p0 for rank 0, p1 for rank 1
-    let p0 = PointId::new(1);
-    let p1 = PointId::new(2);
+    let p0 = PointId::new(1).expect("Failed to create PointId p0");
+    let p1 = PointId::new(2).expect("Failed to create PointId p1");
 
     // 3) Build the Overlap so each rank will send its owned point to the other
     let mut ovlp = Overlap::default();

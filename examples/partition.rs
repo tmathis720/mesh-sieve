@@ -10,11 +10,11 @@ fn main() {
     let (mesh, cells) = {
         let mut s = InMemorySieve::<PointId, ()>::default();
         // Build a small test mesh
-        s.add_arrow(PointId::new(10), PointId::new(1), ());
-        s.add_arrow(PointId::new(10), PointId::new(2), ());
-        s.add_arrow(PointId::new(11), PointId::new(2), ());
-        s.add_arrow(PointId::new(11), PointId::new(3), ());
-        (s, vec![PointId::new(10), PointId::new(11)])
+        s.add_arrow(PointId::new(10).unwrap(), PointId::new(1).unwrap(), ());
+        s.add_arrow(PointId::new(10).unwrap(), PointId::new(2).unwrap(), ());
+        s.add_arrow(PointId::new(11).unwrap(), PointId::new(2).unwrap(), ());
+        s.add_arrow(PointId::new(11).unwrap(), PointId::new(3).unwrap(), ());
+        (s, vec![PointId::new(10).unwrap(), PointId::new(11).unwrap()])
     };
 
     // 2) Build dual graph

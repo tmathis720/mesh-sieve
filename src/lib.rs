@@ -31,6 +31,7 @@ pub mod topology;
 pub mod data;
 pub mod overlap;
 pub mod algs;
+pub mod mesh_error;
 #[cfg(feature = "mpi-support")]
 pub mod partitioning;
 

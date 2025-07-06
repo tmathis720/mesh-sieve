@@ -11,7 +11,7 @@ fn ghost_update_self() {
     // and one receive, but both target the same rank (yourself).
 
     let mut ovlp = Overlap::default();
-    let p0 = PointId::new(1);
+    let p0 = PointId::new(1).unwrap();
 
     // Add a self‐overlap: owner and ghost are the same rank (0).
     ovlp.add_link(p0, /*remote_rank=*/ 0, p0);

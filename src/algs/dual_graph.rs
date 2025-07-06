@@ -112,7 +112,7 @@ mod tests {
 
     // helper to build two triangles sharing an edge
     fn tiny_mesh() -> (InMemorySieve<PointId>, Vec<PointId>) {
-        let v = |i| PointId::new(i);
+        let v = |i| PointId::new(i).unwrap();
         let t0 = v(10);
         let t1 = v(11);
         // vertices

@@ -10,14 +10,14 @@ fn two_rank_tetra_completion() {
     // For simplicity, use PointId(u64) 1..=4 for rank0, 5..=8 for rank1
     // Shared face: 2,3,4 (rank0) <-> 6,7,8 (rank1)
     // We'll map 2<->6, 3<->7, 4<->8 as overlap
-    let cell0 = PointId::new(1);
-    let f0 = PointId::new(2);
-    let f1 = PointId::new(3);
-    let f2 = PointId::new(4);
-    let cell1 = PointId::new(5);
-    let f3 = PointId::new(6);
-    let f4 = PointId::new(7);
-    let f5 = PointId::new(8);
+    let cell0 = PointId::new(1).unwrap();
+    let f0 = PointId::new(2).unwrap();
+    let f1 = PointId::new(3).unwrap();
+    let f2 = PointId::new(4).unwrap();
+    let cell1 = PointId::new(5).unwrap();
+    let f3 = PointId::new(6).unwrap();
+    let f4 = PointId::new(7).unwrap();
+    let f5 = PointId::new(8).unwrap();
     // Rank 0 sieve
     let mut sieve0 = InMemorySieve::default();
     sieve0.add_arrow(

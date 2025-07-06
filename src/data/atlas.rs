@@ -127,10 +127,10 @@ mod tests {
     #[test]
     fn insert_and_lookup() {
         let mut a = Atlas::default();
-        let p1 = PointId::new(1);
+        let p1 = PointId::new(1).unwrap();
         let off1 = a.insert(p1, 3);
         assert_eq!(off1, 0);
-        let p2 = PointId::new(2);
+        let p2 = PointId::new(2).unwrap();
         let off2 = a.insert(p2, 5);
         assert_eq!(off2, 3);
 
@@ -144,7 +144,7 @@ mod tests {
     #[should_panic]
     fn zero_len_rejected() {
         let mut a = Atlas::default();
-        a.insert(PointId::new(7), 0);
+        a.insert(PointId::new(7).unwrap(), 0);
     }
 
     #[test]
@@ -152,20 +152,20 @@ mod tests {
         use crate::topology::stratum::InvalidateCache;
         use crate::topology::point::PointId;
         let mut atlas = Atlas::default();
-        atlas.insert(PointId::new(1), 2);
+        atlas.insert(PointId::new(1).unwrap(), 2);
         InvalidateCache::invalidate_cache(&mut atlas); // Should be a no-op
-        atlas.insert(PointId::new(2), 1);
+        atlas.insert(PointId::new(2).unwrap(), 1);
         // No panic, and points are present
-        assert_eq!(atlas.get(PointId::new(1)), Some((0, 2)));
-        assert_eq!(atlas.get(PointId::new(2)), Some((2, 1)));
+        assert_eq!(atlas.get(PointId::new(1).unwrap()), Some((0, 2)));
+        assert_eq!(atlas.get(PointId::new(2).unwrap()), Some((2, 1)));
     }
 
     #[test]
     fn remove_point_recomputes_offsets() {
         let mut a = Atlas::default();
-        let p1 = PointId::new(1);
-        let p2 = PointId::new(2);
-        let p3 = PointId::new(3);
+        let p1 = PointId::new(1).unwrap();
+        let p2 = PointId::new(2).unwrap();
+        let p3 = PointId::new(3).unwrap();
         a.insert(p1, 3);
         a.insert(p2, 5);
         a.insert(p3, 2);
@@ -181,7 +181,7 @@ mod tests {
     #[should_panic(expected = "point already present")]
     fn duplicate_insert_panics() {
         let mut a = Atlas::default();
-        let p = PointId::new(42);
+        let p = PointId::new(42).unwrap();
         a.insert(p, 1);
         // inserting the same point again must panic
         a.insert(p, 2);
@@ -190,7 +190,7 @@ mod tests {
     #[test]
     fn get_missing_point_returns_none() {
         let a = Atlas::default();
-        let p = PointId::new(99);
+        let p = PointId::new(99).unwrap();
         assert_eq!(a.get(p), None);
         assert_eq!(a.total_len(), 0);
         assert!(a.points().next().is_none());
@@ -199,10 +199,10 @@ mod tests {
     #[test]
     fn remove_nonexistent_point_is_noop() {
         let mut a = Atlas::default();
-        let p1 = PointId::new(1);
+        let p1 = PointId::new(1).unwrap();
         a.insert(p1, 3);
         let pre_len = a.total_len();
-        a.remove_point(PointId::new(999)); // does not exist
+        a.remove_point(PointId::new(999).unwrap()); // does not exist
         // should be unchanged
         assert_eq!(a.total_len(), pre_len);
         assert_eq!(a.get(p1), Some((0,3)));
@@ -211,9 +211,9 @@ mod tests {
     #[test]
     fn remove_first_and_last_points() {
         let mut a = Atlas::default();
-        let p1 = PointId::new(1);
-        let p2 = PointId::new(2);
-        let p3 = PointId::new(3);
+        let p1 = PointId::new(1).unwrap();
+        let p2 = PointId::new(2).unwrap();
+        let p3 = PointId::new(3).unwrap();
         a.insert(p1, 2);
         a.insert(p2, 4);
         a.insert(p3, 1);
@@ -232,7 +232,7 @@ mod tests {
     #[test]
     fn clear_all_then_reinsert() {
         let mut a = Atlas::default();
-        let pts = [PointId::new(10), PointId::new(20)];
+        let pts = [PointId::new(10).unwrap(), PointId::new(20).unwrap()];
         for &p in &pts {
             a.insert(p, 5);
         }
@@ -243,20 +243,20 @@ mod tests {
         assert!(a.points().next().is_none());
         assert_eq!(a.total_len(), 0);
         // reinsert anew
-        let off = a.insert(PointId::new(30), 7);
+        let off = a.insert(PointId::new(30).unwrap(), 7);
         assert_eq!(off, 0);
-        assert_eq!(a.points().collect::<Vec<_>>(), vec![PointId::new(30)]);
+        assert_eq!(a.points().collect::<Vec<_>>(), vec![PointId::new(30).unwrap()]);
     }
 
     #[test]
     fn serde_roundtrip() {
         let mut a = Atlas::default();
-        a.insert(PointId::new(5), 3);
-        a.insert(PointId::new(6), 2);
+        a.insert(PointId::new(5).unwrap(), 3);
+        a.insert(PointId::new(6).unwrap(), 2);
         let ser = serde_json::to_string(&a).expect("serialize");
         let de: Atlas = serde_json::from_str(&ser).expect("deserialize");
-        assert_eq!(de.get(PointId::new(5)), Some((0,3)));
-        assert_eq!(de.get(PointId::new(6)), Some((3,2)));
-        assert_eq!(de.points().collect::<Vec<_>>(), vec![PointId::new(5), PointId::new(6)]);
+        assert_eq!(de.get(PointId::new(5).unwrap()), Some((0,3)));
+        assert_eq!(de.get(PointId::new(6).unwrap()), Some((3,2)));
+        assert_eq!(de.points().collect::<Vec<_>>(), vec![PointId::new(5).unwrap(), PointId::new(6).unwrap()]);
     }
 }

@@ -11,4 +11,5 @@ pub use stack_completion::complete_stack;
 
 pub fn partition_point(rank: usize) -> crate::topology::point::PointId {
     crate::topology::point::PointId::new((rank as u64) + 1)
+        .expect("Failed to create PointId in partition_point")
 }

@@ -17,7 +17,7 @@ pub type Overlap = InMemorySieve<PointId, Remote>;
 /// Returns the partition point for a given rank (centralized for all modules).
 #[inline]
 pub fn partition_point(rank: usize) -> PointId {
-    PointId::new((rank as u64) + 1)
+    PointId::new((rank as u64) + 1).unwrap()
 }
 
 impl Overlap {
@@ -133,19 +133,19 @@ mod tests {
     #[test]
     fn overlap_cache_cleared_on_mutation() {
         let mut ovlp = Overlap::default();
-        ovlp.add_link(PointId::new(1), 1, PointId::new(101));
-        let d0 = ovlp.diameter();
-        ovlp.add_link(PointId::new(2), 2, PointId::new(201));
-        let d1 = ovlp.diameter();
+        ovlp.add_link(PointId::new(1).unwrap(), 1, PointId::new(101).unwrap());
+        let d0 = ovlp.diameter().expect("Failed to compute diameter d0");
+        ovlp.add_link(PointId::new(2).unwrap(), 2, PointId::new(201).unwrap());
+        let d1 = ovlp.diameter().expect("Failed to compute diameter d1");
         assert!(d1 >= d0);
     }
 
     #[test]
     fn add_link_enforces_closure() {
         let mut ovlp = Overlap::default();
-        ovlp.add_link(PointId::new(1), 1, PointId::new(101));
+        ovlp.add_link(PointId::new(1).unwrap(), 1, PointId::new(101).unwrap());
         // After add_link, closure of 1 should be present
-        let closure: Vec<_> = Sieve::closure(&ovlp, std::iter::once(PointId::new(1))).collect();
+        let closure: Vec<_> = Sieve::closure(&ovlp, std::iter::once(PointId::new(1).unwrap())).collect();
         for p in closure {
             assert!(ovlp.points().any(|x| x == p));
         }
@@ -154,8 +154,8 @@ mod tests {
     #[test]
     fn neighbour_ranks_matches_theory() {
         let mut ovlp = Overlap::default();
-        ovlp.add_link(PointId::new(1), 1, PointId::new(101));
-        ovlp.add_link(PointId::new(2), 2, PointId::new(201));
+        ovlp.add_link(PointId::new(1).unwrap(), 1, PointId::new(101).unwrap());
+        ovlp.add_link(PointId::new(2).unwrap(), 2, PointId::new(201).unwrap());
         let ranks: Vec<_> = ovlp.neighbour_ranks(1).collect();
         assert!(ranks.contains(&1));
         let ranks2: Vec<_> = ovlp.neighbour_ranks(2).collect();
@@ -165,12 +165,12 @@ mod tests {
     #[test]
     fn closure_of_star_and_expand_one_layer() {
         let mut ovlp = Overlap::default();
-        ovlp.add_link(PointId::new(1), 1, PointId::new(101));
+        ovlp.add_link(PointId::new(1).unwrap(), 1, PointId::new(101).unwrap());
         let before = ovlp.points().count();
         ovlp.expand_one_layer();
         let after = ovlp.points().count();
         assert!(after >= before);
-        let closure = ovlp.closure_of_star(PointId::new(1));
+        let closure = ovlp.closure_of_star(PointId::new(1).unwrap());
         for p in closure {
             assert!(ovlp.points().any(|x| x == p));
         }

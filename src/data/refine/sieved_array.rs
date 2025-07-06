@@ -196,7 +196,7 @@ mod tests {
     use crate::topology::arrow::Orientation;
     use crate::data::refine::sieved_array::SievedArray;
 
-    fn pt(i: u64) -> PointId { PointId::new(i) }
+    fn pt(i: u64) -> PointId { PointId::new(i).unwrap() }
     fn make_sieved() -> SievedArray<PointId, i32> {
         let mut atlas = Atlas::default();
         atlas.insert(pt(1), 2);

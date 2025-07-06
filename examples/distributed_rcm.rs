@@ -30,16 +30,16 @@ fn main() {
     let mut sieve = InMemorySieve::<PointId, ()>::default();
     for y in 0..ny {
         for x in 0..nx {
-            let v = PointId::new((y * nx + x + 1) as u64);
+            let v = PointId::new((y * nx + x + 1) as u64).unwrap();
             // Right neighbor
             if x + 1 < nx {
-                let v_right = PointId::new((y * nx + (x + 1) + 1) as u64);
+                let v_right = PointId::new((y * nx + (x + 1) + 1) as u64).unwrap();
                 sieve.add_arrow(v, v_right, ());
                 sieve.add_arrow(v_right, v, ());
             }
             // Down neighbor
             if y + 1 < ny {
-                let v_down = PointId::new(((y + 1) * nx + x + 1) as u64);
+                let v_down = PointId::new(((y + 1) * nx + x + 1) as u64).unwrap();
                 sieve.add_arrow(v, v_down, ());
                 sieve.add_arrow(v_down, v, ());
             }
@@ -50,7 +50,7 @@ fn main() {
     let parts = partition_vertices(nx, ny, size);
     let local_vertices: Vec<_> = (0..nx * ny)
         .filter(|&i| parts[i] == rank)
-        .map(|i| PointId::new((i + 1) as u64))
+        .map(|i| PointId::new((i + 1) as u64).unwrap())
         .collect();
     let mut local_sieve = InMemorySieve::<PointId, ()>::default();
     // Build local sieve: add all local vertices and their local edges
@@ -64,7 +64,9 @@ fn main() {
 
     println!("Rank {}: local vertices = {:?}", rank, local_vertices);
     // Count local edges
-    let local_edge_count: usize = local_vertices.iter().map(|&v| local_sieve.cone(v).count()).sum();
+    let local_edge_count: usize = local_vertices.iter().map(|&v| {
+        sieve.cone(v).count()
+    }).sum();
     println!("Rank {}: local edges = {}", rank, local_edge_count);
 
     // Run distributed RCM

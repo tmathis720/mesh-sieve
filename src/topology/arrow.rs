@@ -6,7 +6,8 @@
 //! utility constructors, payload mapping, and a simple `Orientation` enum for
 //! vertical arrows in a `Stack`.
 
-use crate::topology::point::PointId;
+use crate::{mesh_error::MeshSieveError, topology::point::PointId};
+// use crate::mesh_error::MeshSieveError;
 
 /// A directed connection from `src` to `dst` carrying an arbitrary `payload`.
 ///
@@ -23,17 +24,36 @@ pub struct Arrow<P = ()> {
 }
 
 impl<P> Arrow<P> {
-    /// Construct a new `Arrow` from `src` → `dst` with given `payload`.
+    /// Try to build an `Arrow` from *raw* point‐IDs, each validated via `PointId::new`.
     ///
     /// # Examples
     ///
     /// ```rust
-    /// use mesh_sieve::topology::arrow::Arrow;
-    /// use mesh_sieve::topology::point::PointId;
-    /// let a = Arrow::new(PointId::new(1), PointId::new(2), 3u32);
+    /// # use mesh_sieve::topology::arrow::Arrow;
+    /// # fn try_example() -> Result<(), mesh_sieve::mesh_error::MeshSieveError> {
+    /// let a = Arrow::try_new_from_raw(1, 2, 3u32)?;
     /// assert_eq!(a.src.get(), 1);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline]
+    pub fn try_new_from_raw(src_id: u64, dst_id: u64, payload: P) -> Result<Self, MeshSieveError> {
+        let src = PointId::new(src_id)?;
+        let dst = PointId::new(dst_id)?;
+        Ok(Arrow { src, dst, payload })
+    }
+
+    /// Create an arrow from two valid `PointId`s.
+    ///
+    /// # Example
+    /// ```rust
+    /// # use mesh_sieve::topology::arrow::Arrow;
+    /// # use mesh_sieve::topology::point::PointId;
+    /// let src = PointId::new(1)?;
+    /// let dst = PointId::new(2)?;
+    /// let a = Arrow::new(src, dst, 3u32);
     /// assert_eq!(a.dst.get(), 2);
-    /// assert_eq!(a.payload, 3);
+    /// # Ok::<(), mesh_sieve::mesh_error::MeshSieveError>(())
     /// ```
     #[inline]
     pub fn new(src: PointId, dst: PointId, payload: P) -> Self {
@@ -48,25 +68,14 @@ impl<P> Arrow<P> {
         (self.src, self.dst)
     }
 
-    /// Transform the payload `P` to a new type `Q` by applying `f`.
-    ///
-    /// The source and destination remain unchanged. This is handy for
-    /// deriving new arrow views without mutating the original.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use mesh_sieve::topology::arrow::Arrow;
-    /// use mesh_sieve::topology::point::PointId;
-    /// let a = Arrow::new(PointId::new(1), PointId::new(2), 10);
-    /// // Double the payload
-    /// let b = a.clone().map(|v| v * 2);
-    /// assert_eq!(b.payload, 20);
-    /// assert_eq!(b.src, a.src);
-    /// assert_eq!(b.dst, a.dst);
-    /// ```
+    /// Map only the payload; connectivity remains unchanged. Never fails.
+    #[inline]
     pub fn map<Q>(self, f: impl FnOnce(P) -> Q) -> Arrow<Q> {
-        Arrow::new(self.src, self.dst, f(self.payload))
+        Arrow {
+            src: self.src,
+            dst: self.dst,
+            payload: f(self.payload),
+        }
     }
 }
 
@@ -89,8 +98,9 @@ impl Arrow<()> {
 /// The default arrow points from PointId(1) → PointId(1) and carries `()`.
 impl Default for Arrow<()> {
     fn default() -> Self {
-        // We pick a dummy sentinel id `1` for default; users should override.
-        Arrow::unit(PointId::new(1), PointId::new(1))
+        // SAFETY: 1 is non-zero, so this cannot violate the invariant.
+        let p1 = unsafe { PointId::new_unchecked(1) };
+        Arrow::new(p1, p1, ())
     }
 }
 
@@ -120,15 +130,15 @@ mod tests {
 
     #[test]
     fn build_and_endpoints() {
-        let src = PointId::new(1);
-        let dst = PointId::new(2);
+        let src = PointId::new(1).unwrap();
+        let dst = PointId::new(2).unwrap();
         let arrow = Arrow::unit(src, dst);
         assert_eq!(arrow.endpoints(), (src, dst));
     }
 
     #[test]
     fn payload_map() {
-        let arrow = Arrow::new(PointId::new(3), PointId::new(4), 10u32);
+        let arrow = Arrow::new(PointId::new(3).unwrap(), PointId::new(4).unwrap(), 10u32);
         let arrow2 = arrow.map(|v| v * 2);
         assert_eq!(arrow2.payload, 20);
     }
@@ -138,8 +148,8 @@ mod tests {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
-        let a1 = Arrow::unit(PointId::new(5), PointId::new(6));
-        let a2 = Arrow::unit(PointId::new(5), PointId::new(6));
+        let a1 = Arrow::unit(PointId::new(5).unwrap(), PointId::new(6).unwrap());
+        let a2 = Arrow::unit(PointId::new(5).unwrap(), PointId::new(6).unwrap());
 
         // Ensure hashing equal arrows yields same hash
         let mut h1 = DefaultHasher::new();
@@ -151,7 +161,7 @@ mod tests {
 
     #[test]
     fn new_stores_payload() {
-        let a = Arrow::new(PointId::new(7), PointId::new(8), "foo");
+        let a = Arrow::new(PointId::new(7).unwrap(), PointId::new(8).unwrap(), "foo");
         assert_eq!(a.src.get(), 7);
         assert_eq!(a.dst.get(), 8);
         assert_eq!(a.payload, "foo");
@@ -160,19 +170,19 @@ mod tests {
     #[test]
     fn default_is_unit_on_1() {
         let d = Arrow::<()>::default();
-        assert_eq!(d, Arrow::unit(PointId::new(1), PointId::new(1)));
+        assert_eq!(d, Arrow::unit(PointId::new(1).unwrap(), PointId::new(1).unwrap()));
     }
 
     #[test]
     fn debug_prints_struct() {
-        let a = Arrow::new(PointId::new(1), PointId::new(2), 99u8);
+        let a = Arrow::new(PointId::new(1).unwrap(), PointId::new(2).unwrap(), 99u8);
         let dbg = format!("{:?}", a);
         assert!(dbg.contains("Arrow") && dbg.contains("99"));
     }
 
     #[test]
     fn clone_eqs_original() {
-        let a = Arrow::new(PointId::new(3), PointId::new(4), vec![1,2,3]);
+        let a = Arrow::new(PointId::new(3).unwrap(), PointId::new(4).unwrap(), vec![1,2,3]);
         let b = a.clone();
         assert_eq!(a, b);
     }
@@ -192,16 +202,17 @@ mod tests {
 
     #[test]
     fn arrow_with_zero_payload() {
-        let a = Arrow::unit(PointId::new(1), PointId::new(2));
+        let a = Arrow::unit(PointId::new(1).unwrap(), PointId::new(2).unwrap());
         let b = a.clone().map(|()| ());
         assert_eq!(b.payload, ());
     }
 
     #[test]
-    fn serde_arrow_roundtrip() {
-        let a = Arrow::new(PointId::new(1), PointId::new(2), vec![10]);
-        let json = serde_json::to_string(&a).unwrap();
-        let a2: Arrow<Vec<u8>> = serde_json::from_str(&json).unwrap();
+    fn serde_arrow_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+        let a = Arrow::new(PointId::new(1).unwrap(), PointId::new(2).unwrap(), vec![10]);
+        let json = serde_json::to_string(&a)?;
+        let a2: Arrow<Vec<u8>> = serde_json::from_str(&json)?;
         assert_eq!(a, a2);
+        Ok(())
     }
 }

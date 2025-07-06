@@ -160,26 +160,26 @@ mod tests {
 
     fn make_section() -> Section<f64> {
         let mut atlas = Atlas::default();
-        atlas.insert(PointId::new(1), 2); // 2 dof
-        atlas.insert(PointId::new(2), 1);
+        atlas.insert(PointId::new(1).unwrap(), 2); // 2 dof
+        atlas.insert(PointId::new(2).unwrap(), 1);
         Section::<f64>::new(atlas)
     }
 
     #[test]
     fn restrict_and_set() {
         let mut s = make_section();
-        s.set(PointId::new(1), &[1.0, 2.0]);
-        s.set(PointId::new(2), &[3.5]);
+        s.set(PointId::new(1).unwrap(), &[1.0, 2.0]);
+        s.set(PointId::new(2).unwrap(), &[3.5]);
 
-        assert_eq!(s.restrict(PointId::new(1)), &[1.0, 2.0]);
-        assert_eq!(s.restrict(PointId::new(2)), &[3.5]);
+        assert_eq!(s.restrict(PointId::new(1).unwrap()), &[1.0, 2.0]);
+        assert_eq!(s.restrict(PointId::new(2).unwrap()), &[3.5]);
     }
 
     #[test]
     fn iter_order() {
         let mut s = make_section();
-        s.set(PointId::new(1), &[9.0, 8.0]);
-        s.set(PointId::new(2), &[7.0]);
+        s.set(PointId::new(1).unwrap(), &[9.0, 8.0]);
+        s.set(PointId::new(2).unwrap(), &[7.0]);
 
         let collected: Vec<_> = s.iter().map(|(_, sl)| sl[0]).collect();
         assert_eq!(collected, vec![9.0, 7.0]); // atlas order
@@ -189,15 +189,15 @@ mod tests {
     fn map_trait_section_get_and_mut() {
         use super::Map;
         let mut s = make_section();
-        s.set(PointId::new(1), &[1.0, 2.0]);
-        s.set(PointId::new(2), &[3.5]);
+        s.set(PointId::new(1).unwrap(), &[1.0, 2.0]);
+        s.set(PointId::new(2).unwrap(), &[3.5]);
         // get == restrict
         assert_eq!(
-            <Section<f64> as Map<f64>>::get(&s, PointId::new(1)),
-            s.restrict(PointId::new(1))
+            <Section<f64> as Map<f64>>::get(&s, PointId::new(1).unwrap()),
+            s.restrict(PointId::new(1).unwrap())
         );
         // get_mut returns Some for Section
-        assert!(<Section<f64> as Map<f64>>::get_mut(&mut s, PointId::new(1)).is_some());
+        assert!(<Section<f64> as Map<f64>>::get_mut(&mut s, PointId::new(1).unwrap()).is_some());
     }
 
     #[test]
@@ -216,90 +216,90 @@ mod tests {
     #[test]
     fn section_round_trip_and_scatter() {
         let mut atlas = Atlas::default();
-        atlas.insert(PointId::new(1), 2);
-        atlas.insert(PointId::new(2), 1);
+        atlas.insert(PointId::new(1).unwrap(), 2);
+        atlas.insert(PointId::new(2).unwrap(), 1);
         let mut s = Section::<f64>::new(atlas.clone());
         // set and restrict
-        s.set(PointId::new(1), &[1.1, 2.2]);
-        s.set(PointId::new(2), &[3.3]);
-        assert_eq!(s.restrict(PointId::new(1)), &[1.1, 2.2]);
-        assert_eq!(s.restrict(PointId::new(2)), &[3.3]);
+        s.set(PointId::new(1).unwrap(), &[1.1, 2.2]);
+        s.set(PointId::new(2).unwrap(), &[3.3]);
+        assert_eq!(s.restrict(PointId::new(1).unwrap()), &[1.1, 2.2]);
+        assert_eq!(s.restrict(PointId::new(2).unwrap()), &[3.3]);
         // scatter_from
         let mut s2 = Section::<f64>::new(atlas);
         s2.scatter_from(&[1.1, 2.2, 3.3], &[(0, 2), (2, 1)]);
-        assert_eq!(s2.restrict(PointId::new(1)), &[1.1, 2.2]);
-        assert_eq!(s2.restrict(PointId::new(2)), &[3.3]);
+        assert_eq!(s2.restrict(PointId::new(1).unwrap()), &[1.1, 2.2]);
+        assert_eq!(s2.restrict(PointId::new(2).unwrap()), &[3.3]);
     }
 
     #[test]
     fn section_map_trait_and_readonly() {
         use super::Map;
         let mut atlas = Atlas::default();
-        atlas.insert(PointId::new(1), 1);
+        atlas.insert(PointId::new(1).unwrap(), 1);
         let mut s = Section::<i32>::new(atlas);
-        s.set(PointId::new(1), &[42]);
+        s.set(PointId::new(1).unwrap(), &[42]);
         // Map trait get
-        assert_eq!(<Section<i32> as Map<i32>>::get(&s, PointId::new(1)), &[42]);
+        assert_eq!(<Section<i32> as Map<i32>>::get(&s, PointId::new(1).unwrap()), &[42]);
         // Map trait get_mut
-        assert!(<Section<i32> as Map<i32>>::get_mut(&mut s, PointId::new(1)).is_some());
+        assert!(<Section<i32> as Map<i32>>::get_mut(&mut s, PointId::new(1).unwrap()).is_some());
     }
 
     #[test]
     fn add_point_expands_and_defaults() {
         let mut atlas = Atlas::default();
-        atlas.insert(PointId::new(1), 2);
+        atlas.insert(PointId::new(1).unwrap(), 2);
         let mut s = Section::<i32>::new(atlas.clone());
         // initial capacity = 2
         assert_eq!(s.iter().count(), 1);
         // add a new point of length 3
-        s.add_point(PointId::new(2), 3);
+        s.add_point(PointId::new(2).unwrap(), 3);
         // now iter() yields 2 points
         let mut pts: Vec<_> = s.iter().map(|(p, _)| p).collect();
         pts.sort_unstable();
-        assert_eq!(pts, vec![PointId::new(1), PointId::new(2)]);
+        assert_eq!(pts, vec![PointId::new(1).unwrap(), PointId::new(2).unwrap()]);
         // its slice is all default (0)
-        assert_eq!(s.restrict(PointId::new(2)), &[0, 0, 0]);
+        assert_eq!(s.restrict(PointId::new(2).unwrap()), &[0, 0, 0]);
         // setting and reading works
-        s.set(PointId::new(2), &[7,8,9]);
-        assert_eq!(s.restrict(PointId::new(2)), &[7,8,9]);
+        s.set(PointId::new(2).unwrap(), &[7,8,9]);
+        assert_eq!(s.restrict(PointId::new(2).unwrap()), &[7,8,9]);
     }
 
     #[test]
     fn remove_point_compacts_and_forgets() {
         // build atlas with 3 points, lengths [2,1,2]
         let mut atlas = Atlas::default();
-        atlas.insert(PointId::new(1), 2);
-        atlas.insert(PointId::new(2), 1);
-        atlas.insert(PointId::new(3), 2);
+        atlas.insert(PointId::new(1).unwrap(), 2);
+        atlas.insert(PointId::new(2).unwrap(), 1);
+        atlas.insert(PointId::new(3).unwrap(), 2);
         let mut s = Section::<i32>::new(atlas);
         // set some dummy values
-        s.set(PointId::new(1), &[10,11]);
-        s.set(PointId::new(2), &[22]);
-        s.set(PointId::new(3), &[33,34]);
+        s.set(PointId::new(1).unwrap(), &[10,11]);
+        s.set(PointId::new(2).unwrap(), &[22]);
+        s.set(PointId::new(3).unwrap(), &[33,34]);
         // remove the middle point
-        s.remove_point(PointId::new(2));
+        s.remove_point(PointId::new(2).unwrap());
         // now only 1 and 3 remain, in order
         let pts: Vec<_> = s.iter().map(|(p, _)| p).collect();
-        assert_eq!(pts, vec![PointId::new(1), PointId::new(3)]);
+        assert_eq!(pts, vec![PointId::new(1).unwrap(), PointId::new(3).unwrap()]);
         // data buffer should be [10,11,33,34]
         let all: Vec<_> = s.data.iter().copied().collect();
         assert_eq!(all, vec![10,11,33,34]);
         // restricting the removed point panics
-        std::panic::catch_unwind(|| { let _ = s.restrict(PointId::new(2)); }).expect_err("should panic");
+        std::panic::catch_unwind(|| { let _ = s.restrict(PointId::new(2).unwrap()); }).expect_err("should panic");
     }
 
     #[test]
     #[should_panic(expected = "PointId not found in atlas")]
     fn restrict_missing_panics() {
         let s = make_section();
-        let _ = s.restrict(PointId::new(99));
+        let _ = s.restrict(PointId::new(99).unwrap());
     }
 
     #[test]
     #[should_panic(expected = "Input slice length must match")]
     fn set_wrong_length_panics() {
         let mut s = make_section();
-        s.set(PointId::new(1), &[1.0]); // wrong length (expected 2)
+        s.set(PointId::new(1).unwrap(), &[1.0]); // wrong length (expected 2)
     }
 
     #[test]

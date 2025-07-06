@@ -73,11 +73,11 @@ mod tests {
     fn make_section(points: &[u64]) -> Section<i32> {
         let mut atlas = Atlas::default();
         for &p in points {
-            atlas.insert(PointId::new(p), 1);
+            atlas.insert(PointId::new(p).unwrap(), 1);
         }
         let mut section = Section::new(atlas);
         for &p in points {
-            section.set(PointId::new(p), &[p as i32]);
+            section.set(PointId::new(p).unwrap(), &[p as i32]);
         }
         section
     }
@@ -88,11 +88,11 @@ mod tests {
         for (&src, &dst) in owned.iter().zip(ghosted.iter()) {
             // Owner's point src is ghosted to ghost's dst
             ovlp.add_arrow(
-                PointId::new(src),
-                PointId::new(dst),
+                PointId::new(src).unwrap(),
+                PointId::new(dst).unwrap(),
                 Remote {
                     rank: ghost,
-                    remote_point: PointId::new(dst),
+                    remote_point: PointId::new(dst).unwrap(),
                 },
             );
         }
@@ -106,7 +106,7 @@ mod tests {
         let mut ovlp = make_overlap(0, 1, &[1], &[101]);
         let links = neighbour_links(&section, &mut ovlp, 0);
         assert_eq!(links.len(), 1);
-        assert_eq!(links[&1], vec![(PointId::new(1), PointId::new(101))]);
+        assert_eq!(links[&1], vec![(PointId::new(1).unwrap(), PointId::new(101).unwrap())]);
     }
 
     #[test]
@@ -117,7 +117,7 @@ mod tests {
         let links = neighbour_links(&section, &mut ovlp, 1);
         println!("links for ghost rank: {:?}", links);
         assert_eq!(links.len(), 1);
-        assert_eq!(links[&0], vec![(PointId::new(101), PointId::new(1))]);
+        assert_eq!(links[&0], vec![(PointId::new(101).unwrap(), PointId::new(1).unwrap())]);
     }
 
     #[test]
@@ -135,24 +135,24 @@ mod tests {
         let section = make_section(&[1, 2]);
         let mut ovlp = InMemorySieve::<PointId, Remote>::default();
         ovlp.add_arrow(
-            PointId::new(1),
-            PointId::new(101),
+            PointId::new(1).unwrap(),
+            PointId::new(101).unwrap(),
             Remote {
                 rank: 1,
-                remote_point: PointId::new(101),
+                remote_point: PointId::new(101).unwrap(),
             },
         );
         ovlp.add_arrow(
-            PointId::new(2),
-            PointId::new(201),
+            PointId::new(2).unwrap(),
+            PointId::new(201).unwrap(),
             Remote {
                 rank: 2,
-                remote_point: PointId::new(201),
+                remote_point: PointId::new(201).unwrap(),
             },
         );
         let links = neighbour_links(&section, &mut ovlp, 0);
         assert_eq!(links.len(), 2);
-        assert_eq!(links[&1], vec![(PointId::new(1), PointId::new(101))]);
-        assert_eq!(links[&2], vec![(PointId::new(2), PointId::new(201))]);
+        assert_eq!(links[&1], vec![(PointId::new(1).unwrap(), PointId::new(101).unwrap())]);
+        assert_eq!(links[&2], vec![(PointId::new(2).unwrap(), PointId::new(201).unwrap())]);
     }
 }
