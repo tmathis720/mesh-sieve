@@ -48,9 +48,9 @@ fn main() {
 
     // 5) Seed the owned DOF with a distinct value
     if rank == 0 {
-        sec.set(p0, &[100]);
+        sec.try_set(p0, &[100]).expect("Failed to set value for p0");
     } else {
-        sec.set(p1, &[200]);
+        sec.try_set(p1, &[200]).expect("Failed to set value for p1");
     }
 
     // Debug: print neighbour links before exchange
@@ -64,12 +64,14 @@ fn main() {
     // 7) Check the result
     if rank == 0 {
         // rank0 should have received rank1’s 200 into its p1 slot
-        let got = sec.restrict(p1)[0];
+        let got = sec.try_restrict(p1)
+            .expect("Failed to restrict p1")[0];
         println!("rank0: received ghost p1 = {}", got);
         assert_eq!(got, 200);
     } else {
         // rank1 should have received rank0’s 100 into its p0 slot
-        let got = sec.restrict(p0)[0];
+        let got = sec.try_restrict(p0)
+            .expect("Failed to restrict p0")[0];
         println!("rank1: received ghost p0 = {}", got);
         assert_eq!(got, 100);
     }

@@ -30,5 +30,42 @@ pub enum MeshSieveError {
     /// Internal invariant broken: point in order but missing from map.
     #[error("Atlas internal error: missing length for point {0:?}")]
     MissingAtlasPoint(crate::topology::point::PointId),
+    /// Attempt to access data for a point not in the atlas.
+    #[error("Section error: point {0:?} not found in atlas")]
+    PointNotInAtlas(crate::topology::point::PointId),
+    /// Attempt to access a point not in the atlas.
+    #[error("SievedArray error: point {0:?} not found in atlas")]
+    SievedArrayPointNotInAtlas(crate::topology::point::PointId),
+
+    /// Mismatch between expected and provided slice length for a point.
+    #[error("Section error: slice length mismatch for {point:?}: expected {expected}, got {found}")]
+    SliceLengthMismatch {
+        point: crate::topology::point::PointId,
+        expected: usize,
+        found: usize,
+    },
+    /// Mismatch between expected and provided slice length for a point (SievedArray).
+    #[error("SievedArray error: slice length mismatch at {point:?}: expected {expected}, got {found}")]
+    SievedArraySliceLengthMismatch {
+        point: crate::topology::point::PointId,
+        expected: usize,
+        found: usize,
+    },
+
+    /// Attempt to add a point to the section failed at atlas insertion.
+    #[error("Section error: failed to add point {0:?} to atlas: {1}")]
+    AtlasInsertionFailed(crate::topology::point::PointId, #[source] Box<MeshSieveError>),
+    /// Attempt to remove or copy data for a point that disappeared.
+    #[error("Section internal error: missing data for point {0:?}")]
+    MissingSectionPoint(crate::topology::point::PointId),
+    /// Bulk scatter mismatch between total lengths.
+    #[error("Section error: scatter source length mismatch: expected {expected}, got {found}")]
+    ScatterLengthMismatch { expected: usize, found: usize },
+    /// One of the scatter chunks did not fit.
+    #[error("Section error: scatter chunk at offset {offset} of length {len} out of bounds")]
+    ScatterChunkMismatch { offset: usize, len: usize },
+    /// Failure converting count to primitive (should never happen if FromPrimitive is well-behaved).
+    #[error("SievedArray error: cannot convert count {0} via FromPrimitive")]
+    SievedArrayPrimitiveConversionFailure(usize),
     // TODO: Add more error variants as needed for other modules.
 }

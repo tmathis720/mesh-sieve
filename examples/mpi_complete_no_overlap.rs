@@ -27,13 +27,16 @@ fn main() {
     }
     let mut sec = Section::<u32>::new(atlas);
     if rank == 2 {
-        sec.set(PointId::new(2).unwrap(), &[42]);
+        sec.try_set(PointId::new(2).unwrap(), &[42]).expect("Failed to set section value");
     }
     let mut ovlp = Overlap::default();
     let delta = CopyDelta;
     complete_section(&mut sec, &mut ovlp, &comm, &delta, rank, size);
     if rank == 2 {
-        assert_eq!(sec.restrict(PointId::new(2).unwrap())[0], 42);
+        match sec.try_restrict(PointId::new(2).unwrap()) {
+            Ok(values) => assert_eq!(values[0], 42),
+            Err(e) => panic!("Failed to restrict section: {:?}", e),
+        }
         println!("[rank 2] complete_section_no_overlap passed");
     }
 }

@@ -36,103 +36,68 @@ pub struct Bundle<V, D = CopyDelta> {
 impl<V, D> Bundle<V, D>
 where
     V: Clone + Default,
-    // `D` must implement the Delta trait for `V`, with `Part = V`.
     D: crate::overlap::delta::Delta<V, Part = V>,
 {
     /// **Refine**: push data *down* the stack (base → cap).
     ///
-    /// For each base point in the transitive closure of `bases`:
-    /// 1. Read its current value slice (`restrict`) → `base_vals`.
-    /// 2. Lift to each cap point (DOF) via `stack.lift`.
-    /// 3. Call `D::restrict` to extract the part to send.
-    /// 4. Overwrite the cap’s slice with that part.
-    ///
-    /// # Example
-    /// ```ignore
-    /// // Propagate coarse solution values to refined DOF points.
-    /// bundle.refine(mesh_cells_iter);
-    /// ```
-    pub fn refine(&mut self, bases: impl IntoIterator<Item = PointId>) {
-        // Collect actions first to avoid mutable aliasing on `section`.
+    /// # Errors
+    /// Returns an error if any point is missing in the underlying Section.
+    pub fn refine(&mut self, bases: impl IntoIterator<Item = PointId>) -> Result<(), crate::mesh_error::MeshSieveError> {
         let mut actions = Vec::new();
         for b in self.stack.base().closure(bases) {
-            // Clone the base’s slice of values.
-            let base_vals = self.section.restrict(b).to_vec();
-            // Collect all cap points lifted from base `b`, with orientation.
+            let base_vals = self.section.try_restrict(b)?.to_vec();
             let caps: Vec<_> = self.stack.lift(b).collect();
             actions.push((base_vals, caps));
         }
-
-        // Execute actions: for each cap, overwrite its slice.
         for (base_vals, caps) in actions {
             for (cap, orientation) in caps {
                 let mut oriented_vals = base_vals.clone();
                 if let crate::topology::arrow::Orientation::Reverse = orientation {
                     oriented_vals.reverse();
                 }
-                let cap_vals = self.section.restrict_mut(cap);
+                let cap_vals = self.section.try_restrict_mut(cap)?;
                 let n = cap_vals.len().min(oriented_vals.len());
                 cap_vals[..n].clone_from_slice(&oriented_vals[..n]);
             }
         }
+        Ok(())
     }
 
     /// **Assemble**: pull data *up* the stack (cap → base) using `delta`.
     ///
-    /// For each base point in the closure of `bases`:
-    /// 1. Gather all cap points via `stack.lift`.
-    /// 2. Read each cap’s slice (`restrict`) → `cap_vals`.
-    /// 3. Accumulate back into the base slice:
-    ///    `D::fuse(&mut base_vals[0], incoming_part)`.
-    ///
-    /// # Example
-    /// ```ignore
-    /// // Gather refined DOF contributions back to coarse mesh.
-    /// bundle.assemble(mesh_cells_iter);
-    /// ```
-    pub fn assemble(&mut self, bases: impl IntoIterator<Item = PointId>) {
-        // Collect actions first to avoid borrow conflicts on `section`.
+    /// # Errors
+    /// Returns an error if any point is missing in the underlying Section.
+    pub fn assemble(&mut self, bases: impl IntoIterator<Item = PointId>) -> Result<(), crate::mesh_error::MeshSieveError> {
         let mut actions = Vec::new();
         for b in self.stack.base().closure(bases) {
-            // Identify all caps attached to base `b`.
             let caps: Vec<_> = self.stack.lift(b).map(|(cap, _)| cap).collect();
-            // Clone each cap’s slice of values.
             let cap_vals: Vec<_> = caps
                 .iter()
-                .map(|&cap| self.section.restrict(cap).to_vec())
-                .collect();
+                .map(|&cap| self.section.try_restrict(cap).map(|sl| sl.to_vec()))
+                .collect::<Result<_,_>>()?;
             actions.push((b, cap_vals));
         }
-
-        // Execute fuse operations: accumulate into each base.
         for (b, cap_vals_vec) in actions {
-            let base_vals = self.section.restrict_mut(b);
-            for cap_vals in cap_vals_vec.iter() {
+            let base_vals = self.section.try_restrict_mut(b)?;
+            for cap_vals in cap_vals_vec {
                 if !cap_vals.is_empty() {
-                    // Merge with the delta strategy.
                     D::fuse(&mut base_vals[0], D::restrict(&cap_vals[0]));
                 }
             }
         }
+        Ok(())
     }
 
     /// Iterate over `(cap_point, &[V])` pairs for all DOFs attached to base `p`.
     ///
-    /// Yields each cap point and an immutable view into its data slice.
-    ///
-    /// # Example
-    /// ```ignore
-    /// for (dof_pt, values) in bundle.dofs(cell_pt) {
-    ///     // use values[..] for computation…
-    /// }
-    /// ```
+    /// # Errors
+    /// Returns an error for any cap point missing in the underlying Section.
     pub fn dofs<'a>(
         &'a self,
         p: PointId
-    ) -> impl Iterator<Item = (PointId, &'a [V])> + 'a {
+    ) -> impl Iterator<Item = Result<(PointId, &'a [V]), crate::mesh_error::MeshSieveError>> + 'a {
         self.stack.lift(p)
-            // Map each cap point to its data slice.
-            .map(move |(cap, _)| (cap, self.section.restrict(cap)))
+            .map(move |(cap, _)| self.section.try_restrict(cap).map(|sl| (cap, sl)))
     }
 }
 
@@ -151,22 +116,22 @@ mod tests {
         atlas.try_insert(PointId::new(101).unwrap(), 1).unwrap(); // cap DOF for 1
         atlas.try_insert(PointId::new(102).unwrap(), 1).unwrap(); // cap DOF for 2
         let mut section = Section::<i32>::new(atlas.clone());
-        section.set(PointId::new(1).unwrap(), &[10]);
-        section.set(PointId::new(2).unwrap(), &[20]);
+        section.try_set(PointId::new(1).unwrap(), &[10]).unwrap();
+        section.try_set(PointId::new(2).unwrap(), &[20]).unwrap();
         let mut stack = InMemoryStack::<PointId, PointId, Orientation>::new();
         let _ = stack.add_arrow(PointId::new(1).unwrap(), PointId::new(101).unwrap(), Orientation::Forward);
         let _ = stack.add_arrow(PointId::new(2).unwrap(), PointId::new(102).unwrap(), Orientation::Forward);
         let mut bundle = Bundle { stack, section, delta: CopyDelta };
         // Refine: push base values to cap
-        bundle.refine([PointId::new(1).unwrap(), PointId::new(2).unwrap()]);
-        assert_eq!(bundle.section.restrict(PointId::new(101).unwrap()), &[10]);
-        assert_eq!(bundle.section.restrict(PointId::new(102).unwrap()), &[20]);
+        bundle.refine([PointId::new(1).unwrap(), PointId::new(2).unwrap()]).unwrap();
+        assert_eq!(bundle.section.try_restrict(PointId::new(101).unwrap()).unwrap(), &[10]);
+        assert_eq!(bundle.section.try_restrict(PointId::new(102).unwrap()).unwrap(), &[20]);
         // Assemble: pull cap values back to base
-        bundle.section.set(PointId::new(101).unwrap(), &[30]);
-        bundle.section.set(PointId::new(102).unwrap(), &[40]);
-        bundle.assemble([PointId::new(1).unwrap(), PointId::new(2).unwrap()]);
-        assert_eq!(bundle.section.restrict(PointId::new(1).unwrap()), &[30]);
-        assert_eq!(bundle.section.restrict(PointId::new(2).unwrap()), &[40]);
+        bundle.section.try_set(PointId::new(101).unwrap(), &[30]).unwrap();
+        bundle.section.try_set(PointId::new(102).unwrap(), &[40]).unwrap();
+        bundle.assemble([PointId::new(1).unwrap(), PointId::new(2).unwrap()]).unwrap();
+        assert_eq!(bundle.section.try_restrict(PointId::new(1).unwrap()).unwrap(), &[30]);
+        assert_eq!(bundle.section.try_restrict(PointId::new(2).unwrap()).unwrap(), &[40]);
     }
     #[test]
     fn empty_bundle_noop() {
@@ -175,8 +140,8 @@ mod tests {
         let stack = InMemoryStack::<PointId,PointId,Orientation>::new();
         let mut bundle = Bundle { stack, section, delta: CopyDelta };
         // Should not panic, nothing to do
-        bundle.refine(std::iter::empty::<PointId>());
-        bundle.assemble(std::iter::empty::<PointId>());
+        bundle.refine(std::iter::empty::<PointId>()).unwrap();
+        bundle.assemble(std::iter::empty::<PointId>()).unwrap();
     }
 
     #[test]
@@ -185,12 +150,12 @@ mod tests {
         atlas.try_insert(PointId::new(1).unwrap(), 2).unwrap();
         atlas.try_insert(PointId::new(101).unwrap(), 2).unwrap();
         let mut section = Section::<i32>::new(atlas.clone());
-        section.set(PointId::new(1).unwrap(), &[10,20]);
+        section.try_set(PointId::new(1).unwrap(), &[10,20]).unwrap();
         let mut stack = InMemoryStack::<PointId,PointId,Orientation>::new();
         let _ = stack.add_arrow(PointId::new(1).unwrap(), PointId::new(101).unwrap(), Orientation::Forward);
         let mut bundle = Bundle { stack, section, delta: CopyDelta };
-        bundle.refine([PointId::new(1).unwrap()]);
-        let vals = bundle.section.restrict(PointId::new(101).unwrap());
+        bundle.refine([PointId::new(1).unwrap()]).unwrap();
+        let vals = bundle.section.try_restrict(PointId::new(101).unwrap()).unwrap();
         // Both slots should be copied
         assert_eq!(vals, &[10, 20]);
     }
@@ -201,13 +166,13 @@ mod tests {
         atlas.try_insert(PointId::new(1).unwrap(), 2).unwrap();
         atlas.try_insert(PointId::new(101).unwrap(), 2).unwrap();
         let mut section = Section::<i32>::new(atlas.clone());
-        section.set(PointId::new(1).unwrap(), &[1,2]);
+        section.try_set(PointId::new(1).unwrap(), &[1,2]).unwrap();
         let mut stack = InMemoryStack::<PointId,PointId,Orientation>::new();
         let _ = stack.add_arrow(PointId::new(1).unwrap(), PointId::new(101).unwrap(), Orientation::Reverse);
         let mut bundle = Bundle { stack, section, delta: CopyDelta };
-        bundle.refine([PointId::new(1).unwrap()]);
+        bundle.refine([PointId::new(1).unwrap()]).unwrap();
         // Should get reversed [2,1]
-        assert_eq!(bundle.section.restrict(PointId::new(101).unwrap()), &[2,1]);
+        assert_eq!(bundle.section.try_restrict(PointId::new(101).unwrap()).unwrap(), &[2,1]);
     }
 
     #[test]
@@ -218,15 +183,15 @@ mod tests {
         atlas.try_insert(PointId::new(101).unwrap(), 1).unwrap();
         atlas.try_insert(PointId::new(102).unwrap(), 1).unwrap();
         let mut section = Section::<i32>::new(atlas.clone());
-        section.set(PointId::new(101).unwrap(), &[5]);
-        section.set(PointId::new(102).unwrap(), &[7]);
+        section.try_set(PointId::new(101).unwrap(), &[5]).unwrap();
+        section.try_set(PointId::new(102).unwrap(), &[7]).unwrap();
         let mut stack = InMemoryStack::<PointId,PointId,Orientation>::new();
         let _ = stack.add_arrow(PointId::new(1).unwrap(), PointId::new(101).unwrap(), Orientation::Forward);
         let _ = stack.add_arrow(PointId::new(1).unwrap(), PointId::new(102).unwrap(), Orientation::Forward);
         let mut bundle = Bundle { stack, section, delta: AddDelta };
-        bundle.assemble([PointId::new(1).unwrap()]);
+        bundle.assemble([PointId::new(1).unwrap()]).unwrap();
         // base receives sum 5+7
-        assert_eq!(bundle.section.restrict(PointId::new(1).unwrap()), &[12]);
+        assert_eq!(bundle.section.try_restrict(PointId::new(1).unwrap()).unwrap(), &[12]);
     }
 
     #[test]
@@ -236,13 +201,14 @@ mod tests {
         atlas.try_insert(PointId::new(101).unwrap(), 1).unwrap();
         atlas.try_insert(PointId::new(102).unwrap(), 1).unwrap();
         let mut section = Section::<i32>::new(atlas.clone());
-        section.set(PointId::new(101).unwrap(), &[8]);
-        section.set(PointId::new(102).unwrap(), &[9]);
+        section.try_set(PointId::new(101).unwrap(), &[8]).unwrap();
+        section.try_set(PointId::new(102).unwrap(), &[9]).unwrap();
         let mut stack = InMemoryStack::<PointId,PointId,Orientation>::new();
         let _ = stack.add_arrow(PointId::new(1).unwrap(), PointId::new(101).unwrap(), Orientation::Forward);
         let _ = stack.add_arrow(PointId::new(1).unwrap(), PointId::new(102).unwrap(), Orientation::Forward);
         let bundle = Bundle { stack, section, delta: CopyDelta };
-        let mut vec: Vec<_> = bundle.dofs(PointId::new(1).unwrap()).collect();
+        let vec: Vec<_> = bundle.dofs(PointId::new(1).unwrap()).collect();
+        let mut vec = vec.into_iter().collect::<Result<Vec<_>, _>>().unwrap();
         vec.sort_by_key(|(cap,_)| cap.get());
         assert_eq!(vec, vec![
             (PointId::new(101).unwrap(), &[8][..]),
@@ -251,12 +217,12 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "PointId not found in atlas")]
-    fn refine_panics_on_unknown_base() {
+    fn refine_unknown_base_errors() {
         let atlas = Atlas::default();
         let section = Section::<i32>::new(atlas.clone());
         let stack = InMemoryStack::<PointId,PointId,Orientation>::new();
         let mut bundle = Bundle { stack, section, delta: CopyDelta };
-        bundle.refine([PointId::new(999).unwrap()]);
+        let err = bundle.refine([PointId::new(999).unwrap()]).unwrap_err();
+        assert!(matches!(err, crate::mesh_error::MeshSieveError::PointNotInAtlas(pid) if pid.get() == 999));
     }
 }

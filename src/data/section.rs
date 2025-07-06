@@ -5,6 +5,7 @@
 //! methods for inserting, accessing, and iterating per-point data slices.
 
 use crate::data::atlas::Atlas;
+use crate::mesh_error::MeshSieveError;
 use crate::topology::point::PointId;
 use crate::topology::stratum::InvalidateCache;
 
@@ -23,99 +24,116 @@ impl<V: Clone + Default> Section<V> {
     /// Initializes the data buffer with `V::default()` repeated for each
     /// degree of freedom in the atlas.
     pub fn new(atlas: Atlas) -> Self {
-        // Fill `data` with default values up to total_len from atlas.
         let data = vec![V::default(); atlas.total_len()];
         Section { atlas, data }
     }
 
     /// Read-only view of the data slice for a given point `p`.
     ///
-    /// # Panics
-    /// Panics if `p` is not registered in the atlas.
-    #[inline]
+    /// # Errors
+    /// Returns `Err(PointNotInAtlas(p))` if the point is not registered in the atlas,
+    /// or `Err(MissingSectionPoint(p))` if the data buffer is inconsistent.
+    pub fn try_restrict(&self, p: PointId) -> Result<&[V], MeshSieveError> {
+        let (offset, len) = self.atlas.get(p).ok_or(MeshSieveError::PointNotInAtlas(p))?;
+        self.data.get(offset..offset+len).ok_or(MeshSieveError::MissingSectionPoint(p))
+    }
+    #[deprecated(note = "Use try_restrict which returns Result instead of panicking")]
     pub fn restrict(&self, p: PointId) -> &[V] {
-        // Look up offset and length in the atlas.
-        let (offset, len) = self.atlas.get(p).expect("PointId not found in atlas");
-        &self.data[offset..offset + len]
+        self.try_restrict(p).unwrap()
     }
 
     /// Mutable view of the data slice for a given point `p`.
     ///
-    /// # Panics
-    /// Panics if `p` is not registered in the atlas.
-    #[inline]
+    /// # Errors
+    /// Returns `Err(PointNotInAtlas(p))` if the point is not registered in the atlas,
+    /// or `Err(MissingSectionPoint(p))` if the data buffer is inconsistent.
+    pub fn try_restrict_mut(&mut self, p: PointId) -> Result<&mut [V], MeshSieveError> {
+        let (offset, len) = self.atlas.get(p).ok_or(MeshSieveError::PointNotInAtlas(p))?;
+        self.data.get_mut(offset..offset+len).ok_or(MeshSieveError::MissingSectionPoint(p))
+    }
+    #[deprecated(note = "Use try_restrict_mut which returns Result instead of panicking")]
     pub fn restrict_mut(&mut self, p: PointId) -> &mut [V] {
-        let (offset, len) = self.atlas.get(p).expect("PointId not found in atlas");
-        &mut self.data[offset..offset + len]
+        self.try_restrict_mut(p).unwrap()
     }
 
     /// Overwrite the data slice at point `p` with the values in `val`.
     ///
-    /// # Panics
-    /// Panics if the length of `val` does not match the slice length for `p`.
-    pub fn set(&mut self, p: PointId, val: &[V]) {
-        let target = self.restrict_mut(p);
-        assert_eq!(
-            target.len(),
-            val.len(),
-            "Input slice length must match point's DOF count"
-        );
+    /// # Errors
+    /// Returns `Err(PointNotInAtlas(p))` if the point is not registered in the atlas,
+    /// or `Err(SliceLengthMismatch)` if the input slice length does not match the expected length.
+    pub fn try_set(&mut self, p: PointId, val: &[V]) -> Result<(), MeshSieveError> {
+        let target = self.try_restrict_mut(p)?;
+        let expected = target.len();
+        let found = val.len();
+        if expected != found {
+            return Err(MeshSieveError::SliceLengthMismatch { point: p, expected, found });
+        }
         target.clone_from_slice(val);
         crate::topology::stratum::InvalidateCache::invalidate_cache(self);
+        Ok(())
+    }
+    #[deprecated(note = "Use try_set which returns Result instead of panicking")]
+    pub fn set(&mut self, p: PointId, val: &[V]) {
+        self.try_set(p, val).unwrap()
     }
 
     /// Iterate over `(PointId, &[V])` for all points in atlas order.
-    ///
-    /// Useful for serializing or visiting all data in a deterministic order.
-    pub fn iter(&self) -> impl Iterator<Item = (PointId, &[V])> {
-        // Use the atlas's point order for deterministic iteration.
-        self.atlas
-            .points()
-            .map(move |pid| (pid, self.restrict(pid)))
+    pub fn iter(&self) -> impl Iterator<Item = (PointId, &[V])> + '_ {
+        self.atlas.points().filter_map(move |pid| self.try_restrict(pid).ok().map(|sl| (pid, sl)))
     }
 
     /// Add a new point to the section, resizing data as needed.
-    pub fn add_point(&mut self, p: PointId, len: usize) {
-        self.atlas.try_insert(p, len).expect("Failed to insert point into atlas");
+    ///
+    /// # Errors
+    /// Returns `Err(AtlasInsertionFailed)` if the atlas insertion fails.
+    pub fn try_add_point(&mut self, p: PointId, len: usize) -> Result<(), MeshSieveError> {
+        self.atlas.try_insert(p, len).map_err(|e| MeshSieveError::AtlasInsertionFailed(p, Box::new(e)))?;
         self.data.resize(self.atlas.total_len(), V::default());
         crate::topology::stratum::InvalidateCache::invalidate_cache(self);
+        Ok(())
     }
 
     /// Remove a point from the section, rebuilding data to keep slices contiguous.
-    pub fn remove_point(&mut self, p: PointId) {
-        // Take a snapshot of the old atlas for correct offsets
+    ///
+    /// # Errors
+    /// Returns `Err(MissingSectionPoint)` if a point is missing from the old atlas or data.
+    pub fn try_remove_point(&mut self, p: PointId) -> Result<(), MeshSieveError> {
         let old_atlas = self.atlas.clone();
-        let _ = self.atlas.remove_point(p);
-        // Rebuild data: allocate new vec, copy each remaining slice from old data
+        self.atlas.remove_point(p)?;
         let mut new_data = Vec::with_capacity(self.atlas.total_len());
         for pid in self.atlas.points() {
-            let (old_offset, old_len) = old_atlas.get(pid).unwrap();
-            let old_slice = &self.data[old_offset..old_offset+old_len];
+            let (old_offset, old_len) = old_atlas.get(pid).ok_or(MeshSieveError::MissingSectionPoint(pid))?;
+            let old_slice = self.data.get(old_offset..old_offset+old_len).ok_or(MeshSieveError::MissingSectionPoint(pid))?;
             new_data.extend_from_slice(old_slice);
         }
         self.data = new_data;
         crate::topology::stratum::InvalidateCache::invalidate_cache(self);
+        Ok(())
     }
 }
 
 impl<V: Clone + Send> Section<V> {
     /// Scatter values from an external buffer `other` into this section.
     ///
-    /// `atlas_map` provides a list of (offset, length) pairs corresponding to
-    /// where each chunk of `other` should be copied in.
-    ///
-    /// # Panics
-    /// Panics if `other` length does not match expected total length or if
-    /// chunk sizes mismatch.
-    pub fn scatter_from(&mut self, other: &[V], atlas_map: &[(usize, usize)]) {
+    /// # Errors
+    /// Returns `Err(ScatterLengthMismatch)` if the input length does not match expected,
+    /// or `Err(ScatterChunkMismatch)` if a chunk is out of bounds.
+    pub fn try_scatter_from(&mut self, other: &[V], atlas_map: &[(usize, usize)]) -> Result<(), MeshSieveError> {
+        let total_expected: usize = atlas_map.iter().map(|&(_, l)| l).sum();
+        let found = other.len();
+        if total_expected != found {
+            return Err(MeshSieveError::ScatterLengthMismatch { expected: total_expected, found });
+        }
         let mut start = 0;
-        for (offset, len) in atlas_map.iter() {
-            let end = start + *len;
-            let chunk = &other[start..end];
-            self.data[*offset..offset + *len].clone_from_slice(chunk);
+        for &(offset, len) in atlas_map {
+            let end = start + len;
+            let chunk = other.get(start..end).ok_or(MeshSieveError::ScatterChunkMismatch { offset: start, len })?;
+            let dest = self.data.get_mut(offset..offset+len).ok_or(MeshSieveError::ScatterChunkMismatch { offset, len })?;
+            dest.clone_from_slice(chunk);
             start = end;
         }
         crate::topology::stratum::InvalidateCache::invalidate_cache(self);
+        Ok(())
     }
 }
 
@@ -137,12 +155,12 @@ pub trait Map<V: Clone + Default> {
 impl<V: Clone + Default> Map<V> for Section<V> {
     fn get(&self, p: PointId) -> &[V] {
         // Use the restrict method to get an immutable slice.
-        self.restrict(p)
+        self.try_restrict(p).unwrap_or_else(|e| panic!("Section::get: {:?}", e))
     }
 
     fn get_mut(&mut self, p: PointId) -> Option<&mut [V]> {
-        // Use the restrict_mut method to get a mutable slice, wrapped in Some.
-        Some(self.restrict_mut(p))
+        // Use the try_restrict_mut method to get a mutable slice, wrapped in Some.
+        Some(self.try_restrict_mut(p).unwrap_or_else(|e| panic!("Section::get_mut: {:?}", e)))
     }
 }
 
@@ -168,18 +186,18 @@ mod tests {
     #[test]
     fn restrict_and_set() {
         let mut s = make_section();
-        s.set(PointId::new(1).unwrap(), &[1.0, 2.0]);
-        s.set(PointId::new(2).unwrap(), &[3.5]);
+        s.try_set(PointId::new(1).unwrap(), &[1.0, 2.0]).unwrap();
+        s.try_set(PointId::new(2).unwrap(), &[3.5]).unwrap();
 
-        assert_eq!(s.restrict(PointId::new(1).unwrap()), &[1.0, 2.0]);
-        assert_eq!(s.restrict(PointId::new(2).unwrap()), &[3.5]);
+        assert_eq!(s.try_restrict(PointId::new(1).unwrap()).unwrap(), &[1.0, 2.0]);
+        assert_eq!(s.try_restrict(PointId::new(2).unwrap()).unwrap(), &[3.5]);
     }
 
     #[test]
     fn iter_order() {
         let mut s = make_section();
-        s.set(PointId::new(1).unwrap(), &[9.0, 8.0]);
-        s.set(PointId::new(2).unwrap(), &[7.0]);
+        s.try_set(PointId::new(1).unwrap(), &[9.0, 8.0]).unwrap();
+        s.try_set(PointId::new(2).unwrap(), &[7.0]).unwrap();
 
         let collected: Vec<_> = s.iter().map(|(_, sl)| sl[0]).collect();
         assert_eq!(collected, vec![9.0, 7.0]); // atlas order
@@ -189,12 +207,12 @@ mod tests {
     fn map_trait_section_get_and_mut() {
         use super::Map;
         let mut s = make_section();
-        s.set(PointId::new(1).unwrap(), &[1.0, 2.0]);
-        s.set(PointId::new(2).unwrap(), &[3.5]);
+        s.try_set(PointId::new(1).unwrap(), &[1.0, 2.0]).unwrap();
+        s.try_set(PointId::new(2).unwrap(), &[3.5]).unwrap();
         // get == restrict
         assert_eq!(
             <Section<f64> as Map<f64>>::get(&s, PointId::new(1).unwrap()),
-            s.restrict(PointId::new(1).unwrap())
+            s.try_restrict(PointId::new(1).unwrap()).unwrap()
         );
         // get_mut returns Some for Section
         assert!(<Section<f64> as Map<f64>>::get_mut(&mut s, PointId::new(1).unwrap()).is_some());
@@ -207,7 +225,7 @@ mod tests {
         assert_eq!(s.data, &[0.0, 0.0, 0.0]);
 
         // Scatter in two chunks: [1.0, 2.0] and [3.5]
-        s.scatter_from(&[1.0, 2.0, 3.5], &[(0, 2), (2, 1)]);
+        let _ = s.try_scatter_from(&[1.0, 2.0, 3.5], &[(0, 2), (2, 1)]);
 
         // Resulting data: [1.0, 2.0, 3.5]
         assert_eq!(s.data, &[1.0, 2.0, 3.5]);
@@ -220,15 +238,15 @@ mod tests {
         atlas.try_insert(PointId::new(2).unwrap(), 1).unwrap();
         let mut s = Section::<f64>::new(atlas.clone());
         // set and restrict
-        s.set(PointId::new(1).unwrap(), &[1.1, 2.2]);
-        s.set(PointId::new(2).unwrap(), &[3.3]);
-        assert_eq!(s.restrict(PointId::new(1).unwrap()), &[1.1, 2.2]);
-        assert_eq!(s.restrict(PointId::new(2).unwrap()), &[3.3]);
+        s.try_set(PointId::new(1).unwrap(), &[1.1, 2.2]).unwrap();
+        s.try_set(PointId::new(2).unwrap(), &[3.3]).unwrap();
+        assert_eq!(s.try_restrict(PointId::new(1).unwrap()).unwrap(), &[1.1, 2.2]);
+        assert_eq!(s.try_restrict(PointId::new(2).unwrap()).unwrap(), &[3.3]);
         // scatter_from
         let mut s2 = Section::<f64>::new(atlas);
-        s2.scatter_from(&[1.1, 2.2, 3.3], &[(0, 2), (2, 1)]);
-        assert_eq!(s2.restrict(PointId::new(1).unwrap()), &[1.1, 2.2]);
-        assert_eq!(s2.restrict(PointId::new(2).unwrap()), &[3.3]);
+        s2.try_scatter_from(&[1.1, 2.2, 3.3], &[(0, 2), (2, 1)]).unwrap();
+        assert_eq!(s2.try_restrict(PointId::new(1).unwrap()).unwrap(), &[1.1, 2.2]);
+        assert_eq!(s2.try_restrict(PointId::new(2).unwrap()).unwrap(), &[3.3]);
     }
 
     #[test]
@@ -237,7 +255,7 @@ mod tests {
         let mut atlas = Atlas::default();
         atlas.try_insert(PointId::new(1).unwrap(), 1).unwrap();
         let mut s = Section::<i32>::new(atlas);
-        s.set(PointId::new(1).unwrap(), &[42]);
+        s.try_set(PointId::new(1).unwrap(), &[42]).unwrap();
         // Map trait get
         assert_eq!(<Section<i32> as Map<i32>>::get(&s, PointId::new(1).unwrap()), &[42]);
         // Map trait get_mut
@@ -252,16 +270,16 @@ mod tests {
         // initial capacity = 2
         assert_eq!(s.iter().count(), 1);
         // add a new point of length 3
-        s.add_point(PointId::new(2).unwrap(), 3);
+        s.try_add_point(PointId::new(2).unwrap(), 3).unwrap();
         // now iter() yields 2 points
         let mut pts: Vec<_> = s.iter().map(|(p, _)| p).collect();
         pts.sort_unstable();
         assert_eq!(pts, vec![PointId::new(1).unwrap(), PointId::new(2).unwrap()]);
         // its slice is all default (0)
-        assert_eq!(s.restrict(PointId::new(2).unwrap()), &[0, 0, 0]);
+        assert_eq!(s.try_restrict(PointId::new(2).unwrap()).unwrap(), &[0, 0, 0]);
         // setting and reading works
-        s.set(PointId::new(2).unwrap(), &[7,8,9]);
-        assert_eq!(s.restrict(PointId::new(2).unwrap()), &[7,8,9]);
+        s.try_set(PointId::new(2).unwrap(), &[7,8,9]).unwrap();
+        assert_eq!(s.try_restrict(PointId::new(2).unwrap()).unwrap(), &[7,8,9]);
     }
 
     #[test]
@@ -273,11 +291,11 @@ mod tests {
         atlas.try_insert(PointId::new(3).unwrap(), 2).unwrap();
         let mut s = Section::<i32>::new(atlas);
         // set some dummy values
-        s.set(PointId::new(1).unwrap(), &[10,11]);
-        s.set(PointId::new(2).unwrap(), &[22]);
-        s.set(PointId::new(3).unwrap(), &[33,34]);
+        s.try_set(PointId::new(1).unwrap(), &[10,11]).unwrap();
+        s.try_set(PointId::new(2).unwrap(), &[22]).unwrap();
+        s.try_set(PointId::new(3).unwrap(), &[33,34]).unwrap();
         // remove the middle point
-        s.remove_point(PointId::new(2).unwrap());
+        let _ = s.try_remove_point(PointId::new(2).unwrap());
         // now only 1 and 3 remain, in order
         let pts: Vec<_> = s.iter().map(|(p, _)| p).collect();
         assert_eq!(pts, vec![PointId::new(1).unwrap(), PointId::new(3).unwrap()]);
@@ -285,21 +303,25 @@ mod tests {
         let all: Vec<_> = s.data.iter().copied().collect();
         assert_eq!(all, vec![10,11,33,34]);
         // restricting the removed point panics
-        std::panic::catch_unwind(|| { let _ = s.restrict(PointId::new(2).unwrap()); }).expect_err("should panic");
+        std::panic::catch_unwind(|| { let _ = s.try_restrict(PointId::new(2).unwrap()).unwrap(); }).expect_err("should panic");
     }
 
     #[test]
-    #[should_panic(expected = "PointId not found in atlas")]
+    #[should_panic(expected = "called `Result::unwrap()` on an `Err` value")]
     fn restrict_missing_panics() {
         let s = make_section();
-        let _ = s.restrict(PointId::new(99).unwrap());
+        let _ = s.try_restrict(PointId::new(99).unwrap()).unwrap();
     }
 
     #[test]
-    #[should_panic(expected = "Input slice length must match")]
-    fn set_wrong_length_panics() {
+    fn set_wrong_length_returns_err() {
         let mut s = make_section();
-        s.set(PointId::new(1).unwrap(), &[1.0]); // wrong length (expected 2)
+        let err = s.try_set(PointId::new(1).unwrap(), &[1.0]).unwrap_err();
+        assert_eq!(err, MeshSieveError::SliceLengthMismatch {
+            point: PointId::new(1).unwrap(),
+            expected: 2,
+            found: 1
+        });
     }
 
     #[test]

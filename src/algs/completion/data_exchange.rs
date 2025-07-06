@@ -36,7 +36,7 @@ pub fn exchange_data<V, D, C>(
     for (&nbr, links) in links {
         let mut scratch = Vec::with_capacity(links.len());
         for &(loc, _) in links {
-            let slice = section.restrict(loc);
+            let slice = section.try_restrict(loc).unwrap();
             scratch.push(D::restrict(&slice[0]));
         }
         let bytes = cast_slice(&scratch);
@@ -48,7 +48,7 @@ pub fn exchange_data<V, D, C>(
         let parts: &[D::Part] = cast_slice(&buffer);
         let links = &links[&nbr];
         for ((_, dst), part) in links.iter().zip(parts) {
-            let mut_slice = section.restrict_mut(*dst);
+            let mut_slice = section.try_restrict_mut(*dst).unwrap();
             D::fuse(&mut mut_slice[0], *part);
         }
     }
@@ -92,7 +92,7 @@ pub fn exchange_data_symmetric<V, D, C>(
         let links_vec = links.get(&nbr).map_or(&[][..], |v| &v[..]);
         let mut scratch = Vec::with_capacity(links_vec.len());
         for &(loc, _) in links_vec {
-            let slice = section.restrict(loc);
+            let slice = section.try_restrict(loc).unwrap();
             scratch.push(D::restrict(&slice[0]));
         }
         let bytes = cast_slice(&scratch);
@@ -105,7 +105,7 @@ pub fn exchange_data_symmetric<V, D, C>(
         let parts: &[D::Part] = &buffer;
         let links_vec = links.get(&nbr).map_or(&[][..], |v| &v[..]);
         for ((_, dst), part) in links_vec.iter().zip(parts) {
-            let mut_slice = section.restrict_mut(*dst);
+            let mut_slice = section.try_restrict_mut(*dst).unwrap();
             D::fuse(&mut mut_slice[0], *part);
         }
     }
@@ -146,17 +146,17 @@ mod tests {
 
         // Build Atlas and Section for each rank
         let mut atlas0 = Atlas::default();
-        atlas0.insert(PointId::new(10).unwrap(), 1);
-        atlas0.insert(PointId::new(20).unwrap(), 1);
+        atlas0.try_insert(PointId::new(10).unwrap(), 1);
+        atlas0.try_insert(PointId::new(20).unwrap(), 1);
         let mut section0 = Section::new(atlas0);
-        section0.set(PointId::new(10).unwrap(), &[DummyValue(5)]);
-        section0.set(PointId::new(20).unwrap(), &[DummyValue(0)]);
+        section0.try_set(PointId::new(10).unwrap(), &[DummyValue(5)]);
+        section0.try_set(PointId::new(20).unwrap(), &[DummyValue(0)]);
         let mut atlas1 = Atlas::default();
-        atlas1.insert(PointId::new(10).unwrap(), 1);
-        atlas1.insert(PointId::new(20).unwrap(), 1);
+        atlas1.try_insert(PointId::new(10).unwrap(), 1);
+        atlas1.try_insert(PointId::new(20).unwrap(), 1);
         let mut section1 = Section::new(atlas1);
-        section1.set(PointId::new(10).unwrap(), &[DummyValue(0)]);
-        section1.set(PointId::new(20).unwrap(), &[DummyValue(7)]);
+        section1.try_set(PointId::new(10).unwrap(), &[DummyValue(0)]);
+        section1.try_set(PointId::new(20).unwrap(), &[DummyValue(7)]);
 
         // Links and recv_counts for each rank
         let mut links0 = HashMap::new();
@@ -178,8 +178,8 @@ mod tests {
                 &mut section0,
             );
             (
-                section0.restrict(PointId::new(10).unwrap())[0],
-                section0.restrict(PointId::new(20).unwrap())[0],
+                section0.try_restrict(PointId::new(10).unwrap()).unwrap()[0],
+                section0.try_restrict(PointId::new(20).unwrap()).unwrap()[0],
             )
         });
         let t1 = std::thread::spawn(move || {
@@ -191,8 +191,8 @@ mod tests {
                 &mut section1,
             );
             (
-                section1.restrict(PointId::new(10).unwrap())[0],
-                section1.restrict(PointId::new(20).unwrap())[0],
+                section1.try_restrict(PointId::new(10).unwrap()).unwrap()[0],
+                section1.try_restrict(PointId::new(20).unwrap()).unwrap()[0],
             )
         });
         let t0_res = t0.join();

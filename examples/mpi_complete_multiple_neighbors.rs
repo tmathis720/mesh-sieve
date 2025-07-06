@@ -43,23 +43,29 @@ pub fn main() {
     // Now construct Section after all atlas.insert
     let mut sec = Section::<u32>::new(atlas);
     if rank == 0 {
-        sec.set(PointId::new(1).unwrap(), &[1]);
-        sec.set(PointId::new(2).unwrap(), &[2]);
+        sec.try_set(PointId::new(1).unwrap(), &[1]).expect("Failed to set value for PointId 1");
+        sec.try_set(PointId::new(2).unwrap(), &[2]).expect("Failed to set value for PointId 2");
     }
     let delta = CopyDelta;
     complete_section(&mut sec, &mut ovlp, &comm, &delta, rank, size);
     match rank {
         0 => {
-            assert_eq!(sec.restrict(PointId::new(1).unwrap())[0], 1);
-            assert_eq!(sec.restrict(PointId::new(2).unwrap())[0], 2);
+            assert_eq!(sec.try_restrict(PointId::new(1).unwrap()).expect("Point 1 missing")[0], 1);
+            assert_eq!(sec.try_restrict(PointId::new(2).unwrap()).expect("Point 2 missing")[0], 2);
             println!("[rank 0] complete_section_multiple_neighbors passed");
         }
         1 => {
-            assert_eq!(sec.restrict(PointId::new(101).unwrap())[0], 1);
+            assert_eq!(
+                sec.try_restrict(PointId::new(101).unwrap()).expect("Point 101 missing")[0],
+                1
+            );
             println!("[rank 1] complete_section_multiple_neighbors passed");
         }
         2 => {
-            assert_eq!(sec.restrict(PointId::new(201).unwrap())[0], 2);
+            assert_eq!(
+                sec.try_restrict(PointId::new(201).unwrap()).expect("Point 201 missing")[0],
+                2
+            );
             println!("[rank 2] complete_section_multiple_neighbors passed");
         }
         _ => {}

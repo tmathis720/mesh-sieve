@@ -68,7 +68,7 @@ pub struct ReadOnlyMap<'a, V: Clone + Default> {
 
 impl<'a, V: Clone + Default> crate::data::section::Map<V> for ReadOnlyMap<'a, V> {
     fn get(&self, p: crate::topology::point::PointId) -> &[V] {
-        self.section.restrict(p)
+        self.section.try_restrict(p).unwrap_or(&[])
     }
     // get_mut left as default (None)
 }
@@ -95,10 +95,14 @@ mod tests {
         atlas.try_insert(v(2),1).unwrap();
         atlas.try_insert(v(3),1).unwrap();
         let mut sec = Section::<i32>::new(atlas);
-        sec.set(v(1), &[10]); sec.set(v(2), &[20]); sec.set(v(3), &[30]);
+        sec.try_set(v(1), &[10]).unwrap();
+        sec.try_set(v(2), &[20]).unwrap();
+        sec.try_set(v(3), &[30]).unwrap();
         // restrict_closure
         let out: Vec<_> = restrict_closure(&s, &sec, [v(1)]).collect();
-        let expected: Vec<_> = s.closure([v(1)]).map(|p| (p, sec.restrict(p))).collect();
+        let expected: Vec<_> = s.closure([v(1)])
+            .map(|p| (p, sec.try_restrict(p).unwrap_or(&[])))
+            .collect();
         assert_eq!(out, expected);
         // empty
         let empty: Vec<_> = restrict_star(&s, &sec, std::iter::empty()).collect();
@@ -107,7 +111,7 @@ mod tests {
         assert_eq!(restrict_closure_vec(&s,&sec,[v(2)]), restrict_closure(&s,&sec,[v(2)]).collect::<Vec<_>>());
         // ReadOnlyMap
         let mut rom = ReadOnlyMap { section: &sec };
-        assert_eq!(rom.get(v(3)), sec.restrict(v(3)));
+        assert_eq!(rom.get(v(3)), sec.try_restrict(v(3)).unwrap_or(&[]));
         assert!(<ReadOnlyMap<'_, i32> as Map<i32>>::get_mut(&mut rom, v(3)).is_none());
     }
 }

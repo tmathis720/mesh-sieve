@@ -77,7 +77,7 @@ mod tests {
         }
         let mut section = Section::new(atlas);
         for &p in points {
-            section.set(PointId::new(p).unwrap(), &[p as i32]);
+            section.try_set(PointId::new(p).unwrap(), &[p as i32]).expect("Failed to set section value");
         }
         section
     }
