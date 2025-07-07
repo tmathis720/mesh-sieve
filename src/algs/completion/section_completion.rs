@@ -24,6 +24,6 @@ pub fn complete_section<V, D, C>(
     // Exchange sizes (always post send/recv for all neighbors)
     let counts = crate::algs::completion::size_exchange::exchange_sizes_symmetric(&links, comm, BASE_TAG, &all_neighbors)
         .expect("Failed to exchange sizes");
-    crate::algs::completion::data_exchange::exchange_data_symmetric::<V, D, C>(&links, &counts, comm, BASE_TAG+1, section, &all_neighbors);
+    let _ = crate::algs::completion::data_exchange::exchange_data_symmetric::<V, D, C>(&links, &counts, comm, BASE_TAG+1, section, &all_neighbors);
 }
 

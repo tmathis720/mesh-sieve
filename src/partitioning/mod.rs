@@ -127,6 +127,8 @@ pub enum PartitionerError {
     },
     /// Error during vertex cut construction
     VertexCut(crate::partitioning::error::PartitionError),
+    /// The `degrees` slice had the wrong length.
+    DegreeLengthMismatch { expected: usize, got: usize },
 }
 
 impl From<crate::partitioning::error::PartitionError> for PartitionerError {

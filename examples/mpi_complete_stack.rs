@@ -1,4 +1,8 @@
 // --- MPI test: complete_stack_two_ranks ---
+// cargo mpirun -n 2 --features mpi-support --example mpi_complete_stack
+// This example tests the `complete_stack` function with two MPI ranks.
+// It ensures that a Stack can be completed correctly when two ranks have overlapping points,
+// and that the Stack is correctly completed with values from both ranks.
 fn main() {
     use mesh_sieve::algs::communicator::MpiComm;
     use mpi::topology::Communicator;
@@ -38,7 +42,7 @@ fn main() {
     } else {
         overlap.add_arrow(PodU64(1), PodU64(1), DummyRemote { rank: 0, remote_point: PodU64(1) });
     }
-    complete_stack(&mut stack, &overlap, &comm, rank, size);
+    let _ = complete_stack(&mut stack, &overlap, &comm, rank, size);
     let arrows: Vec<_> = stack.lift(PodU64(1)).map(|(cap, pay)| (cap, pay)).collect();
     assert!(arrows.contains(&(PodU64(101), DummyPayload(42))));
     println!("[rank {}] complete_stack_two_ranks passed", rank);

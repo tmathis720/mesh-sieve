@@ -11,37 +11,30 @@ use rand::rngs::SmallRng;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 
-/// Selects a set of seed vertices for partitioning, weighted by degree and without replacement.
-///
-/// Returns a `Vec<VertexId>` of length `num_seeds = ceil(cfg.seed_factor * cfg.n_parts)`,
-/// chosen *without replacement*, weighted by degree. Assumes `VertexId = usize`.
-///
-/// # Arguments
-/// - `graph`: The graph to select seeds from.
-/// - `degrees`: Slice of vertex degrees, indexed by vertex ID.
-/// - `cfg`: Partitioner configuration, including number of parts, seed factor, and RNG seed.
-///
-/// # Returns
-/// A vector of selected vertex IDs to use as seeds.
-///
-/// # Panics
-/// Panics if `degrees.len()` does not match the number of vertices in the graph.
-pub fn pick_seeds<G>(graph: &G, degrees: &[u64], cfg: &PartitionerConfig) -> Vec<G::VertexId>
+/// Returns an error if `degrees.len()` doesn’t match the number of vertices.
+pub fn pick_seeds<G>(
+    graph: &G,
+    degrees: &[u64],
+    cfg: &PartitionerConfig,
+) -> Result<Vec<G::VertexId>, crate::partitioning::PartitionerError>
 where
     G: PartitionableGraph<VertexId = usize> + Sync,
 {
-    let n = degrees.len();
+    // 1) collect vertices up front and verify lengths match
+    let vertices: Vec<usize> = graph.vertices().collect();
+    let n = vertices.len();
+    if degrees.len() != n {
+        return Err(crate::partitioning::PartitionerError::DegreeLengthMismatch {
+            expected: n,
+            got: degrees.len(),
+        });
+    }
     if n == 0 {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let num_seeds = ((cfg.seed_factor * cfg.n_parts as f64).ceil() as usize)
         .min(n)
         .max(1);
-
-    // ——— FIX: collect the iterator into a Vec<usize> ———
-    let vertices: Vec<usize> = graph.vertices().collect();
-    // —————————————————————————————————————————————————
-
     let mut weights = degrees.to_vec();
     let mut prefix: Vec<u64> = Vec::with_capacity(n);
     let mut sum = 0u64;
@@ -49,10 +42,10 @@ where
         sum += w;
         prefix.push(sum);
     }
+    let mut rng = SmallRng::seed_from_u64(cfg.rng_seed);
+    let mut chosen = Vec::with_capacity(num_seeds);
     if sum == 0 {
         // All degrees are zero, pick uniformly at random
-        let mut rng = SmallRng::seed_from_u64(cfg.rng_seed);
-        let mut chosen = Vec::new();
         let mut pool: Vec<usize> = (0..n).collect();
         for _ in 0..num_seeds {
             if pool.is_empty() {
@@ -62,12 +55,10 @@ where
             chosen.push(vertices[pool[idx]]);
             pool.remove(idx);
         }
-        return chosen;
+        return Ok(chosen);
     }
-    let mut rng = SmallRng::seed_from_u64(cfg.rng_seed);
-    let mut chosen = Vec::new();
     for _ in 0..num_seeds {
-        let total_weight = *prefix.last().unwrap();
+        let total_weight = prefix[n - 1];
         if total_weight == 0 {
             break;
         }
@@ -88,7 +79,7 @@ where
             prefix[j] -= w;
         }
     }
-    chosen
+    Ok(chosen)
 }
 
 #[cfg(test)]
@@ -122,6 +113,18 @@ mod tests {
     }
 
     #[test]
+    fn pick_seeds_length_mismatch() {
+        let g = PathGraph { n: 3 };
+        let degrees = vec![1, 2]; // wrong length
+        let cfg = PartitionerConfig::default();
+        let err = pick_seeds(&g, &degrees, &cfg).unwrap_err();
+        assert!(matches!(
+            err,
+            crate::partitioning::PartitionerError::DegreeLengthMismatch { expected: 3, got: 2 }
+        ));
+    }
+
+    #[test]
     fn pick_seeds_path_highest_degree() {
         let g = PathGraph { n: 5 };
         let degrees: Vec<u64> = (0..5).map(|v| g.degree(v) as u64).collect();
@@ -130,7 +133,7 @@ mod tests {
             seed_factor: 1.0,
             ..Default::default()
         };
-        let seeds = pick_seeds(&g, &degrees, &cfg);
+        let seeds = pick_seeds(&g, &degrees, &cfg).unwrap();
         // For a path, the highest degree is in the middle. This is probabilistic,
         // so just check that the seed count is correct and all are valid.
         assert!(seeds.len() == 1 && seeds[0] < 5, "seeds = {:?}", seeds);
@@ -145,7 +148,7 @@ mod tests {
             seed_factor: 1.0,
             ..Default::default()
         };
-        let seeds = pick_seeds(&g, &degrees, &cfg);
+        let seeds = pick_seeds(&g, &degrees, &cfg).unwrap();
         assert_eq!(seeds.len(), 2);
         for &s in &seeds {
             assert!(s < 4);
@@ -161,7 +164,7 @@ mod tests {
             seed_factor: 1.0,
             ..Default::default()
         };
-        let seeds = pick_seeds(&g, &degrees, &cfg);
+        let seeds = pick_seeds(&g, &degrees, &cfg).unwrap();
         assert_eq!(seeds.len(), 3);
     }
 }
@@ -200,7 +203,7 @@ mod onizuka_partitioning {
             seed_factor: 1.0,
             ..Default::default()
         };
-        let seeds = pick_seeds(&g, &degrees, &cfg);
+        let seeds = pick_seeds(&g, &degrees, &cfg).unwrap();
         // In a complete graph, all vertices have the same degree. Seeds should be
         // picked uniformly at random.
         assert_eq!(seeds.len(), 2);

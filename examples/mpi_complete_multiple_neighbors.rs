@@ -1,4 +1,9 @@
 // --- MPI test: complete_section_multiple_neighbors ---
+// cargo mpirun -n 3 --features mpi-support --example mpi_complete_multiple_neighbors
+//! This example tests the `complete_section` function with multiple neighbors.
+ //! It ensures that a Section can be completed correctly when multiple ranks have neighbors
+ //! that share the same point, and that the Section is correctly completed
+ //! with values from all ranks.
 pub fn main() {
     use mesh_sieve::algs::communicator::MpiComm;
     use mpi::topology::Communicator;

@@ -29,7 +29,7 @@ pub fn neighbour_links<V: Clone + Default + PartialEq>(
         }
     }
     if !has_owned {
-        for (&src, rems) in &ovlp.adjacency_in {
+        for (&_src, rems) in &ovlp.adjacency_in {
             for (orig_src, rem) in rems {
                 if rem.rank == my_rank && rem.remote_point != *orig_src {
                     let owner = ovlp.adjacency_out

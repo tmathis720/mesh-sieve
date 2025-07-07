@@ -1,4 +1,11 @@
 // examples/mesh_distribute_two_ranks.rs
+// cargo mpirun -n 2 --features mpi-support --example mesh_distribute_two_ranks
+// 
+// This example demonstrates how to distribute a simple mesh across two MPI ranks
+// using the `mesh_sieve` library. It creates a mesh with two arrows, partitions it
+// such that rank 0 owns the first arrow and rank 1 owns the second arrow, and
+// then distributes the mesh using the `distribute_mesh` function. Each rank prints
+// its local mesh and overlap for manual inspection.
 
 use mesh_sieve::algs::communicator::{MpiComm, Communicator};
 use mesh_sieve::algs::distribute::distribute_mesh;

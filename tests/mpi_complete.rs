@@ -82,8 +82,8 @@ fn two_rank_tetra_completion() {
     // NoComm for serial test
     let comm = mesh_sieve::algs::communicator::NoComm;
     // Complete topology on both sides
-    complete_sieve(&mut sieve0, &ovlp0, &comm, 0);
-    complete_sieve(&mut sieve1, &ovlp1, &comm, 1);
+    complete_sieve(&mut sieve0, &ovlp0, &comm, 0).unwrap();
+    complete_sieve(&mut sieve1, &ovlp1, &comm, 1).unwrap();
     // Simulate MPI exchange: add remote arrows for shared faces
     for &(local, remote) in &[(f0, f3), (f1, f4), (f2, f5)] {
         // Add to sieve0: cell0 -> remote

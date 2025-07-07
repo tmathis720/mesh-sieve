@@ -1,4 +1,6 @@
 //! Example: Distributed RCM on a 2D grid mesh using MPI.
+//! cargo mpirun -n 4 --features mpi-support --example distributed_rcm
+//! This example demonstrates how to use the `mesh_sieve` library to perform a distributed reverse Cuthill-McKee (RCM) ordering on a simple 2D grid mesh.
 
 use mesh_sieve::algs::rcm::distributed_rcm;
 use mesh_sieve::algs::communicator::{Communicator, MpiComm};

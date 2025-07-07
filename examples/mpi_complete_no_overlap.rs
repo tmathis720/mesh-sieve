@@ -1,8 +1,10 @@
+// cargo mpirun -n 3 --features mpi-support --example mpi_complete_no_overlap
+// This example demonstrates how to complete a Section in MPI without overlap.
+// It uses the `complete_section` function to ensure that a Section can be completed
+// correctly when no overlap exists, and that the Section is correctly completed
+// with values from the ranks that own the points.
 use mpi::topology::Communicator;
 
-
-// --- MPI test: complete_section_no_overlap ---
-// Run with: mpirun -n 3 cargo run --example mpi_complete
 fn main() {
     use mesh_sieve::algs::communicator::MpiComm;
     use mesh_sieve::topology::point::PointId;

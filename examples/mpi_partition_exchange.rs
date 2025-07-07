@@ -1,4 +1,6 @@
 //! A 4-rank MPI integration test: build a 2×2 grid mesh, partition, distribute, and exchange.
+// cargo mpirun -n 4 --features mpi-support --example mpi_partition_exchange
+// This example demonstrates how to partition and exchange data in a 4-rank MPI environment.
 #[cfg(feature = "mpi-support")]
 use mpi::traits::*;
 #[cfg(feature = "mpi-support")]
