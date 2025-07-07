@@ -92,7 +92,14 @@ impl Wait for LocalHandle {
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
-        let mut guard = self.buf.lock().unwrap();
+        // Recover from a poisoned lock by taking its inner value
+        let mut guard = match self.buf.lock() {
+            Ok(g) => g,
+            Err(poisoned) => {
+                eprintln!("[RayonComm] WARNING: mailbox mutex was poisoned; recovering.");
+                poisoned.into_inner()
+            }
+        };
         // Provide a clearer error if no message was received
         guard.take().or_else(|| {
             eprintln!("[RayonComm] ERROR: No message received for this handle. Possible send/receive mismatch or mailbox cleared too early.");

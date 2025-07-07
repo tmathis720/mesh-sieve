@@ -136,10 +136,10 @@ mod tests {
         let mut a = Atlas::default();
         let p1 = PointId::new(1).unwrap();
         let off1 = a.try_insert(p1, 3);
-        assert_eq!(off1, Ok(0));
+        assert_eq!(off1.unwrap(), 0);
         let p2 = PointId::new(2).unwrap();
         let off2 = a.try_insert(p2, 5);
-        assert_eq!(off2, Ok(3));
+        assert_eq!(off2.unwrap(), 3);
 
         assert_eq!(a.get(p1), Some((0, 3)));
         assert_eq!(a.get(p2), Some((3, 5)));
@@ -150,7 +150,10 @@ mod tests {
     #[test]
     fn zero_len_rejected() {
         let mut a = Atlas::default();
-        assert_eq!(a.try_insert(PointId::new(7).unwrap(), 0), Err(MeshSieveError::ZeroLengthSlice));
+        assert_eq!(
+            a.try_insert(PointId::new(7).unwrap(), 0).unwrap_err(),
+            MeshSieveError::ZeroLengthSlice
+        );
     }
 
     #[test]

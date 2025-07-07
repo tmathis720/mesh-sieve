@@ -3,6 +3,7 @@
 //! This module provides [`build_vertex_cuts`], a parallel algorithm for assigning primary owners
 //! and replica lists for vertices in a partitioned graph, supporting distributed ghosting and communication.
 
+use crate::partitioning::error::PartitionError;
 use crate::partitioning::PartitionMap;
 use crate::partitioning::graph_traits::PartitionableGraph;
 use ahash::AHasher;
@@ -42,7 +43,7 @@ pub fn build_vertex_cuts<G>(
     graph: &G,
     pm: &PartitionMap<G::VertexId>,
     salt: u64,
-) -> (Vec<usize>, Vec<Vec<(G::VertexId, usize)>>)
+) -> Result<(Vec<usize>, Vec<Vec<(G::VertexId, usize)>>), PartitionError>
 where
     G: PartitionableGraph<VertexId = usize> + Sync,
 {
@@ -55,8 +56,13 @@ where
     // Determine how many parts we have (max part ID + 1)
     let num_parts = {
         let mut max = 0;
+        let mut any = false;
         for (_v, &p) in pm.iter() {
+            any = true;
             if p > max { max = p; }
+        }
+        if !any {
+            return Err(PartitionError::NoParts);
         }
         max + 1
     };
@@ -75,8 +81,8 @@ where
     verts.par_iter().for_each(|&u| {
         graph.neighbors(u).into_par_iter().for_each(|v| {
             if u < v {
-                let pu = pm.part_of(u);
-                let pv = pm.part_of(v);
+                let pu = pm.get(&u).copied().ok_or(PartitionError::MissingPartition(u)).unwrap();
+                let pv = pm.get(&v).copied().ok_or(PartitionError::MissingPartition(v)).unwrap();
                 if pu != pv {
                     let count_u = part_replica_count[pu].load(Ordering::Relaxed);
                     let count_v = part_replica_count[pv].load(Ordering::Relaxed);
@@ -96,8 +102,10 @@ where
                             (v, u, pv)
                         }
                     };
-                    let owner_idx = *vert_idx.get(&owner).expect("owner vertex not found");
-                    let other_idx = *vert_idx.get(&other).expect("other vertex not found");
+                    let owner_idx = *vert_idx.get(&owner)
+                        .ok_or(PartitionError::VertexNotFound(owner)).unwrap();
+                    let other_idx = *vert_idx.get(&other)
+                        .ok_or(PartitionError::VertexNotFound(other)).unwrap();
                     part_replica_count[owner_part].fetch_add(1, Ordering::Relaxed);
                     primary_part[owner_idx].store(owner_part, Ordering::Relaxed);
                     primary_part[other_idx].store(owner_part, Ordering::Relaxed);
@@ -125,7 +133,7 @@ where
     for (v, atomic_part) in primary_part.iter_mut().enumerate() {
         if atomic_part.load(Ordering::Relaxed) == usize::MAX {
             let vert = verts[v];
-            atomic_part.store(pm.part_of(vert), Ordering::Relaxed);
+            atomic_part.store(pm.get(&vert).copied().ok_or(PartitionError::MissingPartition(vert))?, Ordering::Relaxed);
         }
     }
 
@@ -139,7 +147,7 @@ where
     let replicas: Vec<Vec<(G::VertexId, usize)>> =
         replica_lists.into_iter().map(|m| m.into_inner()).collect();
 
-    (primary_owner, replicas)
+    Ok((primary_owner, replicas))
 }
 
 #[cfg(test)]
@@ -189,7 +197,7 @@ mod tests {
         let mut pm = PartitionMap::with_capacity(4);
         pm.insert(0, 0); pm.insert(1, 0);
         pm.insert(2, 1); pm.insert(3, 1);
-        let (primary, replicas) = build_vertex_cuts(&g, &pm, 42);
+        let (primary, replicas) = build_vertex_cuts(&g, &pm, 42).unwrap();
 
         // Edges (1-2) and (3-0) cross partitions; owner must be same for both endpoints
         for &(u,v) in &[(1,2),(3,0)] {
@@ -208,7 +216,7 @@ mod tests {
         let g = TestGraph::new(vec![], 1);
         let mut pm = PartitionMap::with_capacity(1);
         pm.insert(0, 0);
-        let (primary, replicas) = build_vertex_cuts(&g, &pm, 99);
+        let (primary, replicas) = build_vertex_cuts(&g, &pm, 99).unwrap();
         assert_eq!(primary, vec![0]);
         assert!(replicas[0].is_empty(), "Isolated vertex should have no replicas");
     }
@@ -219,7 +227,7 @@ mod tests {
         let g = TestGraph::new(vec![(0,1)], 2);
         let mut pm = PartitionMap::with_capacity(2);
         pm.insert(0, 0); pm.insert(1, 1);
-        let (primary, replicas) = build_vertex_cuts(&g, &pm, 0);
+        let (primary, replicas) = build_vertex_cuts(&g, &pm, 0).unwrap();
 
         // Both endpoints share the same owner
         assert_eq!(primary[0], primary[1], "Both endpoints must share a primary owner");
@@ -234,7 +242,7 @@ mod tests {
         let g = TestGraph::new(vec![(0,1),(1,2),(2,0)], 3);
         let mut pm = PartitionMap::with_capacity(3);
         pm.insert(0, 0); pm.insert(1, 1); pm.insert(2, 2);
-        let (primary, replicas) = build_vertex_cuts(&g, &pm, 123);
+        let (primary, replicas) = build_vertex_cuts(&g, &pm, 123).unwrap();
 
         for v in 0..3 {
             // primary owner must be some valid part

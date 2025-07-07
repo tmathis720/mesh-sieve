@@ -26,7 +26,13 @@ fn main() {
     let parts = (0u64..5).map(|i| if i<=2 { 0 } else { 1 }).collect::<Vec<_>>();
 
     // 3) Call distribute
-    let (local, overlap) = distribute_mesh(&global, &parts, &comm);
+    let (local, overlap) = match distribute_mesh(&global, &parts, &comm) {
+        Ok((local, overlap)) => (local, overlap),
+        Err(e) => {
+            eprintln!("[rank {}] distribute_mesh failed: {}", rank, e);
+            return;
+        }
+    };
 
     // 4) Each rank should see its submesh plus one overlap arrow
     let my_pts: Vec<_> = local.points().collect();

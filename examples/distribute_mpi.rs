@@ -23,7 +23,13 @@ fn main() {
     global.add_arrow(PointId::new(2).unwrap(), PointId::new(3).unwrap(), ());
     // Partition map: 1→0, 2→1, 3→1
     let parts = vec![0,1,1];
-    let (local, overlap) = distribute_mesh(&global, &parts, &comm);
+    let (local, overlap) = match distribute_mesh(&global, &parts, &comm) {
+        Ok(res) => res,
+        Err(e) => {
+            eprintln!("Error distributing mesh: {:?}", e);
+            return;
+        }
+    };
     // Each rank prints its local mesh and overlap for manual inspection
     println!("Rank {} local: {:?}", comm.rank(), local);
     println!("Rank {} overlap: {:?}", comm.rank(), overlap);

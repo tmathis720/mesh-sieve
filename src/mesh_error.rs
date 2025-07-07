@@ -7,7 +7,7 @@ use thiserror::Error;
 use std::fmt::Debug;
 
 /// Unified error type for mesh-sieve operations.
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[derive(Debug, Error)]
 pub enum MeshSieveError {
     /// Attempted to construct a PointId with a zero value (invalid).
     #[error("PointId must be non-zero (0 is reserved as invalid/sentinel)")]
@@ -67,5 +67,101 @@ pub enum MeshSieveError {
     /// Failure converting count to primitive (should never happen if FromPrimitive is well-behaved).
     #[error("SievedArray error: cannot convert count {0} via FromPrimitive")]
     SievedArrayPrimitiveConversionFailure(usize),
-    // TODO: Add more error variants as needed for other modules.
+    /// Delta application failed because source and dest slices had different lengths.
+    #[error("Delta error: slice length mismatch (src.len={expected}, dest.len={found})")]
+    DeltaLengthMismatch {
+        expected: usize,
+        found: usize,
+    },
+    /// Partition‐point computation overflowed to zero (invalid owner).
+    #[error("Invalid partition owner: computed raw ID = 0")]
+    PartitionPointOverflow,
+    /// The `parts` slice is missing an entry for point `{0}`.
+    #[error("No partition mapping for point ID {0}")]
+    PartitionIndexOutOfBounds(usize),
+    /// Error sending or receiving data over the wire.
+    #[error("communication error: {0}")]
+    Communication(#[from] CommError),
+
+    /// Missing expected recv count for a neighbor during data exchange.
+    #[error("Missing recv count for neighbor {neighbor}")]
+    MissingRecvCount { neighbor: usize },
+    /// Error accessing a section for a given point.
+    #[error("Section access error at point {point:?}: {source}")]
+    SectionAccess {
+        point: crate::topology::point::PointId,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+    /// Communication error for a specific neighbor.
+    #[error("Communication error with neighbor {neighbor}: {source}")]
+    CommError {
+        neighbor: usize,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+    /// Buffer size mismatch during data exchange.
+    #[error("Buffer size mismatch for neighbor {neighbor}: expected {expected}, got {got}")]
+    BufferSizeMismatch {
+        neighbor: usize,
+        expected: usize,
+        got: usize,
+    },
+    /// Part count mismatch during data exchange.
+    #[error("Part count mismatch for neighbor {neighbor}: expected {expected}, got {got}")]
+    PartCountMismatch {
+        neighbor: usize,
+        expected: usize,
+        got: usize,
+    },
 }
+
+impl PartialEq for MeshSieveError {
+    fn eq(&self, other: &MeshSieveError) -> bool {
+        use MeshSieveError::*;
+        match (self, other) {
+            (InvalidPointId, InvalidPointId)
+            | (CycleDetected, CycleDetected)
+            | (ZeroLengthSlice, ZeroLengthSlice)
+            | (PartitionPointOverflow, PartitionPointOverflow) => true,
+            (UnsupportedStackOperation(a), UnsupportedStackOperation(b)) => a == b,
+            (MissingPointInCone(a), MissingPointInCone(b)) => a == b,
+            (DuplicatePoint(a), DuplicatePoint(b)) => a == b,
+            (MissingAtlasPoint(a), MissingAtlasPoint(b)) => a == b,
+            (PointNotInAtlas(a), PointNotInAtlas(b)) => a == b,
+            (SievedArrayPointNotInAtlas(a), SievedArrayPointNotInAtlas(b)) => a == b,
+            (SliceLengthMismatch { point: p1, expected: e1, found: f1 },
+             SliceLengthMismatch { point: p2, expected: e2, found: f2 }) => p1 == p2 && e1 == e2 && f1 == f2,
+            (SievedArraySliceLengthMismatch { point: p1, expected: e1, found: f1 },
+             SievedArraySliceLengthMismatch { point: p2, expected: e2, found: f2 }) => p1 == p2 && e1 == e2 && f1 == f2,
+            (AtlasInsertionFailed(p1, _), AtlasInsertionFailed(p2, _)) => p1 == p2,
+            (MissingSectionPoint(a), MissingSectionPoint(b)) => a == b,
+            (ScatterLengthMismatch { expected: e1, found: f1 }, ScatterLengthMismatch { expected: e2, found: f2 }) => e1 == e2 && f1 == f2,
+            (ScatterChunkMismatch { offset: o1, len: l1 }, ScatterChunkMismatch { offset: o2, len: l2 }) => o1 == o2 && l1 == l2,
+            (SievedArrayPrimitiveConversionFailure(a), SievedArrayPrimitiveConversionFailure(b)) => a == b,
+            (DeltaLengthMismatch { expected: e1, found: f1 }, DeltaLengthMismatch { expected: e2, found: f2 }) => e1 == e2 && f1 == f2,
+            (PartitionIndexOutOfBounds(a), PartitionIndexOutOfBounds(b)) => a == b,
+            (MissingRecvCount { neighbor: n1 }, MissingRecvCount { neighbor: n2 }) => n1 == n2,
+            (SectionAccess { point: p1, .. }, SectionAccess { point: p2, .. }) => p1 == p2,
+            (CommError { neighbor: n1, .. }, CommError { neighbor: n2, .. }) => n1 == n2,
+            (BufferSizeMismatch { neighbor: n1, expected: e1, got: g1 }, BufferSizeMismatch { neighbor: n2, expected: e2, got: g2 }) => n1 == n2 && e1 == e2 && g1 == g2,
+            (PartCountMismatch { neighbor: n1, expected: e1, got: g1 }, PartCountMismatch { neighbor: n2, expected: e2, got: g2 }) => n1 == n2 && e1 == e2 && g1 == g2,
+            (Communication(a), Communication(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+impl Eq for MeshSieveError {}
+
+/// Low-level communicator failure.
+#[derive(Debug, thiserror::Error, Clone)]
+#[error("{0}")]
+pub struct CommError(pub String);
+
+impl PartialEq for CommError {
+    fn eq(&self, other: &CommError) -> bool {
+        self.0 == other.0
+    }
+}
+impl Eq for CommError {}
+

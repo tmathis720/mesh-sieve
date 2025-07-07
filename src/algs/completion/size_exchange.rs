@@ -12,7 +12,7 @@ pub fn exchange_sizes<C, T>(
     links: &std::collections::HashMap<usize, Vec<T>>,
     comm: &C,
     base_tag: u16,
-) -> std::collections::HashMap<usize, u32>
+) -> Result<std::collections::HashMap<usize, u32>, crate::mesh_error::MeshSieveError>
 where
     C: crate::algs::communicator::Communicator + Sync,
 {
@@ -28,11 +28,13 @@ where
     }
     let mut sizes_in = std::collections::HashMap::new();
     for (nbr, (h, mut buf)) in recv_size {
-        let data = h.wait().expect("size receive");
+        let data = h
+            .wait()
+            .ok_or_else(|| crate::mesh_error::CommError(format!("failed to receive size from rank {}", nbr)))?;
         buf.copy_from_slice(&data);
         sizes_in.insert(nbr, u32::from_le_bytes(buf));
     }
-    sizes_in
+    Ok(sizes_in)
 }
 
 /// Posts irecv/isend for the number of items to expect from each neighbor (symmetric version).
@@ -42,7 +44,7 @@ pub fn exchange_sizes_symmetric<C, T>(
     comm: &C,
     base_tag: u16,
     all_neighbors: &std::collections::HashSet<usize>,
-) -> std::collections::HashMap<usize, u32>
+) -> Result<std::collections::HashMap<usize, u32>, crate::mesh_error::MeshSieveError>
 where
     C: crate::algs::communicator::Communicator + Sync,
 {
@@ -58,11 +60,13 @@ where
     }
     let mut sizes_in = std::collections::HashMap::new();
     for (nbr, (h, mut buf)) in recv_size {
-        let data = h.wait().expect("size receive");
+        let data = h
+            .wait()
+            .ok_or_else(|| crate::mesh_error::CommError(format!("failed to receive size from rank {}", nbr)))?;
         buf.copy_from_slice(&data);
         sizes_in.insert(nbr, u32::from_le_bytes(buf));
     }
-    sizes_in
+    Ok(sizes_in)
 }
 
 #[cfg(test)]

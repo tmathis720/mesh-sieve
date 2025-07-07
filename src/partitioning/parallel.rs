@@ -116,6 +116,6 @@ pub mod onizuka_partitioning {
         parallel_scope_with_rng(salt, || {
             result = Some(crate::partitioning::vertex_cut::build_vertex_cuts(graph, pm, salt));
         });
-        result.expect("Parallel vertex cut did not produce a result")
+        result.expect("Parallel vertex cut did not produce a result").expect("vertex cut failed")
     }
 }

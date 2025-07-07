@@ -22,7 +22,8 @@ pub fn complete_section<V, D, C>(
     // For tests: use all ranks except my_rank as neighbors
     let all_neighbors: std::collections::HashSet<usize> = (0..n_ranks).filter(|&r| r != my_rank).collect();
     // Exchange sizes (always post send/recv for all neighbors)
-    let counts = crate::algs::completion::size_exchange::exchange_sizes_symmetric(&links, comm, BASE_TAG, &all_neighbors);
+    let counts = crate::algs::completion::size_exchange::exchange_sizes_symmetric(&links, comm, BASE_TAG, &all_neighbors)
+        .expect("Failed to exchange sizes");
     crate::algs::completion::data_exchange::exchange_data_symmetric::<V, D, C>(&links, &counts, comm, BASE_TAG+1, section, &all_neighbors);
 }
 

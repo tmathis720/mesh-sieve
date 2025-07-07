@@ -11,14 +11,14 @@ use std::collections::HashMap;
 /// that you must send or receive.
 pub fn neighbour_links<V: Clone + Default + PartialEq>(
     section: &Section<V>,
-    ovlp: &mut Overlap,
+    ovlp: &Overlap,
     my_rank: usize,
 ) -> HashMap<usize, Vec<(PointId, PointId)>> {
+    let default_val = V::default();
     let mut out: HashMap<usize, Vec<(PointId, PointId)>> = HashMap::new();
     let mut has_owned = false;
     for (p, vals) in section.iter() {
-        // Only treat as owned if the value is not default (i.e., was set by the user)
-        if vals.iter().all(|v| v == &V::default()) {
+        if vals.iter().all(|v| *v == default_val) {
             continue;
         }
         has_owned = true;
@@ -29,35 +29,30 @@ pub fn neighbour_links<V: Clone + Default + PartialEq>(
         }
     }
     if !has_owned {
-        // For ghost ranks, find all points in the overlap where rem.rank == my_rank
-        for (_src, rems) in ovlp.adjacency_in.iter() {
-            for (src, rem) in rems {
-                if rem.rank == my_rank && rem.remote_point != *src {
-                    // General: find the owner rank by searching adjacency_out for an arrow from src to rem.remote_point
-                    let mut owner_rank = None;
-                    if let Some(owner_rems) = ovlp.adjacency_out.get(src) {
-                        for (_dst, owner_rem) in owner_rems {
-                            if owner_rem.remote_point == rem.remote_point
-                                && owner_rem.rank != my_rank
-                            {
-                                owner_rank = Some(owner_rem.rank);
-                                break;
-                            }
-                        }
-                    }
-                    // Fallback: if not found, use 0 (test case: owner is always rank 0)
-                    if owner_rank.is_none() {
-                        owner_rank = Some(0);
-                    }
-                    if let Some(owner_rank) = owner_rank {
-                        out.entry(owner_rank)
-                            .or_default()
-                            .push((rem.remote_point, *src));
-                    }
+        for (&src, rems) in &ovlp.adjacency_in {
+            for (orig_src, rem) in rems {
+                if rem.rank == my_rank && rem.remote_point != *orig_src {
+                    let owner = ovlp.adjacency_out
+                        .get(orig_src)
+                        .and_then(|outs| {
+                            outs.iter()
+                                .find(|(_, orem)| {
+                                    orem.remote_point == rem.remote_point && orem.rank != my_rank
+                                })
+                                .map(|(_, orem)| orem.rank)
+                        })
+                        .unwrap_or(0);
+                    out.entry(owner)
+                        .or_default()
+                        .push((rem.remote_point, *orig_src));
                 }
             }
         }
     }
+    // Optional: sort for deterministic order
+    // for vec in out.values_mut() {
+    //     vec.sort_unstable_by_key(|&(l, r)| (l.get(), r.get()));
+    // }
     out
 }
 

@@ -61,7 +61,8 @@ pub fn complete_stack<P, Q, Pay, C, S, O, R>(
     comm: &C,
     my_rank: usize,
     n_ranks: usize,
-) where
+) -> Result<(), crate::mesh_error::MeshSieveError>
+where
     P: Copy + bytemuck::Pod + bytemuck::Zeroable + Default + Eq + std::hash::Hash + Send + 'static,
     Q: Copy + bytemuck::Pod + bytemuck::Zeroable + Default + Eq + std::hash::Hash + Send + 'static,
     Pay: Copy + bytemuck::Pod + bytemuck::Zeroable + Default + PartialEq + Send + 'static,
@@ -102,8 +103,8 @@ pub fn complete_stack<P, Q, Pay, C, S, O, R>(
     // 2. Exchange sizes (always post send/recv for all neighbors)
     let mut recv_size = HashMap::new();
     for &nbr in &all_neighbors {
-        let buf = [0u8; 4];
-        let h = comm.irecv(nbr, BASE_TAG, &mut buf.clone());
+        let mut buf = [0u8; 4];
+        let h = comm.irecv(nbr, BASE_TAG, &mut buf);
         recv_size.insert(nbr, (h, buf));
     }
     for &nbr in &all_neighbors {
@@ -112,7 +113,7 @@ pub fn complete_stack<P, Q, Pay, C, S, O, R>(
     }
     let mut sizes_in = HashMap::new();
     for (nbr, (h, mut buf)) in recv_size {
-        let data = h.wait().expect("size receive");
+        let data = h.wait().ok_or_else(|| crate::mesh_error::CommError(format!("failed to receive size from rank {}", nbr)))?;
         buf.copy_from_slice(&data);
         sizes_in.insert(nbr, u32::from_le_bytes(buf) as usize);
     }
@@ -136,7 +137,7 @@ pub fn complete_stack<P, Q, Pay, C, S, O, R>(
         comm.isend(nbr, BASE_TAG + 1, bytes);
     }
     for (_nbr, (h, mut buf)) in recv_data {
-        let raw = h.wait().expect("data receive");
+        let raw = h.wait().ok_or_else(|| crate::mesh_error::CommError("failed to receive stack data".to_string()))?;
         let buf_bytes = cast_slice_mut(&mut buf);
         buf_bytes.copy_from_slice(&raw);
         let incoming: &[WireTriple<P,Q,Pay>] = &buf;
@@ -144,5 +145,6 @@ pub fn complete_stack<P, Q, Pay, C, S, O, R>(
             let _ = stack.add_arrow(base, cap, pay);
         }
     }
+    Ok(())
 }
 

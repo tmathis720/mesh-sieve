@@ -431,7 +431,7 @@ mod tests {
         let s2 = InMemoryStack::<u8,u8,u8>::new();
         let mut cs = ComposedStack::new(&s1, &s2, |a,_b|*a);
         let err = cs.add_arrow(0,0,0).unwrap_err();
-        assert_eq!(err, MeshSieveError::UnsupportedStackOperation("add_arrow on ComposedStack"));
+        assert_eq!(err.to_string(), MeshSieveError::UnsupportedStackOperation("add_arrow on ComposedStack").to_string());
     }
     #[test]
     fn composed_stack_remove_arrow_error() {
@@ -439,7 +439,7 @@ mod tests {
         let s2 = InMemoryStack::<u8,u8,u8>::new();
         let mut cs = ComposedStack::new(&s1, &s2, |a,_b|*a);
         let err = cs.remove_arrow(0,0).unwrap_err();
-        assert_eq!(err, MeshSieveError::UnsupportedStackOperation("remove_arrow on ComposedStack"));
+        assert_eq!(err.to_string(), MeshSieveError::UnsupportedStackOperation("remove_arrow on ComposedStack").to_string());
     }
     #[test]
     fn composed_stack_base_mut_error() {
@@ -447,7 +447,7 @@ mod tests {
         let s2 = InMemoryStack::<u8,u8,u8>::new();
         let mut cs = ComposedStack::new(&s1, &s2, |a,_b|*a);
         let err = cs.base_mut().unwrap_err();
-        assert_eq!(err, MeshSieveError::UnsupportedStackOperation("base_mut on ComposedStack"));
+        assert_eq!(err.to_string(), MeshSieveError::UnsupportedStackOperation("base_mut on ComposedStack").to_string());
     }
     #[test]
     fn composed_stack_cap_mut_error() {
@@ -455,7 +455,7 @@ mod tests {
         let s2 = InMemoryStack::<u8,u8,u8>::new();
         let mut cs = ComposedStack::new(&s1, &s2, |a,_b|*a);
         let err = cs.cap_mut().unwrap_err();
-        assert_eq!(err, MeshSieveError::UnsupportedStackOperation("cap_mut on ComposedStack"));
+        assert_eq!(err.to_string(), MeshSieveError::UnsupportedStackOperation("cap_mut on ComposedStack").to_string());
     }
 
     #[test]

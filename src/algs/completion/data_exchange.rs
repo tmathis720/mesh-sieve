@@ -1,6 +1,7 @@
 //! Stage 2 of section completion: exchange the actual data items.
 
 use crate::algs::communicator::Wait;
+use crate::mesh_error::MeshSieveError;
 
 /// For each neighbor, pack `Delta::restrict` from your section into a send buffer,
 /// post irecv for the corresponding byte length (from stage 1),
@@ -17,7 +18,8 @@ pub fn exchange_data<V, D, C>(
     comm: &C,
     base_tag: u16,
     section: &mut crate::data::section::Section<V>,
-) where
+) -> Result<(), MeshSieveError>
+where
     V: Clone + Default + Send + 'static,
     D: crate::overlap::delta::Delta<V> + Send + Sync + 'static,
     D::Part: bytemuck::Pod + Default,
@@ -28,7 +30,7 @@ pub fn exchange_data<V, D, C>(
     // --- Stage 2: exchange data ---
     let mut recv_data = HashMap::new();
     for &nbr in links.keys() {
-        let n_items = recv_counts[&nbr] as usize;
+        let n_items = *recv_counts.get(&nbr).ok_or(MeshSieveError::MissingRecvCount { neighbor: nbr })? as usize;
         let mut buffer = vec![0u8; n_items * std::mem::size_of::<D::Part>()];
         let h = comm.irecv(nbr, base_tag, &mut buffer);
         recv_data.insert(nbr, (h, buffer));
@@ -36,22 +38,34 @@ pub fn exchange_data<V, D, C>(
     for (&nbr, links) in links {
         let mut scratch = Vec::with_capacity(links.len());
         for &(loc, _) in links {
-            let slice = section.try_restrict(loc).unwrap();
+            let slice = section.try_restrict(loc).map_err(|e| MeshSieveError::SectionAccess { point: loc, source: Box::new(e) })?;
             scratch.push(D::restrict(&slice[0]));
         }
         let bytes = cast_slice(&scratch);
-        comm.isend(nbr, base_tag, bytes);
+        if !bytes.is_empty() {
+            comm.isend(nbr, base_tag, bytes);
+        }
     }
     for (nbr, (h, mut buffer)) in recv_data {
-        let raw = h.wait().expect("data receive");
+        let raw = h.wait().ok_or_else(|| MeshSieveError::CommError {
+            neighbor: nbr,
+            source: "No data received (wait returned None)".into(),
+        })?;
+        if raw.len() != buffer.len() {
+            return Err(MeshSieveError::BufferSizeMismatch { neighbor: nbr, expected: buffer.len(), got: raw.len() });
+        }
         buffer.copy_from_slice(&raw);
         let parts: &[D::Part] = cast_slice(&buffer);
         let links = &links[&nbr];
+        if parts.len() != links.len() {
+            return Err(MeshSieveError::PartCountMismatch { neighbor: nbr, expected: links.len(), got: parts.len() });
+        }
         for ((_, dst), part) in links.iter().zip(parts) {
-            let mut_slice = section.try_restrict_mut(*dst).unwrap();
+            let mut_slice = section.try_restrict_mut(*dst).map_err(|e| MeshSieveError::SectionAccess { point: *dst, source: Box::new(e) })?;
             D::fuse(&mut mut_slice[0], *part);
         }
     }
+    Ok(())
 }
 
 /// For each neighbor, pack `Delta::restrict` from your section into a send buffer,
@@ -72,7 +86,8 @@ pub fn exchange_data_symmetric<V, D, C>(
     base_tag: u16,
     section: &mut crate::data::section::Section<V>,
     all_neighbors: &std::collections::HashSet<usize>,
-) where
+) -> Result<(), MeshSieveError>
+where
     V: Clone + Default + Send + 'static,
     D: crate::overlap::delta::Delta<V> + Send + Sync + 'static,
     D::Part: bytemuck::Pod + Default,
@@ -92,23 +107,35 @@ pub fn exchange_data_symmetric<V, D, C>(
         let links_vec = links.get(&nbr).map_or(&[][..], |v| &v[..]);
         let mut scratch = Vec::with_capacity(links_vec.len());
         for &(loc, _) in links_vec {
-            let slice = section.try_restrict(loc).unwrap();
+            let slice = section.try_restrict(loc).map_err(|e| MeshSieveError::SectionAccess { point: loc, source: Box::new(e) })?;
             scratch.push(D::restrict(&slice[0]));
         }
         let bytes = cast_slice(&scratch);
-        comm.isend(nbr, base_tag, bytes);
+        if !bytes.is_empty() {
+            comm.isend(nbr, base_tag, bytes);
+        }
     }
     for (nbr, (h, mut buffer)) in recv_data {
-        let raw = h.wait().expect("data receive");
+        let raw = h.wait().ok_or_else(|| MeshSieveError::CommError {
+            neighbor: nbr,
+            source: "No data received (wait returned None)".into(),
+        })?;
         let buf_bytes = cast_slice_mut(&mut buffer);
+        if raw.len() != buf_bytes.len() {
+            return Err(MeshSieveError::BufferSizeMismatch { neighbor: nbr, expected: buf_bytes.len(), got: raw.len() });
+        }
         buf_bytes.copy_from_slice(&raw);
         let parts: &[D::Part] = &buffer;
         let links_vec = links.get(&nbr).map_or(&[][..], |v| &v[..]);
+        if parts.len() != links_vec.len() {
+            return Err(MeshSieveError::PartCountMismatch { neighbor: nbr, expected: links_vec.len(), got: parts.len() });
+        }
         for ((_, dst), part) in links_vec.iter().zip(parts) {
-            let mut_slice = section.try_restrict_mut(*dst).unwrap();
+            let mut_slice = section.try_restrict_mut(*dst).map_err(|e| MeshSieveError::SectionAccess { point: *dst, source: Box::new(e) })?;
             D::fuse(&mut mut_slice[0], *part);
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -176,7 +203,7 @@ mod tests {
                 &comm0,
                 base_tag,
                 &mut section0,
-            );
+            ).unwrap();
             (
                 section0.try_restrict(PointId::new(10).unwrap()).unwrap()[0],
                 section0.try_restrict(PointId::new(20).unwrap()).unwrap()[0],
@@ -189,7 +216,7 @@ mod tests {
                 &comm1,
                 base_tag,
                 &mut section1,
-            );
+            ).unwrap();
             (
                 section1.try_restrict(PointId::new(10).unwrap()).unwrap()[0],
                 section1.try_restrict(PointId::new(20).unwrap()).unwrap()[0],

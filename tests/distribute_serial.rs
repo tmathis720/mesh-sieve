@@ -11,7 +11,7 @@ fn distribute_mesh_serial() {
     // Partition map: 1→0, 2→1, 3→1
     let parts = vec![0,1,1];
     let comm = NoComm;
-    let (local, overlap) = distribute_mesh(&global, &parts, &comm);
+    let (local, overlap) = distribute_mesh(&global, &parts, &comm).unwrap();
     // Assert local ownership: only point 1 is owned by rank 0, so no local arrows
     assert_eq!(local.cone(PointId::new(1).unwrap()).count(), 0);
     assert_eq!(local.cone(PointId::new(2).unwrap()).count(), 0);

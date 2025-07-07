@@ -33,7 +33,7 @@ use crate::algs::communicator::Communicator;
 /// global.add_arrow(PointId::new(2).unwrap(), PointId::new(3).unwrap(), ());
 /// let parts = vec![0,1,1];
 /// let comm = NoComm;
-/// let (local, overlap) = distribute_mesh(&global, &parts, &comm);
+/// let (local, overlap) = distribute_mesh(&global, &parts, &comm).unwrap();
 /// assert_eq!(local.cone(PointId::new(1).unwrap()).count(), 0);
 /// assert_eq!(local.cone(PointId::new(2).unwrap()).count(), 0);
 /// assert_eq!(local.cone(PointId::new(3).unwrap()).count(), 0);
@@ -50,7 +50,7 @@ pub fn distribute_mesh<M, C>(
     mesh: &M,
     parts: &[usize],
     comm: &C,
-) -> (InMemorySieve<PointId,()>, InMemorySieve<PointId,Remote>)
+) -> Result<(InMemorySieve<PointId,()>, InMemorySieve<PointId,Remote>), crate::mesh_error::MeshSieveError>
 where
     M: Sieve<Point=PointId, Payload=()>,
     C: Communicator + Sync,
@@ -59,10 +59,14 @@ where
     let _n_ranks = comm.size();
     // 1) Build the “overlap” sieve
     let mut overlap = InMemorySieve::<PointId,Remote>::default();
-    for res in mesh.points() {
-        let p = res;
-        let owner = parts[p.get() as usize - 1];
-        let part_pt = PointId::new((owner as u64) + 1).unwrap();
+    for p in mesh.points() {
+        let idx = p.get().checked_sub(1)
+            .ok_or(crate::mesh_error::MeshSieveError::PartitionIndexOutOfBounds(p.get() as usize))? as usize;
+        let owner = *parts.get(idx)
+            .ok_or(crate::mesh_error::MeshSieveError::PartitionIndexOutOfBounds(p.get() as usize))?;
+        let raw = (owner as u64).checked_add(1)
+            .ok_or(crate::mesh_error::MeshSieveError::PartitionPointOverflow)?;
+        let part_pt = PointId::new(raw)?;
         if owner != my_rank && p != part_pt {
             overlap.add_arrow(p, part_pt, Remote { rank: owner, remote_point: p });
         }
@@ -70,9 +74,13 @@ where
     // 2) Extract local submesh: only arrows whose src→dst are both owned here
     let mut local = InMemorySieve::<PointId,()>::default();
     for base in mesh.base_points() {
-        if parts[base.get() as usize - 1] == my_rank {
+        let base_idx = base.get().checked_sub(1)
+            .ok_or(crate::mesh_error::MeshSieveError::PartitionIndexOutOfBounds(base.get() as usize))? as usize;
+        if *parts.get(base_idx).ok_or(crate::mesh_error::MeshSieveError::PartitionIndexOutOfBounds(base.get() as usize))? == my_rank {
             for (dst, _) in mesh.cone(base) {
-                if parts[dst.get() as usize - 1] == my_rank {
+                let dst_idx = dst.get().checked_sub(1)
+                    .ok_or(crate::mesh_error::MeshSieveError::PartitionIndexOutOfBounds(dst.get() as usize))? as usize;
+                if *parts.get(dst_idx).ok_or(crate::mesh_error::MeshSieveError::PartitionIndexOutOfBounds(dst.get() as usize))? == my_rank {
                     local.add_arrow(base, dst, ());
                 }
             }
@@ -84,5 +92,5 @@ where
         sieve_completion::complete_sieve(&mut overlap, &overlap_clone, comm, my_rank);
     }
     // 4) (Optional: exchange data if needed, but for mesh topology with () payload, this is not required)
-    (local, overlap)
+    Ok((local, overlap))
 }

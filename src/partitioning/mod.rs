@@ -27,6 +27,8 @@
 #[cfg(feature = "mpi-support")]
 pub mod binpack;
 #[cfg(feature = "mpi-support")]
+pub mod error;
+#[cfg(feature = "mpi-support")]
 pub mod graph_traits;
 #[cfg(feature = "mpi-support")]
 pub mod louvain;
@@ -123,6 +125,14 @@ pub enum PartitionerError {
         ratio:    f64,
         tolerance: f64,
     },
+    /// Error during vertex cut construction
+    VertexCut(crate::partitioning::error::PartitionError),
+}
+
+impl From<crate::partitioning::error::PartitionError> for PartitionerError {
+    fn from(e: crate::partitioning::error::PartitionError) -> Self {
+        PartitionerError::VertexCut(e)
+    }
 }
 
 #[cfg(feature = "mpi-support")]
@@ -244,9 +254,9 @@ where
     );
     // 6. Vertex cut construction (primary owners, replicas)
     let (primary, replicas) = if cfg.enable_phase3 {
-        build_vertex_cuts(graph, &pm, cfg.rng_seed)
+        build_vertex_cuts(graph, &pm, cfg.rng_seed)?
     } else {
-        (pm.iter().map(|(_v,&p)| p).collect(), vec![Vec::new(); n])
+        Ok::<_, PartitionerError>((pm.iter().map(|(_v,&p)| p).collect(), vec![Vec::new(); n]))?
     };
     let total_replicas: usize = replicas.iter().map(|r| r.len()).sum();
     debug!(

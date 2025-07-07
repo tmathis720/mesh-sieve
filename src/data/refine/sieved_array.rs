@@ -84,7 +84,7 @@ where
                         found: fine_slice.len(),
                     });
                 }
-                orient.apply(coarse_slice, fine_slice);
+                orient.apply(coarse_slice, fine_slice)?;
             }
         }
         Ok(())
@@ -203,7 +203,7 @@ where
                             None
                         } else {
                             let mut data = vec![V::default(); len];
-                            o.apply(coarse_slice, &mut data);
+                            o.apply(coarse_slice, &mut data).ok()?;
                             Some(((*f), data))
                         }
                     },

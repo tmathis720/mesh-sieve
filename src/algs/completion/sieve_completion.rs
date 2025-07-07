@@ -43,7 +43,7 @@ pub fn complete_sieve(
     overlap: &crate::overlap::overlap::Overlap,
     comm: &impl crate::algs::communicator::Communicator,
     my_rank: usize,
-) {
+) -> Result<(), crate::mesh_error::MeshSieveError> {
     const BASE_TAG: u16 = 0xC0DE;
     let mut nb_links: std::collections::HashMap<usize, Vec<(PointId, PointId)>> =
         std::collections::HashMap::new();
@@ -86,7 +86,7 @@ pub fn complete_sieve(
     }
     let mut sizes_in = std::collections::HashMap::new();
     for (nbr, (h, mut buf)) in recv_size {
-        let data = h.wait().expect("size receive");
+        let data = h.wait().ok_or_else(|| crate::mesh_error::CommError(format!("failed to receive size from rank {nbr}")))?;
         buf.copy_from_slice(&data);
         sizes_in.insert(nbr, u32::from_le_bytes(buf) as usize);
     }
@@ -116,8 +116,10 @@ pub fn complete_sieve(
     }
     // 4. Stage 3: integrate
     let mut inserted = std::collections::HashSet::new();
-    for (_nbr, (h, mut buffer)) in recv_data {
-        let raw = h.wait().expect("data receive");
+    for (nbr, (h, mut buffer)) in recv_data {
+        let raw = h.wait().ok_or_else(|| crate::mesh_error::CommError(format!(
+            "failed to receive wire triples from rank {nbr}"
+        )))?;
         buffer.copy_from_slice(&raw);
         let triples: &[WireTriple] = bytemuck::cast_slice(&buffer);
         for WireTriple { src, dst, rank } in triples {
@@ -158,7 +160,7 @@ pub fn complete_sieve(
     // After all integration, ensure remote faces are present by adding missing overlap links
     // (simulate what would happen in a real MPI exchange)
     sieve.strata.take();
-    // Removed call to assert_dag as it does not exist
+    Ok(())
 }
 
 /// Iteratively completes the sieve until no new points/arrows are added.
@@ -179,19 +181,19 @@ pub fn complete_sieve_until_converged(
     overlap: &crate::overlap::overlap::Overlap,
     comm: &impl crate::algs::communicator::Communicator,
     my_rank: usize,
-) {
+) -> Result<(), crate::mesh_error::MeshSieveError> {
     let mut prev_points = std::collections::HashSet::new();
     loop {
         let before: std::collections::HashSet<_> = sieve.points().collect();
-        complete_sieve(sieve, overlap, comm, my_rank);
+        complete_sieve(sieve, overlap, comm, my_rank)?;
         let after: std::collections::HashSet<_> = sieve.points().collect();
         if after == before || after == prev_points {
             break;
         }
         prev_points = after.clone();
         InvalidateCache::invalidate_cache(sieve);
-        // Removed call to assert_dag as it does not exist
     }
+    Ok(())
 }
 
 // Optionally, add #[cfg(test)] mod tests for sieve completion
