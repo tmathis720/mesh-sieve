@@ -13,7 +13,7 @@ use mesh_sieve::topology::point::PointId;
 use mesh_sieve::topology::sieve::{Sieve, InMemorySieve};
 
 fn main() {
-    let comm = MpiComm::new();
+    let comm = MpiComm::default();
     let size = Communicator::size(&comm);
     let rank = Communicator::rank(&comm);
 

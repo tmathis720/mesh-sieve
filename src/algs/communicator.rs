@@ -165,8 +165,6 @@ impl Communicator for RayonComm {
 mod mpi_backend {
     use super::*;
     use mpi::environment::Universe;
-    use mpi::request::Request;
-    use mpi::request::StaticScope;
     use mpi::topology::{Communicator as _, SimpleCommunicator};
     use mpi::traits::*;
 
@@ -178,17 +176,18 @@ mod mpi_backend {
 
     impl Default for MpiComm {
         fn default() -> Self {
-            Self::new()
+            Self::from_universe(mpi::initialize().unwrap())
         }
     }
 
     impl MpiComm {
+        /// convenience constructor for examples & tests
         pub fn new() -> Self {
-            let universe = mpi::initialize().unwrap_or_else(|| {
-                eprintln!("Error: MPI environment not initialized. \\nMake sure you’re running under an MPI launcher, e.g.:");
-                eprintln!("    cargo mpirun -n <ranks> --features mpi-support ...");
-                std::process::exit(1);
-            });
+            let uni = mpi::initialize().unwrap();
+            Self::from_universe(uni)
+        }
+
+        pub fn from_universe(universe: Universe) -> Self {
             let world = universe.world();
             let rank = world.rank() as usize;
             MpiComm {
@@ -199,43 +198,53 @@ mod mpi_backend {
         }
     }
 
-    pub struct MpiHandle {
-        req: Request<'static, [u8], StaticScope>,
+    // Use boxed trait objects for handles to erase the lifetime
+    pub struct MpiSendHandle {
+        req: mpi::request::Request<'static, [u8], mpi::request::StaticScope>,
         buf: *mut [u8],
     }
-
-    impl Wait for MpiHandle {
+    impl Wait for MpiSendHandle {
         fn wait(self) -> Option<Vec<u8>> {
             let _ = self.req.wait();
-            // SAFETY: We own the leaked buffer, so it's safe to reconstruct and take ownership
-            let buf = unsafe { Box::from_raw(self.buf) };
-            if buf.is_empty() {
-                eprintln!("[MpiComm] ERROR: No message received or buffer is empty. Possible send/receive mismatch or communication error.");
-                None
-            } else {
-                Some(buf.to_vec())
-            }
+            unsafe { drop(Box::from_raw(self.buf)); }
+            None
         }
     }
-
-    impl crate::algs::communicator::Communicator for MpiComm {
-        type SendHandle = ();
-        type RecvHandle = MpiHandle;
-
-        fn isend(&self, peer: usize, _tag: u16, buf: &[u8]) {
-            self.world.process_at_rank(peer as i32).send(buf);
+    pub struct MpiRecvHandle {
+        req: mpi::request::Request<'static, [u8], mpi::request::StaticScope>,
+        buf: *mut [u8],
+        len: usize,
+    }
+    impl Wait for MpiRecvHandle {
+        fn wait(self) -> Option<Vec<u8>> {
+            let _ = self.req.wait();
+            let boxed: Box<[u8]> = unsafe { Box::from_raw(self.buf) };
+            let mut v = Vec::from(boxed);
+            v.truncate(self.len);
+            Some(v)
         }
-
-        fn irecv(&self, peer: usize, _tag: u16, buf: &mut [u8]) -> MpiHandle {
-            let len = buf.len();
-            let v = vec![0u8; len];
-            let static_buf: &'static mut [u8] = Box::leak(v.into_boxed_slice());
-            let buf_ptr = static_buf as *mut [u8];
-            let req = self
-                .world
-                .process_at_rank(peer as i32)
-                .immediate_receive_into(StaticScope, unsafe { &mut *buf_ptr });
-            MpiHandle { req, buf: buf_ptr }
+    }
+    impl crate::algs::communicator::Communicator for MpiComm {
+        type SendHandle = MpiSendHandle;
+        type RecvHandle = MpiRecvHandle;
+        fn isend(&self, peer: usize, _tag: u16, buf: &[u8]) -> MpiSendHandle {
+            use mpi::request::StaticScope;
+            let boxed = buf.to_vec().into_boxed_slice();
+            let raw: *mut [u8] = Box::into_raw(boxed);
+            let slice: &[u8] = unsafe { &*raw };
+            let req = self.world.process_at_rank(peer as i32)
+                .immediate_send(StaticScope, slice);
+            MpiSendHandle { req, buf: raw }
+        }
+        fn irecv(&self, peer: usize, _tag: u16, template: &mut [u8]) -> MpiRecvHandle {
+            use mpi::request::StaticScope;
+            let len = template.len();
+            let boxed = vec![0u8; len].into_boxed_slice();
+            let raw: *mut [u8] = Box::into_raw(boxed);
+            let slice_mut: &mut [u8] = unsafe { &mut *raw };
+            let req = self.world.process_at_rank(peer as i32)
+                .immediate_receive_into(StaticScope, slice_mut);
+            MpiRecvHandle { req, buf: raw, len }
         }
 
         fn rank(&self) -> usize {

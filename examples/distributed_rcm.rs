@@ -22,7 +22,7 @@ fn partition_vertices(nx: usize, ny: usize, size: usize) -> Vec<usize> {
 }
 
 fn main() {
-    let comm = MpiComm::new();
+    let comm = MpiComm::default();
     let rank = comm.rank();
     let size = comm.size();
 

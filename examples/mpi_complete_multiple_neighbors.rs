@@ -13,7 +13,7 @@ pub fn main() {
     use mesh_sieve::data::section::Section;
     use mesh_sieve::overlap::delta::CopyDelta;
     use mesh_sieve::algs::completion::complete_section;
-    let comm = MpiComm::new();
+    let comm = MpiComm::default();
     let world = &comm.world;
     let size = world.size() as usize;
     let rank = world.rank() as usize;

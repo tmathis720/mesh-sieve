@@ -12,7 +12,7 @@ use mesh_sieve::algs::completion::complete_section;
 
 fn main() {
     // 1) Init MPI
-    let comm = MpiComm::new();
+    let comm = MpiComm::default();
     let world = &comm.world;
     let size = world.size() as usize;
     let rank = world.rank() as usize;

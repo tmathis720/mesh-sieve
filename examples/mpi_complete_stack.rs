@@ -24,7 +24,7 @@ fn main() {
     impl mesh_sieve::algs::completion::stack_completion::HasRank for DummyRemote {
         fn rank(&self) -> usize { self.rank }
     }
-    let comm = MpiComm::new();
+    let comm = MpiComm::default();
     let world = &comm.world;
     let size = world.size() as usize;
     let rank = world.rank() as usize;

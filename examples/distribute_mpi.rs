@@ -1,4 +1,4 @@
-// cargo mpirun -n 2 --features mpi-support --example mesh_distribute_two_ranks 
+// cargo mpirun -n 2 --features mpi-support --example distribute_mpi 
 // This example demonstrates how to distribute a simple mesh across two MPI ranks
 // using the `mesh_sieve` library. It creates a mesh with three points and two arrows,
 // partitions it such that rank 0 owns point 1 and rank 1 owns points 2 and 3, and
@@ -13,7 +13,7 @@ fn main() {
     // 1. Initialize MPI
     let universe = mpi::initialize().unwrap();
     let world = universe.world();
-    let comm = MpiComm::new();
+    let comm = MpiComm::from_universe(universe);
     if comm.size() != 2 {
         eprintln!("This test requires 2 MPI ranks");
         return;
@@ -35,5 +35,5 @@ fn main() {
     println!("Rank {} local: {:?}", comm.rank(), local);
     println!("Rank {} overlap: {:?}", comm.rank(), overlap);
     // Synchronize before exit
-    world.barrier();
+    comm.world.barrier();
 }
