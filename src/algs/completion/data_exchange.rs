@@ -97,6 +97,7 @@ where
     use bytemuck::cast_slice_mut;
     use std::collections::HashMap;
     let mut recv_data = HashMap::new();
+    let mut pending_sends = Vec::new();
     for &nbr in all_neighbors {
         let n_items = recv_counts.get(&nbr).copied().unwrap_or(0) as usize;
         let mut buffer = vec![D::Part::default(); n_items];
@@ -112,7 +113,10 @@ where
         }
         let bytes = cast_slice(&scratch);
         if !bytes.is_empty() {
-            comm.isend(nbr, base_tag, bytes);
+            pending_sends.push(comm.isend(nbr, base_tag, bytes));
+        } else {
+            // Always post a send, even if empty, to match the symmetric protocol
+            pending_sends.push(comm.isend(nbr, base_tag, &[]));
         }
     }
     for (nbr, (h, mut buffer)) in recv_data {
@@ -134,6 +138,10 @@ where
             let mut_slice = section.try_restrict_mut(*dst).map_err(|e| MeshSieveError::SectionAccess { point: *dst, source: Box::new(e) })?;
             D::fuse(&mut mut_slice[0], *part);
         }
+    }
+    // Wait for all sends to complete (important for MPI correctness)
+    for h in pending_sends {
+        let _ = h.wait();
     }
     Ok(())
 }

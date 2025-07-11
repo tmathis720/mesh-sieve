@@ -4,12 +4,17 @@
 //! across distributed ranks, using packed wire triples for efficient communication.
 //! It supports iterative completion until convergence and ensures DAG invariants.
 
+use std::collections::HashMap;
+
 use crate::algs::communicator::Wait;
 use crate::algs::completion::partition_point;
+use crate::mesh_error::MeshSieveError;
 use crate::overlap::overlap::Remote;
+use crate::prelude::{Communicator, Overlap};
 use crate::topology::point::PointId;
-use crate::topology::sieve::Sieve;
+use crate::topology::sieve::{Sieve, InMemorySieve};
 use crate::topology::stratum::InvalidateCache;
+use bytemuck::Zeroable;
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -35,72 +40,103 @@ struct WireTriple {
 ///
 /// # Side Effects
 /// Modifies the sieve in place and ensures DAG invariants.
-pub fn complete_sieve(
-    sieve: &mut crate::topology::sieve::InMemorySieve<
-        crate::topology::point::PointId,
-        crate::overlap::overlap::Remote,
-    >,
-    overlap: &crate::overlap::overlap::Overlap,
-    comm: &impl crate::algs::communicator::Communicator,
+pub fn complete_sieve<C: Communicator>(
+    sieve: &mut InMemorySieve<PointId, Remote>,
+    overlap: &Overlap,
+    comm: &C,
     my_rank: usize,
-) -> Result<(), crate::mesh_error::MeshSieveError> {
+) -> Result<(), MeshSieveError> {
     const BASE_TAG: u16 = 0xC0DE;
-    let mut nb_links: std::collections::HashMap<usize, Vec<(PointId, PointId)>> =
-        std::collections::HashMap::new();
-    let me_pt = partition_point(my_rank);
-    let mut has_owned = false;
+
+    // --- EARLY RETURN FOR SERIAL / NOCOMM -------------------------------
+    // In pure‐serial tests, or if we only have one rank, there's nothing
+    // to exchange.
+    if comm.is_no_comm() || comm.size() <= 1 {
+        sieve.strata.take();
+        return Ok(());
+    }
+
+    // 1. Build the "who–needs–what" table: nb_links[peer] = Vec<(src, dst)>
+    // ---------------------------------------------------------------------
+    let mut nb_links: HashMap<usize, Vec<(PointId, PointId)>> = HashMap::new();
+
+    // Any arrows we *own* that somebody else references
     for (&p, outs) in &sieve.adjacency_out {
-        has_owned = true;
-        // For every outgoing arrow from my mesh-point
         for (_dst, _payload) in outs {
-            // For every neighbor who has an overlap link to this point
             for (_dst2, rem) in overlap.cone(p) {
                 if rem.rank != my_rank {
-                    nb_links
-                        .entry(rem.rank)
-                        .or_default()
-                        .push((p, rem.remote_point));
+                    nb_links.entry(rem.rank)
+                            .or_default()
+                            .push((p, rem.remote_point));
                 }
             }
         }
     }
-    if !has_owned {
+
+    // If we have no owned arrows, we may still have remote points that
+    // other ranks own but point *into* us -------------------------------⇣
+    if nb_links.is_empty() {
+        let me_pt = partition_point(my_rank);
         for (src, rem) in overlap.support(me_pt) {
             if rem.rank != my_rank {
-                nb_links
-                    .entry(rem.rank)
-                    .or_default()
-                    .push((rem.remote_point, src));
+                nb_links.entry(rem.rank)
+                        .or_default()
+                        .push((rem.remote_point, src));
             }
         }
     }
-    let mut recv_size = std::collections::HashMap::new();
-    for &nbr in nb_links.keys() {
-        let buf = [0u8; 4];
-        let h = comm.irecv(nbr, BASE_TAG, &mut buf.clone());
-        recv_size.insert(nbr, (h, buf));
+
+    // ---------------------------------------------------------------------
+    // 2. Symmetric two-phase exchange with *every* other rank
+    // ---------------------------------------------------------------------
+    let peers: Vec<usize> = (0..comm.size()).filter(|&r| r != my_rank).collect();
+
+    // ---- Phase 1: exchange the counts ------------------------------------
+    let mut size_recvs = HashMap::new();
+    for &peer in &peers {
+        // always post the receive
+        let mut buf = [0u8; 4];
+        let h = comm.irecv(peer, BASE_TAG, &mut buf);
+        size_recvs.insert(peer, (h, buf));
     }
-    for (&nbr, links) in &nb_links {
-        let count = links.len() as u32;
-        comm.isend(nbr, BASE_TAG, &count.to_le_bytes());
+
+    // non-blocking sends (store handles so we can wait later)
+    let mut pending_sends: Vec<C::SendHandle> = Vec::new();
+    for &peer in &peers {
+        let cnt = nb_links.get(&peer).map(|v| v.len()).unwrap_or(0) as u32;
+        pending_sends.push(comm.isend(peer, BASE_TAG, &cnt.to_le_bytes()));
     }
-    let mut sizes_in = std::collections::HashMap::new();
-    for (nbr, (h, mut buf)) in recv_size {
-        let data = h.wait().ok_or_else(|| crate::mesh_error::CommError(format!("failed to receive size from rank {nbr}")))?;
+
+    // collect the sizes we just received
+    let mut sizes_in = HashMap::new();
+    for (peer, (h, mut buf)) in size_recvs {
+        let data = h
+            .wait()
+            .ok_or_else(|| MeshSieveError::CommError {
+                neighbor: peer,
+                source: Box::new(crate::mesh_error::CommError(format!("failed to recv size from {peer}"))),
+            })?;
         buf.copy_from_slice(&data);
-        sizes_in.insert(nbr, u32::from_le_bytes(buf) as usize);
+        sizes_in.insert(peer, u32::from_le_bytes(buf) as usize);
     }
-    let mut recv_data = std::collections::HashMap::new();
-    for &nbr in nb_links.keys() {
-        let n_items = sizes_in[&nbr];
-        let mut buffer = vec![0u8; n_items * std::mem::size_of::<WireTriple>()];
-        let h = comm.irecv(nbr, BASE_TAG + 1, &mut buffer);
-        recv_data.insert(nbr, (h, buffer));
+
+    // ---- Phase 2: exchange the actual payloads ---------------------------
+    // We need an *aligned* buffer of WireTriple
+    let mut data_recvs = HashMap::new();
+    for &peer in &peers {
+        let n = sizes_in[&peer];
+        // Allocate n WireTriples (zeroed for Pod safety)
+        let mut buffer: Vec<WireTriple> = vec![WireTriple::zeroed(); n];
+        // View as &mut [u8] for MPI recv
+        let bytes = bytemuck::cast_slice_mut(buffer.as_mut_slice());
+        let h = comm.irecv(peer, BASE_TAG + 1, bytes);
+        data_recvs.insert(peer, (h, buffer));
     }
-    for (&nbr, links) in &nb_links {
+
+    for (&peer, links) in &nb_links {
+        // build the triples we owe this peer
         let mut triples = Vec::with_capacity(links.len());
         for &(src, _dst) in links {
-            // Send all arrows from src, not just those matching dst
             if let Some(outs) = sieve.adjacency_out.get(&src) {
                 for (d, payload) in outs {
                     triples.push(WireTriple {
@@ -112,56 +148,56 @@ pub fn complete_sieve(
             }
         }
         let bytes = bytemuck::cast_slice(&triples);
-        comm.isend(nbr, BASE_TAG + 1, bytes);
+        pending_sends.push(comm.isend(peer, BASE_TAG + 1, bytes));
     }
-    // 4. Stage 3: integrate
+    // peers with no links still need the empty message:
+    for &peer in &peers {
+        if !nb_links.contains_key(&peer) {
+            pending_sends.push(comm.isend(peer, BASE_TAG + 1, &[]));
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // 3. Integrate everything we have received
+    // ---------------------------------------------------------------------
     let mut inserted = std::collections::HashSet::new();
-    for (nbr, (h, mut buffer)) in recv_data {
-        let raw = h.wait().ok_or_else(|| crate::mesh_error::CommError(format!(
-            "failed to receive wire triples from rank {nbr}"
-        )))?;
-        buffer.copy_from_slice(&raw);
-        let triples: &[WireTriple] = bytemuck::cast_slice(&buffer);
-        for WireTriple { src, dst, rank } in triples {
-            // Handle possible error from PointId::new
-            let src_pt = match PointId::new(*src) {
-                Ok(pt) => pt,
-                Err(_) => continue, // skip invalid points
-            };
-            let dst_pt = match PointId::new(*dst) {
-                Ok(pt) => pt,
-                Err(_) => continue,
-            };
+    for (peer, (h, mut buffer)) in data_recvs {
+        let raw = h.wait().ok_or_else(|| {
+            MeshSieveError::CommError {
+                neighbor: peer,
+                source: Box::new(crate::mesh_error::CommError(format!("failed to recv triples from {peer}"))),
+            }
+        })?;
+        // raw is &[u8]; copy into our aligned [WireTriple]
+        let bytes = bytemuck::cast_slice_mut(buffer.as_mut_slice());
+        bytes.copy_from_slice(&raw);
+
+        // Now buffer is properly aligned so we can view it as WireTriple
+        for &WireTriple { src, dst, rank } in &buffer {
+            let src_pt = PointId::new(src)?;
+            let dst_pt = PointId::new(dst)?;
             let payload = Remote {
-                rank: *rank,
+                rank,
                 remote_point: dst_pt,
             };
-            // Only inject if this (src, dst) is not already present
             if inserted.insert((src_pt, dst_pt)) {
-                let already = sieve
-                    .adjacency_out
-                    .get(&src_pt)
-                    .is_some_and(|v| v.iter().any(|(d, _)| *d == dst_pt));
-                if !already {
-                    sieve
-                        .adjacency_out
-                        .entry(src_pt)
-                        .or_default()
-                        .push((dst_pt, payload));
-                    sieve
-                        .adjacency_in
-                        .entry(dst_pt)
-                        .or_default()
-                        .push((src_pt, payload));
-                }
+                sieve.adjacency_out.entry(src_pt).or_default().push((dst_pt, payload));
+                sieve.adjacency_in.entry(dst_pt).or_default().push((src_pt, payload));
             }
         }
     }
-    // After all integration, ensure remote faces are present by adding missing overlap links
-    // (simulate what would happen in a real MPI exchange)
-    sieve.strata.take();
+
+    sieve.strata.take(); // invalidate cached strata
+
+    // ---------------------------------------------------------------------
+    // 4. Make *sure* every non-blocking send is complete
+    // ---------------------------------------------------------------------
+    for h in pending_sends {
+        h.wait();                   // () for NoComm / Rayon; real wait for MPI
+    }
     Ok(())
 }
+
 
 /// Iteratively completes the sieve until no new points/arrows are added.
 ///

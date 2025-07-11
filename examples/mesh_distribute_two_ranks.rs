@@ -30,7 +30,7 @@ fn main() {
     global.add_arrow(PointId::new(3).unwrap(), PointId::new(4).unwrap(), ());
 
     // 2) Partition map: rank 0 owns {1,2}, rank 1 owns {3,4}
-    let parts = (0u64..5).map(|i| if i<=2 { 0 } else { 1 }).collect::<Vec<_>>();
+    let parts = vec![0, 0, 1, 1];
 
     // 3) Call distribute
     let (local, overlap) = match distribute_mesh(&global, &parts, &comm) {
