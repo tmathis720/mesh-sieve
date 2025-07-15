@@ -46,7 +46,7 @@ pub fn compute_strata<S>(
     s: &mut S
 ) -> Result<StrataCache<S::Point>, MeshSieveError>
 where
-    S: Sieve + ?Sized,
+    S: Sieve,
     S::Point: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
 {
     // 1) collect in-degrees over s.points()

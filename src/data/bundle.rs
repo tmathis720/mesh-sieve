@@ -21,7 +21,7 @@ use crate::topology::sieve::Sieve;
 ///
 /// # Fields
 /// - `stack`: vertical arrows from base mesh points → cap (DOF) points,
-///    carrying an `Orientation` payload if needed.
+///      carrying an `Orientation` payload if needed.
 /// - `section`: contiguous storage of data `V` for each point in the atlas.
 /// - `delta`: rules for extracting (`restrict`) and merging (`fuse`) values.
 pub struct Bundle<V, D = CopyDelta> {

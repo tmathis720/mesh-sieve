@@ -75,7 +75,7 @@ impl<T: InvalidateCache> InvalidateCache for Box<T> {
 /// Build heights, depths, strata layers and diameter for *any* Sieve.
 pub fn compute_strata<S>(sieve: &mut S) -> Result<StrataCache<S::Point>, MeshSieveError>
 where
-    S: Sieve + ?Sized,
+    S: Sieve,
     S::Point: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
 {
     // 1) collect the full point set

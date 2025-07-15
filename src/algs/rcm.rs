@@ -29,7 +29,7 @@ pub fn distributed_rcm<S, C>(
     comm: &C,
 ) -> Vec<<S as Sieve>::Point>
 where
-    S: Sieve + ?Sized,
+    S: Sieve,
     <S as Sieve>::Point: Ord,
     C: Communicator,
 {
@@ -82,7 +82,7 @@ where
 }
 
 /// Primitives and mappings for distributed RCM computation.
-pub struct RcmPrims<'a, S: Sieve + ?Sized, C: Communicator> {
+pub struct RcmPrims<'a, S: Sieve, C: Communicator> {
     pub sieve: &'a S,
     pub comm: &'a C,
     /// Map from Point to local vertex index [0, n)
@@ -95,7 +95,7 @@ pub struct RcmPrims<'a, S: Sieve + ?Sized, C: Communicator> {
 
 impl<'a, S, C> RcmPrims<'a, S, C>
 where
-    S: Sieve + ?Sized,
+    S: Sieve,
     <S as Sieve>::Point: Ord,
     C: Communicator,
 {
@@ -180,7 +180,7 @@ where
 /// Find a pseudo-peripheral root vertex using Algorithm 2 (Azad et al.).
 pub fn find_pseudo_peripheral_root<S, C>(prims: &RcmPrims<S, C>) -> usize
 where
-    S: Sieve + ?Sized,
+    S: Sieve,
     <S as Sieve>::Point: Ord,
     C: Communicator,
 {

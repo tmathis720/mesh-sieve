@@ -4,7 +4,7 @@
 //! across distributed ranks, using packed wire triples for efficient communication.
 //! It supports iterative completion until convergence and ensures DAG invariants.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use bytemuck::Zeroable;
 
@@ -160,7 +160,7 @@ pub fn complete_sieve<C: Communicator>(
                         (Ok(src_pt), Ok(dst_pt)) => {
                             let payload = Remote { rank, remote_point: dst_pt };
                             if inserted.insert((src_pt, dst_pt)) {
-                                sieve.adjacency_out.entry(src_pt).or_default().push((dst_pt, payload.clone()));
+                                sieve.adjacency_out.entry(src_pt).or_default().push((dst_pt, payload));
                                 sieve.adjacency_in.entry(dst_pt).or_default().push((src_pt, payload));
                             }
                         }

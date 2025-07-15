@@ -52,7 +52,7 @@ where
     //    that appears in adjacency_in.  rems holds (local_mesh_pt, Remote),
     //    so fetch `rem.remote_point` into `local_mesh_pt`.
     if !has_owned {
-        for (_part_pt, rems) in &ovlp.adjacency_in {
+        for rems in ovlp.adjacency_in.values() {
             for &(local_pt, ref rem) in rems {
                 if rem.rank == my_rank {
                     continue;
