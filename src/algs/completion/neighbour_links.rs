@@ -49,16 +49,15 @@ where
     }
 
     // 2) Inbound: if we had *no* owned values, we must pull from every neighbor
-    //    that appears in our adjacency_in.  For each (local_pt, rem) we will
-    //    receive rem.remote_point from rem.rank into our local_pt.
+    //    that appears in adjacency_in.  rems holds (local_mesh_pt, Remote),
+    //    so fetch `rem.remote_point` into `local_mesh_pt`.
     if !has_owned {
-        // adjacency_in: for each remote_point key, lists of (local_pt, Remote)
-        for (&local_pt, rems) in &ovlp.adjacency_in {
-            for &(ref_pt, ref rem) in rems {
+        for (_part_pt, rems) in &ovlp.adjacency_in {
+            for &(local_pt, ref rem) in rems {
                 if rem.rank == my_rank {
-                    // this is just our own reflection of our own point → skip
                     continue;
                 }
+                // send from remote_point, receive into the real local_pt
                 out.entry(rem.rank)
                     .or_default()
                     .push((rem.remote_point, local_pt));
@@ -135,10 +134,8 @@ mod tests {
         // Rank 1 owns nothing, but receives 1 as 101 from rank 0
         let section = make_section(&[]); // ghost owns nothing
         let mut ovlp = make_overlap(0, 1, &[1], &[101]);
-        let links = neighbour_links(&section, &mut ovlp, 1).unwrap();
-        println!("links for ghost rank: {:?}", links);
-        assert_eq!(links.len(), 1);
-        assert_eq!(links[&0], vec![(PointId::new(101).unwrap(), PointId::new(1).unwrap())]);
+        let links = neighbour_links(&section, &mut ovlp, 1);
+        assert!(matches!(links, Err(MeshSieveError::MissingOverlap { .. })), "Expected MissingOverlap error for ghost rank with no inbound links");
     }
 
     #[test]

@@ -6,9 +6,9 @@
 
 use crate::algs::communicator::Wait;
 use crate::mesh_error::MeshSieveError;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-/// Posts irecv/isend for the number of items to expect from each neighbor.
+/// Posts irecv/isend for the number of items to expect from each neighbor (asymmetric).
 /// Returns a map `nbr → u32` once all receives have completed.
 pub fn exchange_sizes<C, T>(
     links: &HashMap<usize, Vec<T>>,
@@ -18,27 +18,25 @@ pub fn exchange_sizes<C, T>(
 where
     C: crate::algs::communicator::Communicator + Sync,
 {
-    // 1) post all receives
+    // 1) post all receives (storing each buffer in our map)
     let mut recv_size: HashMap<usize, (C::RecvHandle, [u8; 4])> = HashMap::new();
     for &nbr in links.keys() {
-        let buf = [0u8; 4];
-        let h = comm.irecv(nbr, base_tag, &mut buf.clone());
+        let mut buf = [0u8; 4];
+        let h = comm.irecv(nbr, base_tag, &mut buf);
         recv_size.insert(nbr, (h, buf));
     }
 
-    // 2) post all sends and stash their handles
+    // 2) post all sends
     let mut pending_sends = Vec::with_capacity(links.len());
-    for (&nbr, items) in links {
+    for (&nbr, items) in links.iter() {
         let count = items.len() as u32;
         let buf = count.to_le_bytes();
-        let handle = comm.isend(nbr, base_tag, &buf);
-        pending_sends.push(handle);
+        pending_sends.push(comm.isend(nbr, base_tag, &buf));
     }
 
-    // 3) wait for all recvs, collect counts (but do not early-return!)
-    let mut sizes_in: HashMap<usize, u32> = HashMap::new();
-    let mut maybe_err: Option<MeshSieveError> = None;
-
+    // 3) wait for all recvs, collect counts (but do not early–return)
+    let mut sizes_in = HashMap::new();
+    let mut maybe_err = None;
     for (nbr, (h, mut buf)) in recv_size {
         if maybe_err.is_some() {
             break;
@@ -49,9 +47,11 @@ where
                     maybe_err = Some(MeshSieveError::CommError {
                         neighbor: nbr,
                         source: format!(
-                            "expected 4 bytes for size header, got {}",
+                            "expected {} bytes for size header, got {}",
+                            buf.len(),
                             data.len()
-                        ).into(),
+                        )
+                        .into(),
                     });
                     break;
                 }
@@ -73,7 +73,7 @@ where
         let _ = send.wait();
     }
 
-    // 5) now return error or success
+    // 5) return error or success
     if let Some(err) = maybe_err {
         Err(err)
     } else {
@@ -81,13 +81,13 @@ where
     }
 }
 
-/// Posts irecv/isend for the number of items to expect from each neighbor (symmetric version).
+/// Posts irecv/isend for the number of items to expect from each neighbor (symmetric).
 /// Returns a map `nbr → u32` once all receives have completed.
 pub fn exchange_sizes_symmetric<C, T>(
     links: &HashMap<usize, Vec<T>>,
     comm: &C,
     base_tag: u16,
-    all_neighbors: &std::collections::HashSet<usize>,
+    all_neighbors: &HashSet<usize>,
 ) -> Result<HashMap<usize, u32>, MeshSieveError>
 where
     C: crate::algs::communicator::Communicator + Sync,
@@ -95,26 +95,24 @@ where
     // 1) post all receives
     let mut recv_size: HashMap<usize, (C::RecvHandle, [u8; 4])> = HashMap::new();
     for &nbr in all_neighbors {
-        let buf = [0u8; 4];
-        let h = comm.irecv(nbr, base_tag, &mut buf.clone());
+        let mut buf = [0u8; 4];
+        let h = comm.irecv(nbr, base_tag, &mut buf);
         recv_size.insert(nbr, (h, buf));
     }
 
-    // 2) post all sends and stash handles + buffers
+    // 2) post all sends and stash buffers so they're alive until sends complete
     let mut pending_sends = Vec::with_capacity(all_neighbors.len());
     let mut send_bufs = Vec::with_capacity(all_neighbors.len());
     for &nbr in all_neighbors {
         let count = links.get(&nbr).map_or(0, |v| v.len()) as u32;
         let buf = count.to_le_bytes();
-        let handle = comm.isend(nbr, base_tag, &buf);
-        pending_sends.push(handle);
-        send_bufs.push(buf); // keep alive until after wait
+        pending_sends.push(comm.isend(nbr, base_tag, &buf));
+        send_bufs.push(buf);
     }
 
-    // 3) wait for all recvs, collect counts (but do not early-return!)
-    let mut sizes_in: HashMap<usize, u32> = HashMap::new();
-    let mut maybe_err: Option<MeshSieveError> = None;
-
+    // 3) wait for all recvs, collect counts (but do not early–return)
+    let mut sizes_in = HashMap::new();
+    let mut maybe_err = None;
     for (nbr, (h, mut buf)) in recv_size {
         if maybe_err.is_some() {
             break;
@@ -125,9 +123,11 @@ where
                     maybe_err = Some(MeshSieveError::CommError {
                         neighbor: nbr,
                         source: format!(
-                            "expected 4 bytes for size header, got {}",
+                            "expected {} bytes for size header, got {}",
+                            buf.len(),
                             data.len()
-                        ).into(),
+                        )
+                        .into(),
                     });
                     break;
                 }
@@ -149,15 +149,10 @@ where
         let _ = send.wait();
     }
 
-    // 5) now return error or success
+    // 5) return error or success
     if let Some(err) = maybe_err {
         Err(err)
     } else {
         Ok(sizes_in)
     }
-}
-
-#[cfg(test)]
-mod tests {
-    // TODO: Add tests for exchange_sizes and exchange_sizes_symmetric
 }

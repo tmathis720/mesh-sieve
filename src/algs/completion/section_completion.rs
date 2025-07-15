@@ -54,7 +54,7 @@ where
             }
         })?;
 
-    // 4) exchange the actual data parts & fuse into our section
+    // 4) exchange the actual data parts & fuse into our section (MPI needs the symmetric handshake)
     data_exchange::exchange_data_symmetric::<V, D, C>(
         &links,
         &counts,

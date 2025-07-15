@@ -227,23 +227,25 @@ mod mpi_backend {
     impl crate::algs::communicator::Communicator for MpiComm {
         type SendHandle = MpiSendHandle;
         type RecvHandle = MpiRecvHandle;
-        fn isend(&self, peer: usize, _tag: u16, buf: &[u8]) -> MpiSendHandle {
+        fn isend(&self, peer: usize, tag: u16, buf: &[u8]) -> MpiSendHandle {
             use mpi::request::StaticScope;
             let boxed = buf.to_vec().into_boxed_slice();
             let raw: *mut [u8] = Box::into_raw(boxed);
             let slice: &[u8] = unsafe { &*raw };
+            // Use the tag in the MPI call
             let req = self.world.process_at_rank(peer as i32)
-                .immediate_send(StaticScope, slice);
+                .immediate_send_with_tag(StaticScope, slice, tag as i32);
             MpiSendHandle { req, buf: raw }
         }
-        fn irecv(&self, peer: usize, _tag: u16, template: &mut [u8]) -> MpiRecvHandle {
+        fn irecv(&self, peer: usize, tag: u16, template: &mut [u8]) -> MpiRecvHandle {
             use mpi::request::StaticScope;
             let len = template.len();
             let boxed = vec![0u8; len].into_boxed_slice();
             let raw: *mut [u8] = Box::into_raw(boxed);
             let slice_mut: &mut [u8] = unsafe { &mut *raw };
+            // Use the tag in the MPI call
             let req = self.world.process_at_rank(peer as i32)
-                .immediate_receive_into(StaticScope, slice_mut);
+                .immediate_receive_into_with_tag(StaticScope, slice_mut, tag as i32);
             MpiRecvHandle { req, buf: raw, len }
         }
 
