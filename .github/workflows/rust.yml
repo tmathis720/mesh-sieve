@@ -11,12 +11,111 @@ env:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        features:
+          - ""
+          - "rayon"
+          - "mpi-support"
+          - "rayon,mpi-support"
 
     steps:
     - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --lib --verbose
-    - name: Run tests
-      run: cargo test --lib --verbose
+    
+    - name: Install MPI
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y mpich libmpich-dev
+        
+        # Verify MPI installation
+        mpirun --version
+        mpicc --version
+        
+    - name: Setup Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+        
+    - name: Build library
+      run: cargo build --lib --verbose --features "${{ matrix.features }}"
+      
+    - name: Build examples
+      run: cargo build --examples --verbose --features "${{ matrix.features }}"
+      
+    - name: Run library tests
+      run: cargo test --lib --verbose --features "${{ matrix.features }}"
+      
+    - name: Run example tests (non-MPI)
+      if: "!contains(matrix.features, 'mpi-support')"
+      run: |
+        # Run non-MPI examples
+        cargo run --features "${{ matrix.features }}" --example partition
+        
+        # Run example tests if they exist
+        cargo test --examples --verbose --features "${{ matrix.features }}"
+      
+    - name: Run MPI examples
+      if: contains(matrix.features, 'mpi-support')
+      run: |
+        echo "Running MPI examples with features: ${{ matrix.features }}"
+        
+        # Test basic MPI functionality (2 ranks)
+        echo "Testing mpi_complete..."
+        mpirun -n 2 cargo run --features "${{ matrix.features }}" --example mpi_complete
+        
+        # Test multiple neighbors example (3 ranks)
+        echo "Testing mpi_complete_multiple_neighbors..."
+        mpirun -n 3 cargo run --features "${{ matrix.features }}" --example mpi_complete_multiple_neighbors
+        
+        # Test stack completion (2 ranks)
+        echo "Testing mpi_complete_stack..."
+        mpirun -n 2 cargo run --features "${{ matrix.features }}" --example mpi_complete_stack
+        
+        # Test no overlap example (2 ranks)
+        echo "Testing mpi_complete_no_overlap..."
+        mpirun -n 2 cargo run --features "${{ matrix.features }}" --example mpi_complete_no_overlap
+        
+        # Test partition exchange (2 ranks)
+        echo "Testing mpi_partition_exchange..."
+        mpirun -n 2 cargo run --features "${{ matrix.features }}" --example mpi_partition_exchange
+        
+        # Test mesh distribution (2 ranks)
+        echo "Testing mesh_distribute_two_ranks..."
+        mpirun -n 2 cargo run --features "${{ matrix.features }}" --example mesh_distribute_two_ranks
+        
+        # Test general mesh distribution (2 ranks)
+        echo "Testing distribute_mpi..."
+        mpirun -n 2 cargo run --features "${{ matrix.features }}" --example distribute_mpi
+        
+        # Test distributed RCM (4 ranks)
+        echo "Testing distributed_rcm..."
+        mpirun -n 4 cargo run --features "${{ matrix.features }}" --example distributed_rcm
+        
+        echo "All MPI examples completed successfully!"
+
+  # Separate job for benchmarks and integration tests
+  benchmarks:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install MPI
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y mpich libmpich-dev
+        
+    - name: Setup Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+        
+    - name: Build benchmarks
+      run: cargo build --benches --verbose --features "mpi-support,rayon"
+      
+    - name: Run integration tests
+      run: cargo test --tests --verbose --features "mpi-support,rayon"

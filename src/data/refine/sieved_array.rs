@@ -193,7 +193,7 @@ where
             };
             fine_pts.par_iter().filter_map(|(f, o)| {
                 match self.atlas.get((*f).into()) {
-                    Some((off, len)) => {
+                    Some((_off, len)) => {
                         if coarse_slice.len() != len {
                             *error.lock().unwrap() = Some(crate::mesh_error::MeshSieveError::SievedArraySliceLengthMismatch {
                                 point: (*f).into(),

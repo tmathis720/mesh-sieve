@@ -13,7 +13,6 @@ fn main() {
     use mesh_sieve::algs::distribute_mesh;
     // 1. Initialize MPI
     let universe = mpi::initialize().unwrap();
-    let world = universe.world();
     let comm = MpiComm::from_universe(universe);
     if comm.size() != 2 {
         eprintln!("This test requires 2 MPI ranks");

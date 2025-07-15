@@ -37,10 +37,18 @@ fn main() {
     let mut stack = InMemoryStack::<PodU64, PodU64, DummyPayload>::new();
     let mut overlap = InMemorySieve::<PodU64, DummyRemote>::default();
     if rank == 0 {
+        // Add the base point to the base sieve so complete_stack can find it
+        stack.base_mut().unwrap().add_arrow(PodU64(1), PodU64(1), DummyPayload::default());
+        
+        // Add the vertical arrow with actual data
         let _ = stack.add_arrow(PodU64(1), PodU64(101), DummyPayload(42));
-        overlap.add_arrow(PodU64(1), PodU64(1), DummyRemote { rank: 1, remote_point: PodU64(1) });
-    } else {
-        overlap.add_arrow(PodU64(1), PodU64(1), DummyRemote { rank: 0, remote_point: PodU64(1) });
+        
+        // Set up overlap to indicate rank 1 needs data from this base point
+        overlap.add_arrow(
+            PodU64(1),
+            PodU64(2), // partition_point(1) as PodU64
+            DummyRemote { rank: 1, remote_point: PodU64(1) }
+        );
     }
     // actually run and unwrap any error from the stack‐completion
     complete_stack(&mut stack, &overlap, &comm, rank, size)

@@ -22,7 +22,7 @@ pub fn complete_section<V, D, C>(
     comm: &C,
     _delta: &D,
     my_rank: usize,
-    n_ranks: usize,
+    _n_ranks: usize,
 ) -> Result<(), MeshSieveError>
 where
     V: Clone + Default + Send + PartialEq + 'static,
@@ -41,9 +41,14 @@ where
             }
         })?;
 
-    // 2) for symmetric handshake: every other rank is a neighbor
-    let all_neighbors: HashSet<usize> =
-        (0..n_ranks).filter(|&r| r != my_rank).collect();
+    // 2) Build true neighbor set from actual overlap (both outgoing and incoming)
+    let mut all_neighbors = HashSet::new();
+    
+    // outgoing neighbors (who want data from us)
+    all_neighbors.extend(links.keys().copied());
+    
+    // incoming neighbors (from whom we want data)
+    all_neighbors.extend(overlap.neighbour_ranks(my_rank));
 
     // 3) exchange the item counts
     let counts = exchange_sizes_symmetric(&links, comm, BASE_TAG, &all_neighbors)
