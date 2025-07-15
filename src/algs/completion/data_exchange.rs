@@ -27,44 +27,74 @@ where
 {
     use bytemuck::cast_slice;
     use std::collections::HashMap;
-    // --- Stage 2: exchange data ---
-    let mut recv_data = HashMap::new();
+
+    // --- Stage 2: exchange data (asymmetric) ---
+    let mut recv_data: HashMap<usize, (C::RecvHandle, Vec<u8>)> = HashMap::new();
     for &nbr in links.keys() {
-        let n_items = *recv_counts.get(&nbr).ok_or(MeshSieveError::MissingRecvCount { neighbor: nbr })? as usize;
+        let n_items = *recv_counts
+            .get(&nbr)
+            .ok_or(MeshSieveError::MissingRecvCount { neighbor: nbr })?
+            as usize;
         let mut buffer = vec![0u8; n_items * std::mem::size_of::<D::Part>()];
         let h = comm.irecv(nbr, base_tag, &mut buffer);
         recv_data.insert(nbr, (h, buffer));
     }
-    for (&nbr, links) in links {
-        let mut scratch = Vec::with_capacity(links.len());
-        for &(loc, _) in links {
-            let slice = section.try_restrict(loc).map_err(|e| MeshSieveError::SectionAccess { point: loc, source: Box::new(e) })?;
+
+    // post all sends
+    for (&nbr, link_vec) in links {
+        let mut scratch = Vec::with_capacity(link_vec.len());
+        for &(loc, _) in link_vec {
+            let slice = section
+                .try_restrict(loc)
+                .map_err(|e| MeshSieveError::SectionAccess {
+                    point: loc,
+                    source: Box::new(e),
+                })?;
             scratch.push(D::restrict(&slice[0]));
         }
         let bytes = cast_slice(&scratch);
         if !bytes.is_empty() {
-            comm.isend(nbr, base_tag, bytes);
+            // we ignore the handle here because this asymmetric variant
+            // is only used in serial or Rayon contexts
+            let _ = comm.isend(nbr, base_tag, bytes);
         }
     }
+
+    // wait for all recvs and fuse
     for (nbr, (h, mut buffer)) in recv_data {
         let raw = h.wait().ok_or_else(|| MeshSieveError::CommError {
             neighbor: nbr,
             source: "No data received (wait returned None)".into(),
         })?;
+
         if raw.len() != buffer.len() {
-            return Err(MeshSieveError::BufferSizeMismatch { neighbor: nbr, expected: buffer.len(), got: raw.len() });
+            return Err(MeshSieveError::BufferSizeMismatch {
+                neighbor: nbr,
+                expected: buffer.len(),
+                got: raw.len(),
+            });
         }
         buffer.copy_from_slice(&raw);
         let parts: &[D::Part] = cast_slice(&buffer);
-        let links = &links[&nbr];
-        if parts.len() != links.len() {
-            return Err(MeshSieveError::PartCountMismatch { neighbor: nbr, expected: links.len(), got: parts.len() });
+        let link_vec = &links[&nbr];
+        if parts.len() != link_vec.len() {
+            return Err(MeshSieveError::PartCountMismatch {
+                neighbor: nbr,
+                expected: link_vec.len(),
+                got: parts.len(),
+            });
         }
-        for ((_, dst), part) in links.iter().zip(parts) {
-            let mut_slice = section.try_restrict_mut(*dst).map_err(|e| MeshSieveError::SectionAccess { point: *dst, source: Box::new(e) })?;
+        for ((_, dst), part) in link_vec.iter().zip(parts) {
+            let mut_slice = section
+                .try_restrict_mut(*dst)
+                .map_err(|e| MeshSieveError::SectionAccess {
+                    point: *dst,
+                    source: Box::new(e),
+                })?;
             D::fuse(&mut mut_slice[0], *part);
         }
     }
+
     Ok(())
 }
 
@@ -93,58 +123,113 @@ where
     D::Part: bytemuck::Pod + Default,
     C: crate::algs::communicator::Communicator + Sync,
 {
-    use bytemuck::cast_slice;
-    use bytemuck::cast_slice_mut;
+    use bytemuck::{cast_slice, cast_slice_mut};
     use std::collections::HashMap;
-    let mut recv_data = HashMap::new();
-    let mut pending_sends = Vec::new();
+
+    // --- Stage 2: symmetric exchange of data ---
+    // 1) post all recvs
+    let mut recv_data: HashMap<usize, (C::RecvHandle, Vec<D::Part>)> = HashMap::new();
     for &nbr in all_neighbors {
         let n_items = recv_counts.get(&nbr).copied().unwrap_or(0) as usize;
         let mut buffer = vec![D::Part::default(); n_items];
         let h = comm.irecv(nbr, base_tag, cast_slice_mut(&mut buffer));
         recv_data.insert(nbr, (h, buffer));
     }
+
+    // 2) pack and post all sends
+    let mut pending_sends = Vec::with_capacity(all_neighbors.len());
+    let mut send_parts_bufs = Vec::with_capacity(all_neighbors.len());
     for &nbr in all_neighbors {
-        let links_vec = links.get(&nbr).map_or(&[][..], |v| &v[..]);
-        let mut scratch = Vec::with_capacity(links_vec.len());
-        for &(loc, _) in links_vec {
-            let slice = section.try_restrict(loc).map_err(|e| MeshSieveError::SectionAccess { point: loc, source: Box::new(e) })?;
+        let link_vec = links.get(&nbr).map_or(&[][..], |v| &v[..]);
+        let mut scratch = Vec::with_capacity(link_vec.len());
+        for &(loc, _) in link_vec {
+            let slice = section
+                .try_restrict(loc)
+                .map_err(|e| MeshSieveError::SectionAccess {
+                    point: loc,
+                    source: Box::new(e),
+                })?;
             scratch.push(D::restrict(&slice[0]));
         }
         let bytes = cast_slice(&scratch);
-        if !bytes.is_empty() {
-            pending_sends.push(comm.isend(nbr, base_tag, bytes));
+        let req = if !bytes.is_empty() {
+            comm.isend(nbr, base_tag, bytes)
         } else {
-            // Always post a send, even if empty, to match the symmetric protocol
-            pending_sends.push(comm.isend(nbr, base_tag, &[]));
-        }
+            // always post even an empty send to satisfy symmetry
+            comm.isend(nbr, base_tag, &[])
+        };
+        pending_sends.push(req);
+        send_parts_bufs.push(scratch); // keep alive through non-blocking send
     }
+
+    // 3) integrate incoming data, but *collect* any error rather than returning early
+    let mut maybe_err: Option<MeshSieveError> = None;
     for (nbr, (h, mut buffer)) in recv_data {
-        let raw = h.wait().ok_or_else(|| MeshSieveError::CommError {
-            neighbor: nbr,
-            source: "No data received (wait returned None)".into(),
-        })?;
-        let buf_bytes = cast_slice_mut(&mut buffer);
-        if raw.len() != buf_bytes.len() {
-            return Err(MeshSieveError::BufferSizeMismatch { neighbor: nbr, expected: buf_bytes.len(), got: raw.len() });
+        if maybe_err.is_some() {
+            break;
         }
-        buf_bytes.copy_from_slice(&raw);
-        let parts: &[D::Part] = &buffer;
-        let links_vec = links.get(&nbr).map_or(&[][..], |v| &v[..]);
-        if parts.len() != links_vec.len() {
-            return Err(MeshSieveError::PartCountMismatch { neighbor: nbr, expected: links_vec.len(), got: parts.len() });
-        }
-        for ((_, dst), part) in links_vec.iter().zip(parts) {
-            let mut_slice = section.try_restrict_mut(*dst).map_err(|e| MeshSieveError::SectionAccess { point: *dst, source: Box::new(e) })?;
-            D::fuse(&mut mut_slice[0], *part);
+        match h.wait() {
+            Some(raw) => {
+                let buf_bytes = cast_slice_mut(&mut buffer);
+                if raw.len() != buf_bytes.len() {
+                    maybe_err = Some(MeshSieveError::BufferSizeMismatch {
+                        neighbor: nbr,
+                        expected: buf_bytes.len(),
+                        got: raw.len(),
+                    });
+                    break;
+                }
+                buf_bytes.copy_from_slice(&raw);
+
+                let parts: &[D::Part] = &buffer;
+                let link_vec = links.get(&nbr).map_or(&[][..], |v| &v[..]);
+                if parts.len() != link_vec.len() {
+                    maybe_err = Some(MeshSieveError::PartCountMismatch {
+                        neighbor: nbr,
+                        expected: link_vec.len(),
+                        got: parts.len(),
+                    });
+                    break;
+                }
+
+                for ((_, dst), part) in link_vec.iter().zip(parts) {
+                    if let Err(e) = section
+                        .try_restrict_mut(*dst)
+                        .map_err(|e| MeshSieveError::SectionAccess {
+                            point: *dst,
+                            source: Box::new(e),
+                        })
+                    {
+                        maybe_err = Some(e);
+                        break;
+                    }
+                    let mut_slice = section.try_restrict_mut(*dst).unwrap();
+                    D::fuse(&mut mut_slice[0], *part);
+                }
+            }
+            None => {
+                maybe_err = Some(MeshSieveError::CommError {
+                    neighbor: nbr,
+                    source: "No data received (wait returned None)".into(),
+                });
+                break;
+            }
         }
     }
-    // Wait for all sends to complete (important for MPI correctness)
-    for h in pending_sends {
-        let _ = h.wait();
+
+    // 4) **Always** wait for every non-blocking send, regardless of error
+    for send_handle in pending_sends {
+        let _ = send_handle.wait();
     }
-    Ok(())
+
+    // 5) return the original error (if any), or success
+    if let Some(e) = maybe_err {
+        Err(e)
+    } else {
+        Ok(())
+    }
 }
+
 
 #[cfg(test)]
 mod tests {

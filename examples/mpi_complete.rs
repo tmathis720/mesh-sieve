@@ -1,4 +1,5 @@
 //! cargo mpirun -n 2 --features mpi-support --example mpi_complete
+//! Version 1.2.0: Passing
 // This example demonstrates how to complete a Section in MPI with two ranks.
 use mesh_sieve::algs::communicator::MpiComm;
 use mpi::topology::Communicator;

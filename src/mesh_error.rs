@@ -9,6 +9,12 @@ use std::fmt::Debug;
 /// Unified error type for mesh-sieve operations.
 #[derive(Debug, Error)]
 pub enum MeshSieveError {
+    /// Error indicating that the overlap graph is missing required neighbor links.
+    #[error("Missing overlap: {source}")]
+    MissingOverlap { source: Box<dyn std::error::Error + Send + Sync> },
+    /// Generic mesh error (for internal use, e.g. error propagation)
+    #[error("mesh error: {0}")]
+    MeshError(Box<MeshSieveError>),
     /// Attempted to construct a PointId with a zero value (invalid).
     #[error("PointId must be non-zero (0 is reserved as invalid/sentinel)")]
     InvalidPointId,

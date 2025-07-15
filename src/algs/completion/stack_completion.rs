@@ -107,9 +107,15 @@ where
         let h = comm.irecv(nbr, BASE_TAG, &mut buf);
         recv_size.insert(nbr, (h, buf));
     }
+    // --- keep each `to_le_bytes()` alive until we wait on its Request ---
+    let mut pending_size_sends = Vec::with_capacity(all_neighbors.len());
+    let mut size_send_bufs   = Vec::with_capacity(all_neighbors.len());
     for &nbr in &all_neighbors {
         let count = nb_links.get(&nbr).map_or(0, |v| v.len()) as u32;
-        comm.isend(nbr, BASE_TAG, &count.to_le_bytes());
+        let buf   = count.to_le_bytes();              // stash
+        let h     = comm.isend(nbr, BASE_TAG, &buf);  // non‐blocking
+        pending_size_sends.push(h);
+        size_send_bufs.push(buf);                      // keep it alive
     }
     let mut sizes_in = HashMap::new();
     for (nbr, (h, mut buf)) in recv_size {
@@ -117,6 +123,11 @@ where
         buf.copy_from_slice(&data);
         sizes_in.insert(nbr, u32::from_le_bytes(buf) as usize);
     }
+    // now that everyone’s recv’d their count, we can finish our non-blocking sends
+    for send_h in pending_size_sends {
+        let _ = send_h.wait();
+    }
+    // (and now `size_send_bufs` can go out of scope and free its buffers)
     // 3. Exchange data (always post send/recv for all neighbors)
     use bytemuck::cast_slice;
     use bytemuck::cast_slice_mut;
@@ -127,14 +138,18 @@ where
         let h = comm.irecv(nbr, BASE_TAG + 1, cast_slice_mut(&mut buf));
         recv_data.insert(nbr, (h, buf));
     }
+    // --- keep each `wire` Vec alive until its Request completes ---
+    let mut pending_data_sends = Vec::with_capacity(all_neighbors.len());
+    let mut data_send_bufs     = Vec::with_capacity(all_neighbors.len());
     for &nbr in &all_neighbors {
         let triples = nb_links.get(&nbr).map_or(&[][..], |v| &v[..]);
-        let wire: Vec<WireTriple<P,Q,Pay>> =
-            triples.iter()
-                   .map(|&(b,c,p)| WireTriple { base:b, cap:c, pay:p })
-                   .collect();
+        let wire: Vec<WireTriple<P, Q, Pay>> = triples.iter()
+            .map(|&(b, c, p)| WireTriple { base: b, cap: c, pay: p })
+            .collect();
         let bytes = cast_slice(&wire);
-        comm.isend(nbr, BASE_TAG + 1, bytes);
+        let h = comm.isend(nbr, BASE_TAG + 1, bytes);
+        pending_data_sends.push(h);
+        data_send_bufs.push(wire);  // stash the Vec so it doesn't drop early
     }
     for (_nbr, (h, mut buf)) in recv_data {
         let raw = h.wait().ok_or_else(|| crate::mesh_error::CommError("failed to receive stack data".to_string()))?;
@@ -145,6 +160,11 @@ where
             let _ = stack.add_arrow(base, cap, pay);
         }
     }
+    // now drain those data‐phase sends
+    for send_h in pending_data_sends {
+        let _ = send_h.wait();
+    }
+    // (and now `data_send_bufs` can drop safely)
     Ok(())
 }
 

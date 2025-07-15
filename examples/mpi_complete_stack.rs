@@ -42,8 +42,21 @@ fn main() {
     } else {
         overlap.add_arrow(PodU64(1), PodU64(1), DummyRemote { rank: 0, remote_point: PodU64(1) });
     }
-    let _ = complete_stack(&mut stack, &overlap, &comm, rank, size);
-    let arrows: Vec<_> = stack.lift(PodU64(1)).map(|(cap, pay)| (cap, pay)).collect();
-    assert!(arrows.contains(&(PodU64(101), DummyPayload(42))));
-    println!("[rank {}] complete_stack_two_ranks passed", rank);
+    // actually run and unwrap any error from the stack‐completion
+    complete_stack(&mut stack, &overlap, &comm, rank, size)
+        .expect("MPI stack completion failed");
+    let arrows: Vec<_> = stack.lift(PodU64(1)).collect();
+
+    if rank == 1 {
+        // rank 1 must have received (101,42)
+        assert!(
+            arrows.contains(&(PodU64(101), DummyPayload(42))),
+            "[rank {}] expected arrow (101,42), got: {:?}",
+            rank, arrows
+        );
+        println!("[rank 1] complete_stack_two_ranks passed!");
+    } else {
+        // rank 0 only ever sent it
+        println!("[rank 0] send-only, local arrows = {:?}", arrows);
+    }
 }

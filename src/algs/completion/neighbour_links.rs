@@ -1,60 +1,86 @@
-//! Build the peer→(my_pt, their_pt) map for section completion.
+//! Build the peer→(send_loc, recv_loc) map for section completion.
+//!
+//! This returns, for each neighbor rank, the list of
+//! `(local_point, remote_point)` pairs you must exchange:
+//!  - If you own values at `local_point`, you will send them to your neighbor’s `remote_point`.
+//!  - If you own *no* values, you instead receive from each neighbor’s `remote_point` into your `local_point`.
 
 use crate::data::section::Section;
+use crate::mesh_error::MeshSieveError;
 use crate::overlap::overlap::Overlap;
 use crate::topology::point::PointId;
-use crate::topology::sieve::Sieve;
+use crate::topology::sieve::sieve_trait::Sieve;
 use std::collections::HashMap;
 
-/// Given your local section, the overlap graph, and your rank,
-/// returns for each neighbor rank the list of `(local_point, remote_point)`
-/// that you must send or receive.
-pub fn neighbour_links<V: Clone + Default + PartialEq>(
+/// Compute the neighbor‐links for section completion.
+///
+/// On success, returns a map `neighbor_rank -> Vec<(send_loc, recv_loc)>`.
+/// You then use these pairs in the symmetric size‐ and data‐exchange phases.
+///
+/// # Errors
+/// Returns `MeshSieveError::MissingOverlap` if the overlap graph doesn’t
+/// contain the information needed to build the send/receive pairs.
+pub fn neighbour_links<V>(
     section: &Section<V>,
     ovlp: &Overlap,
     my_rank: usize,
-) -> HashMap<usize, Vec<(PointId, PointId)>> {
+) -> Result<HashMap<usize, Vec<(PointId, PointId)>>, MeshSieveError>
+where
+    V: Clone + Default + PartialEq,
+{
     let default_val = V::default();
     let mut out: HashMap<usize, Vec<(PointId, PointId)>> = HashMap::new();
     let mut has_owned = false;
+
+    // 1) Outbound: for every point where we have a non‐default value,
+    //    send to all overlapping remote points.
     for (p, vals) in section.iter() {
         if vals.iter().all(|v| *v == default_val) {
-            continue;
+            continue; // nothing to send for this point
         }
         has_owned = true;
-        for (_dst, rem) in ovlp.cone(p) {
+        for (_unused, rem) in ovlp.cone(p) {
             if rem.rank != my_rank {
-                out.entry(rem.rank).or_default().push((p, rem.remote_point));
+                out.entry(rem.rank)
+                    .or_default()
+                    .push((p, rem.remote_point));
             }
         }
     }
+
+    // 2) Inbound: if we had *no* owned values, we must pull from every neighbor
+    //    that appears in our adjacency_in.  For each (local_pt, rem) we will
+    //    receive rem.remote_point from rem.rank into our local_pt.
     if !has_owned {
-        for (&_src, rems) in &ovlp.adjacency_in {
-            for (orig_src, rem) in rems {
-                if rem.rank == my_rank && rem.remote_point != *orig_src {
-                    let owner = ovlp.adjacency_out
-                        .get(orig_src)
-                        .and_then(|outs| {
-                            outs.iter()
-                                .find(|(_, orem)| {
-                                    orem.remote_point == rem.remote_point && orem.rank != my_rank
-                                })
-                                .map(|(_, orem)| orem.rank)
-                        })
-                        .unwrap_or(0);
-                    out.entry(owner)
-                        .or_default()
-                        .push((rem.remote_point, *orig_src));
+        // adjacency_in: for each remote_point key, lists of (local_pt, Remote)
+        for (&local_pt, rems) in &ovlp.adjacency_in {
+            for &(ref_pt, ref rem) in rems {
+                if rem.rank == my_rank {
+                    // this is just our own reflection of our own point → skip
+                    continue;
                 }
+                out.entry(rem.rank)
+                    .or_default()
+                    .push((rem.remote_point, local_pt));
             }
         }
     }
-    // Optional: sort for deterministic order
+
+    // If we still have no links at all, something’s wrong with the Overlap
+    if out.is_empty() {
+        return Err(MeshSieveError::MissingOverlap {
+            source: format!("rank {} has no neighbour links", my_rank).into(),
+        });
+    }
+
+    // Optional: sort each neighbor’s list deterministically
     // for vec in out.values_mut() {
     //     vec.sort_unstable_by_key(|&(l, r)| (l.get(), r.get()));
     // }
-    out
+
+    Ok(out)
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -99,7 +125,7 @@ mod tests {
         // Rank 0 owns 1, ghosted to rank 1 as 101
         let section = make_section(&[1]);
         let mut ovlp = make_overlap(0, 1, &[1], &[101]);
-        let links = neighbour_links(&section, &mut ovlp, 0);
+        let links = neighbour_links(&section, &mut ovlp, 0).unwrap();
         assert_eq!(links.len(), 1);
         assert_eq!(links[&1], vec![(PointId::new(1).unwrap(), PointId::new(101).unwrap())]);
     }
@@ -109,7 +135,7 @@ mod tests {
         // Rank 1 owns nothing, but receives 1 as 101 from rank 0
         let section = make_section(&[]); // ghost owns nothing
         let mut ovlp = make_overlap(0, 1, &[1], &[101]);
-        let links = neighbour_links(&section, &mut ovlp, 1);
+        let links = neighbour_links(&section, &mut ovlp, 1).unwrap();
         println!("links for ghost rank: {:?}", links);
         assert_eq!(links.len(), 1);
         assert_eq!(links[&0], vec![(PointId::new(101).unwrap(), PointId::new(1).unwrap())]);
@@ -121,7 +147,7 @@ mod tests {
         let section = make_section(&[2]);
         let mut ovlp = InMemorySieve::<PointId, Remote>::default();
         let links = neighbour_links(&section, &mut ovlp, 2);
-        assert!(links.is_empty());
+        assert!(matches!(links, Err(MeshSieveError::MissingOverlap { .. })));
     }
 
     #[test]
@@ -145,7 +171,7 @@ mod tests {
                 remote_point: PointId::new(201).unwrap(),
             },
         );
-        let links = neighbour_links(&section, &mut ovlp, 0);
+        let links = neighbour_links(&section, &mut ovlp, 0).unwrap();
         assert_eq!(links.len(), 2);
         assert_eq!(links[&1], vec![(PointId::new(1).unwrap(), PointId::new(101).unwrap())]);
         assert_eq!(links[&2], vec![(PointId::new(2).unwrap(), PointId::new(201).unwrap())]);
