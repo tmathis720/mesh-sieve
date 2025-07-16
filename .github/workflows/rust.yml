@@ -49,7 +49,7 @@ jobs:
       run: cargo test --lib --verbose --features "${{ matrix.features }}"
       
     - name: Run example tests (non-MPI)
-      if: "!contains(matrix.features, 'mpi-support')"
+      if: ${{ !contains(matrix.features, 'mpi-support') }}
       run: |
         # Run non-MPI examples
         cargo run --features "${{ matrix.features }}" --example partition

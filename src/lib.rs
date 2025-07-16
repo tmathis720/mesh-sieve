@@ -15,12 +15,12 @@
 //!
 //! ```toml
 //! [dependencies]
-//! mesh-sieve = "1.0.0"
+//! mesh-sieve = "1.2.1"
 //! # Optional features:
-//! # features = ["mpi-support", "metis-support"]
+//! # features = ["mpi-support","rayon","metis-support"]
 //! ```
 //!
-//! See the README and examples directory for usage patterns and integration with MPI.
+//! For a complete API reference and usage guide, see [API_Guide.md](API_Guide.md).
 
 //! Public prelude for mesh-sieve: mesh/data-management library for PDE codes
 //!
