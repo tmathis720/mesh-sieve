@@ -5,6 +5,7 @@
 // partitions it such that rank 0 owns point 1 and rank 1 owns points 2 and 3, and
 // then distributes the mesh using the `distribute_mesh` function. Each rank prints
 // its local mesh and overlap for manual inspection.
+#[cfg(feature = "mpi-support")]
 fn main() {
     use mpi::traits::*;
     use mesh_sieve::algs::communicator::{Communicator, MpiComm};
@@ -36,4 +37,9 @@ fn main() {
     println!("Rank {} overlap: {:?}", comm.rank(), overlap);
     // Synchronize before exit
     comm.world.barrier();
+}
+
+#[cfg(not(feature = "mpi-support"))]
+fn main() {
+    eprintln!("This example requires the 'mpi-support' feature to run.");
 }

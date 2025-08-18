@@ -112,6 +112,7 @@ impl fmt::Display for PointId {
 ///
 /// We declare that `PointId` has the same MPI datatype as `u64`, ensuring
 /// zero-cost, layout-safe interop.
+#[cfg(feature = "mpi-support")]
 unsafe impl mpi::datatype::Equivalence for PointId {
     type Out = <u64 as mpi::datatype::Equivalence>::Out;
 

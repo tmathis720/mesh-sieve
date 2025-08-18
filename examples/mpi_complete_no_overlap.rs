@@ -4,9 +4,10 @@
 // It uses the `complete_section` function to ensure that a Section can be completed
 // correctly when no overlap exists, and that the Section is correctly completed
 // with values from the ranks that own the points.
-use mpi::topology::Communicator;
 
+#[cfg(feature = "mpi-support")]
 fn main() {
+    use mpi::topology::Communicator;
     use mesh_sieve::algs::communicator::MpiComm;
     use mesh_sieve::topology::point::PointId;
     use mesh_sieve::overlap::overlap::Overlap;
@@ -42,4 +43,9 @@ fn main() {
         }
         println!("[rank 2] complete_section_no_overlap passed");
     }
+}
+
+#[cfg(not(feature = "mpi-support"))]
+fn main() {
+    eprintln!("This example requires the 'mpi-support' feature to run.");
 }

@@ -5,6 +5,8 @@
  //! It ensures that a Section can be completed correctly when multiple ranks have neighbors
  //! that share the same point, and that the Section is correctly completed
  //! with values from all ranks.
+ //! 
+ #[cfg(feature = "mpi-support")]
 pub fn main() {
     use mesh_sieve::algs::communicator::MpiComm;
     use mpi::topology::Communicator;
@@ -111,4 +113,9 @@ pub fn main() {
         }
         _ => {}
     }
+}
+
+#[cfg(not(feature = "mpi-support"))]
+fn main() {
+    eprintln!("This example requires the 'mpi-support' feature to run.");
 }

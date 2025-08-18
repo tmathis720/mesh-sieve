@@ -4,6 +4,7 @@
 //! This example demonstrates how to use the `mesh_sieve` library to perform a distributed reverse Cuthill-McKee (RCM) ordering on a simple 2D grid mesh.
 
 use mesh_sieve::algs::rcm::distributed_rcm;
+#[cfg(feature = "mpi-support")]
 use mesh_sieve::algs::communicator::{Communicator, MpiComm};
 use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
 use mesh_sieve::topology::point::PointId;
@@ -22,6 +23,7 @@ fn partition_vertices(nx: usize, ny: usize, size: usize) -> Vec<usize> {
     parts
 }
 
+#[cfg(feature = "mpi-support")]
 fn main() {
     let comm = MpiComm::default();
     let rank = comm.rank();
@@ -84,4 +86,9 @@ fn main() {
     println!("Rank {}: RCM order {:?}", rank, rcm_order);
 
     comm.barrier();
+}
+
+#[cfg(not(feature = "mpi-support"))]
+fn main() {
+    eprintln!("This example requires the 'mpi-support' feature to run.");
 }

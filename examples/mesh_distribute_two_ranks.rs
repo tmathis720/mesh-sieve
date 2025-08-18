@@ -7,11 +7,13 @@
 // then distributes the mesh using the `distribute_mesh` function. Each rank prints
 // its local mesh and overlap for manual inspection.
 
+#[cfg(feature = "mpi-support")]
 use mesh_sieve::algs::communicator::{MpiComm, Communicator};
 use mesh_sieve::algs::distribute::distribute_mesh;
 use mesh_sieve::topology::point::PointId;
 use mesh_sieve::topology::sieve::{Sieve, InMemorySieve};
 
+#[cfg(feature = "mpi-support")]
 fn main() {
     let comm = MpiComm::default();
     let size = Communicator::size(&comm);
@@ -61,4 +63,9 @@ fn main() {
     }
 
     println!("[rank {}] distribute_mesh test passed", rank);
+}
+
+#[cfg(not(feature = "mpi-support"))]
+fn main() {
+    eprintln!("This example requires the 'mpi-support' feature to run.");
 }

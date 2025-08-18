@@ -3,6 +3,7 @@
 // This example tests the `complete_stack` function with two MPI ranks.
 // It ensures that a Stack can be completed correctly when two ranks have overlapping points,
 // and that the Stack is correctly completed with values from both ranks.
+#[cfg(feature = "mpi-support")]
 fn main() {
     use mesh_sieve::algs::communicator::MpiComm;
     use mpi::topology::Communicator;
@@ -67,4 +68,9 @@ fn main() {
         // rank 0 only ever sent it
         println!("[rank 0] send-only, local arrows = {:?}", arrows);
     }
+}
+
+#[cfg(not(feature = "mpi-support"))]
+fn main() {
+    eprintln!("This example requires the 'mpi-support' feature to run.");
 }

@@ -162,6 +162,7 @@ impl Communicator for RayonComm {
 }
 
 // --- MPI backend ---
+#[cfg(feature = "mpi-support")]
 mod mpi_backend {
     use super::*;
     use mpi::environment::Universe;
@@ -258,6 +259,7 @@ mod mpi_backend {
     }
 }
 
+#[cfg(feature = "mpi-support")]
 pub use mpi_backend::MpiComm;
 
 #[cfg(test)]

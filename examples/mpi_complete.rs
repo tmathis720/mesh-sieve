@@ -1,17 +1,18 @@
 //! cargo mpirun -n 2 --features mpi-support --example mpi_complete
 //! Version 1.2.0: Passing
 // This example demonstrates how to complete a Section in MPI with two ranks.
-use mesh_sieve::algs::communicator::MpiComm;
-use mpi::topology::Communicator;
-use std::process;
-use mesh_sieve::topology::point::PointId;
-use mesh_sieve::overlap::overlap::Overlap;
-use mesh_sieve::data::atlas::Atlas;
-use mesh_sieve::data::section::Section;
-use mesh_sieve::overlap::delta::CopyDelta;
-use mesh_sieve::algs::completion::complete_section;
 
+#[cfg(feature = "mpi-support")]
 fn main() {
+    use mesh_sieve::algs::communicator::MpiComm;
+    use mpi::topology::Communicator;
+    use std::process;
+    use mesh_sieve::topology::point::PointId;
+    use mesh_sieve::overlap::overlap::Overlap;
+    use mesh_sieve::data::atlas::Atlas;
+    use mesh_sieve::data::section::Section;
+    use mesh_sieve::overlap::delta::CopyDelta;
+    use mesh_sieve::algs::completion::complete_section;
     // 1) Init MPI
     let comm = MpiComm::default();
     let world = &comm.world;
@@ -80,4 +81,9 @@ fn main() {
     if rank == 0 {
         println!("MPI two-rank example succeeded!");
     }
+}
+
+#[cfg(not(feature = "mpi-support"))]
+fn main() {
+    eprintln!("This example requires the 'mpi-support' feature to run.");
 }

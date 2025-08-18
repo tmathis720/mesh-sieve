@@ -12,6 +12,7 @@
 //! - Stratum computation and mesh validation
 //! - Error handling and robustness testing
 
+#[cfg(feature = "mpi-support")]
 use mesh_sieve::algs::communicator::{Communicator, MpiComm};
 use mesh_sieve::algs::completion::complete_section;
 use mesh_sieve::algs::distribute::distribute_mesh;
@@ -32,8 +33,13 @@ use mesh_sieve::topology::stack::{InMemoryStack, Stack};
 use mesh_sieve::algs::dual_graph::build_dual;
 
 fn main() {
+    #[cfg(feature = "mpi-support")]
     let comm = MpiComm::default();
+    #[cfg(not(feature = "mpi-support"))]
+    let (size, rank) = (1, 0);
+    #[cfg(feature = "mpi-support")]
     let size = comm.size();
+    #[cfg(feature = "mpi-support")]
     let rank = comm.rank();
     
     if size != 4 {
@@ -56,6 +62,7 @@ fn main() {
          Bundle { stack: InMemoryStack::new(), section: Section::new(Atlas::default()), delta: CopyDelta })
     };
 
+    #[cfg(feature = "mpi-support")]
     comm.barrier();
 
     // Phase 2: Test lattice operations and mesh analysis
@@ -65,6 +72,7 @@ fn main() {
         test_stratum_computation(&global_mesh);
     }
 
+    #[cfg(feature = "mpi-support")]
     comm.barrier();
 
     // Phase 3: Test partitioning (requires METIS)
@@ -86,29 +94,47 @@ fn main() {
         Vec::new()
     };
 
-    comm.barrier();
-
-    // Phase 4: Distribute mesh and test completion
-    if !cells.is_empty() {
-        test_distributed_completion(&global_mesh, &partition_map, &comm, rank, size);
+    #[cfg(feature = "mpi-support")]
+    {
+        comm.barrier();
     }
 
-    comm.barrier();
+    // Phase 4: Distribute mesh and test completion
+    #[cfg(feature = "mpi-support")]
+    {
+        if !cells.is_empty() {
+            test_distributed_completion(&global_mesh, &partition_map, &comm, rank, size);
+        }
+    }
+
+    #[cfg(feature = "mpi-support")]
+    {
+        comm.barrier();
+    }
 
     // Phase 5: Test Bundle operations with orientations
     test_bundle_operations(rank);
 
-    comm.barrier();
+    #[cfg(feature = "mpi-support")]
+    {
+        comm.barrier();
+    }
 
     // Phase 6: Test SievedArray refinement
     test_sieved_array_operations(rank);
 
-    comm.barrier();
+    #[cfg(feature = "mpi-support")]
+    {
+        comm.barrier();
+    }
 
     // Phase 7: Test error handling and edge cases
     test_error_handling_robustness(rank);
 
-    comm.barrier();
+    #[cfg(feature = "mpi-support")]
+    {
+        comm.barrier();
+    }
 
     if rank == 0 {
         println!("=== ALL COMPREHENSIVE TESTS PASSED ===");
@@ -346,6 +372,7 @@ fn test_metis_partitioning(_mesh: &InMemorySieve<PointId, ()>, cells: &[PointId]
 }
 
 /// Test distributed mesh completion with complex overlaps
+#[cfg(feature = "mpi-support")]
 fn test_distributed_completion(
     global_mesh: &InMemorySieve<PointId, ()>,
     partition: &[usize],
