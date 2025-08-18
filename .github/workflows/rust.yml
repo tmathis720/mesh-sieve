@@ -26,6 +26,17 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - name: Cache cargo
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+          ~/.cargo/bin
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
     
   # MPI is not installed in the standard build matrix. MPI tests run in
   # the separate `mpi-tests` job which installs MPI only when needed.
@@ -94,6 +105,18 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Cache cargo
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+          ~/.cargo/bin
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+
     - name: Install MPI
       run: |
         sudo apt-get update
@@ -106,6 +129,16 @@ jobs:
         toolchain: stable
         override: true
 
+    - name: Install cargo-mpirun
+      run: |
+        # Install the cargo subcommand to run MPI examples via `cargo mpirun`
+        if [ -x "$HOME/.cargo/bin/cargo-mpirun" ]; then
+          echo "cargo-mpirun already installed at $HOME/.cargo/bin/cargo-mpirun"
+          $HOME/.cargo/bin/cargo-mpirun --version || true
+        else
+          cargo install --locked cargo-mpirun
+        fi
+
     - name: Build library (MPI)
       run: cargo build --lib --verbose --features "${{ matrix.features }}"
 
@@ -113,7 +146,7 @@ jobs:
       run: |
         echo "Running MPI examples with features: ${{ matrix.features }}"
         # Keep MPI runs small and deterministic (2 ranks where possible).
-        mpirun -n 2 cargo run --features "${{ matrix.features }}" --example mpi_complete
-        mpirun -n 2 cargo run --features "${{ matrix.features }}" --example mpi_complete_stack || true
-        mpirun -n 2 cargo run --features "${{ matrix.features }}" --example mesh_distribute_two_ranks || true
+        cargo mpirun -n 2 --features "${{ matrix.features }}" --example mpi_complete
+        cargo mpirun -n 2 --features "${{ matrix.features }}" --example mpi_complete_stack || true
+        cargo mpirun -n 2 --features "${{ matrix.features }}" --example mesh_distribute_two_ranks || true
         echo "MPI examples finished for features: ${{ matrix.features }}"
