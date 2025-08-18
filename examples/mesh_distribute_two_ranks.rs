@@ -8,13 +8,11 @@
 // its local mesh and overlap for manual inspection.
 
 #[cfg(feature = "mpi-support")]
-use mesh_sieve::algs::communicator::{MpiComm, Communicator};
-use mesh_sieve::algs::distribute::distribute_mesh;
-use mesh_sieve::topology::point::PointId;
-use mesh_sieve::topology::sieve::{Sieve, InMemorySieve};
-
-#[cfg(feature = "mpi-support")]
 fn main() {
+    use mesh_sieve::algs::communicator::{MpiComm, Communicator};
+    use mesh_sieve::algs::distribute::distribute_mesh;
+    use mesh_sieve::topology::point::PointId;
+    use mesh_sieve::topology::sieve::{Sieve, InMemorySieve};
     let comm = MpiComm::default();
     let size = Communicator::size(&comm);
     let rank = Communicator::rank(&comm);

@@ -13,33 +13,29 @@
 //! - Error handling and robustness testing
 
 #[cfg(feature = "mpi-support")]
-use mesh_sieve::algs::communicator::{Communicator, MpiComm};
-use mesh_sieve::algs::completion::complete_section;
-use mesh_sieve::algs::distribute::distribute_mesh;
-use mesh_sieve::algs::lattice::adjacent;
-use mesh_sieve::data::atlas::Atlas;
-use mesh_sieve::data::bundle::Bundle;
-use mesh_sieve::data::refine::helpers::{restrict_closure, restrict_star, restrict_closure_vec, restrict_star_vec};
-use mesh_sieve::data::refine::sieved_array::SievedArray;
-use mesh_sieve::data::section::Section;
-use mesh_sieve::overlap::delta::{CopyDelta, AddDelta, ZeroDelta, Delta};
-// use mesh_sieve::overlap::overlap::{Overlap, Remote};
-use mesh_sieve::topology::arrow::Orientation;
-use mesh_sieve::topology::point::PointId;
-use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
-use mesh_sieve::topology::stack::{InMemoryStack, Stack};
+
 
 #[cfg(feature = "metis-support")]
-use mesh_sieve::algs::dual_graph::build_dual;
-
 fn main() {
-    #[cfg(feature = "mpi-support")]
+    use mesh_sieve::algs::communicator::{Communicator, MpiComm};
+    use mesh_sieve::algs::completion::complete_section;
+    use mesh_sieve::algs::distribute::distribute_mesh;
+    use mesh_sieve::algs::lattice::adjacent;
+    use mesh_sieve::data::atlas::Atlas;
+    use mesh_sieve::data::bundle::Bundle;
+    use mesh_sieve::data::refine::helpers::{restrict_closure, restrict_star, restrict_closure_vec, restrict_star_vec};
+    use mesh_sieve::data::refine::sieved_array::SievedArray;
+    use mesh_sieve::data::section::Section;
+    use mesh_sieve::overlap::delta::{CopyDelta, AddDelta, ZeroDelta, Delta};
+    // use mesh_sieve::overlap::overlap::{Overlap, Remote};
+    use mesh_sieve::topology::arrow::Orientation;
+    use mesh_sieve::topology::point::PointId;
+    use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
+    use mesh_sieve::topology::stack::{InMemoryStack, Stack};
+    use mesh_sieve::algs::dual_graph::build_dual;
+
     let comm = MpiComm::default();
-    #[cfg(not(feature = "mpi-support"))]
-    let (size, rank) = (1, 0);
-    #[cfg(feature = "mpi-support")]
     let size = comm.size();
-    #[cfg(feature = "mpi-support")]
     let rank = comm.rank();
     
     if size != 4 {
@@ -62,7 +58,6 @@ fn main() {
          Bundle { stack: InMemoryStack::new(), section: Section::new(Atlas::default()), delta: CopyDelta })
     };
 
-    #[cfg(feature = "mpi-support")]
     comm.barrier();
 
     // Phase 2: Test lattice operations and mesh analysis
@@ -72,12 +67,10 @@ fn main() {
         test_stratum_computation(&global_mesh);
     }
 
-    #[cfg(feature = "mpi-support")]
     comm.barrier();
 
     // Phase 3: Test partitioning (requires METIS)
     let partition_map = if rank == 0 {
-        #[cfg(feature = "metis-support")]
         {
             test_metis_partitioning(&global_mesh, &cells, size)
         }
@@ -94,10 +87,7 @@ fn main() {
         Vec::new()
     };
 
-    #[cfg(feature = "mpi-support")]
-    {
-        comm.barrier();
-    }
+    comm.barrier();
 
     // Phase 4: Distribute mesh and test completion
     #[cfg(feature = "mpi-support")]
@@ -142,6 +132,7 @@ fn main() {
 }
 
 /// Build a complex tetrahedral mesh with refinement hierarchy
+#[cfg(feature = "mpi-support")]
 fn build_hierarchical_tetrahedral_mesh() -> (InMemorySieve<PointId, ()>, Vec<PointId>, InMemorySieve<PointId, ()>, Bundle<f64>) {
     println!("[rank 0] Building hierarchical tetrahedral mesh...");
     
@@ -218,6 +209,7 @@ fn build_hierarchical_tetrahedral_mesh() -> (InMemorySieve<PointId, ()>, Vec<Poi
 }
 
 /// Test lattice operations (meet, join) and adjacency
+#[cfg(feature = "mpi-support")]
 fn test_lattice_operations(mesh: &InMemorySieve<PointId, ()>, cells: &[PointId]) {
     println!("[rank 0] Testing lattice operations...");
     
@@ -251,6 +243,7 @@ fn test_lattice_operations(mesh: &InMemorySieve<PointId, ()>, cells: &[PointId])
 }
 
 /// Test refinement helpers (restrict_closure, restrict_star)
+#[cfg(feature = "mpi-support")]
 fn test_refinement_helpers(mesh: &InMemorySieve<PointId, ()>, _section: &Section<f64>) {
     println!("[rank 0] Testing refinement helpers...");
     
@@ -296,6 +289,7 @@ fn test_refinement_helpers(mesh: &InMemorySieve<PointId, ()>, _section: &Section
 }
 
 /// Test stratum computation and validation
+#[cfg(feature = "mpi-support")]
 fn test_stratum_computation(mesh: &InMemorySieve<PointId, ()>) {
     println!("[rank 0] Testing stratum computation...");
     
@@ -366,6 +360,7 @@ fn test_metis_partitioning(mesh: &InMemorySieve<PointId, ()>, cells: &[PointId],
 }
 
 #[cfg(not(feature = "metis-support"))]
+#[cfg(feature = "mpi-support")]
 fn test_metis_partitioning(_mesh: &InMemorySieve<PointId, ()>, cells: &[PointId], n_parts: usize) -> Vec<usize> {
     println!("[rank 0] METIS not available, using round-robin partitioning...");
     (0..cells.len()).map(|i| i % n_parts).collect()
@@ -419,6 +414,7 @@ fn test_distributed_completion(
 }
 
 /// Test Bundle operations with different orientations
+#[cfg(feature = "mpi-support")]
 fn test_bundle_operations(rank: usize) {
     println!("[rank {}] Testing Bundle operations...", rank);
     
@@ -473,6 +469,7 @@ fn test_bundle_operations(rank: usize) {
 }
 
 /// Test SievedArray refinement and assembly
+#[cfg(feature = "mpi-support")]
 fn test_sieved_array_operations(rank: usize) {
     println!("[rank {}] Testing SievedArray operations...", rank);
     
@@ -516,6 +513,7 @@ fn test_sieved_array_operations(rank: usize) {
 }
 
 /// Test error handling and robustness
+#[cfg(feature = "mpi-support")]
 fn test_error_handling_robustness(rank: usize) {
     println!("[rank {}] Testing error handling robustness...", rank);
     
@@ -568,4 +566,10 @@ fn test_error_handling_robustness(rank: usize) {
     assert_eq!(val, 42, "ZeroDelta fuse should not change value");
     
     println!("[rank {}] Error handling robustness test passed", rank);
+}
+
+#[cfg(not(feature = "mpi-support"))]
+fn main() {
+    println!("This example requires the 'mpi-support' feature enabled.");
+    println!("Run with: cargo mpirun -n 4 --features mpi-support,metis-support --example comprehensive_mesh_workflow");
 }
