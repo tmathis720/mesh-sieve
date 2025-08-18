@@ -1,5 +1,5 @@
 //! Set-lattice helpers: meet, join, adjacency and helpers.
-//! All output vectors are **sorted & deduplicated** for deterministic behaviour.
+//! All output vectors are **sorted & deduplicated** for deterministic behavior.
 //!
 //! This module provides utilities for set-lattice operations on mesh topologies,
 //! including adjacency queries and helpers for use with [`Sieve`] structures.
