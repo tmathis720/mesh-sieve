@@ -175,15 +175,31 @@ where
     /// After mutating arrows, this method invalidates any derived caches on both the base and cap sieves.
     fn remove_arrow(&mut self, base: B, cap: C) -> Result<Option<P>, MeshSieveError> {
         let mut removed = None;
-        if let Some(vec) = self.up.get_mut(&base) {
+
+        // Remove from the upward adjacency map and track whether the entry became empty.
+        let remove_up = if let Some(vec) = self.up.get_mut(&base) {
             if let Some(pos) = vec.iter().position(|(c, _)| *c == cap) {
                 removed = Some(vec.remove(pos).1);
             }
+            vec.is_empty()
+        } else {
+            false
+        };
+        if remove_up {
+            self.up.remove(&base);
         }
-        if let Some(vec) = self.down.get_mut(&cap) {
+
+        // Remove from the downward adjacency map and track whether the entry became empty.
+        let remove_down = if let Some(vec) = self.down.get_mut(&cap) {
             if let Some(pos) = vec.iter().position(|(b, _)| *b == base) {
                 vec.remove(pos);
             }
+            vec.is_empty()
+        } else {
+            false
+        };
+        if remove_down {
+            self.down.remove(&cap);
         }
         InvalidateCache::invalidate_cache(&mut self.base);
         InvalidateCache::invalidate_cache(&mut self.cap);
@@ -462,6 +478,16 @@ mod tests {
     fn remove_nonexistent_returns_none() {
         let mut s = InMemoryStack::<u32,u32,()>::new();
         assert_eq!(s.remove_arrow(5,50).unwrap(), None);
+    }
+
+    #[test]
+    fn remove_arrow_cleans_empty_maps() {
+        let mut s = InMemoryStack::<u32,u32,()>::new();
+        let _ = s.add_arrow(1, 10, ());
+        // Remove the only arrow and ensure maps no longer report the points
+        assert_eq!(s.remove_arrow(1, 10).unwrap(), Some(()));
+        assert!(s.base_points().next().is_none());
+        assert!(s.cap_points().next().is_none());
     }
 
     #[test]
