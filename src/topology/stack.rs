@@ -16,6 +16,11 @@ use std::collections::HashMap;
 /// - `Point`:   The point type in the base mesh (commonly `PointId`).
 /// - `CapPt`:   The point type in the cap mesh (commonly `PointId`).
 /// - `Payload`: Data attached to each arrow (e.g., `Orientation`).
+///
+/// Some implementations (such as [`ComposedStack`]) do not expose a concrete
+/// base or cap Sieve. Calling [`Stack::base`] or [`Stack::cap`] on such stacks
+/// will panic. A future refactor may return `Option` or `Result` to make these
+/// unsupported operations explicit.
 pub trait Stack {
     /// Base mesh point identifier.
     type Point: Copy + Eq + std::hash::Hash;
@@ -65,8 +70,14 @@ pub trait Stack {
 
     // === Convenience accessors ===
     /// Returns a reference to the underlying base Sieve.
+    ///
+    /// # Panics
+    /// Implementations may panic if the base Sieve is not exposed (e.g., [`ComposedStack`]).
     fn base(&self) -> &Self::BaseSieve;
     /// Returns a reference to the underlying cap Sieve.
+    ///
+    /// # Panics
+    /// Implementations may panic if the cap Sieve is not exposed (e.g., [`ComposedStack`]).
     fn cap(&self) -> &Self::CapSieve;
 
     /// Returns a mutable reference to the underlying base Sieve.
@@ -326,9 +337,17 @@ where
     fn cap_mut(&mut self) -> Result<&mut Self::CapSieve, MeshSieveError> {
         Err(MeshSieveError::UnsupportedStackOperation("cap_mut on ComposedStack"))
     }
+    /// Returns the base sieve of the composed stack.
+    ///
+    /// # Panics
+    /// Panics because `ComposedStack` does not have direct access to a base sieve.
     fn base(&self) -> &Self::BaseSieve {
         panic!("base() is not supported on ComposedStack")
     }
+    /// Returns the cap sieve of the composed stack.
+    ///
+    /// # Panics
+    /// Panics because `ComposedStack` does not have direct access to a cap sieve.
     fn cap(&self) -> &Self::CapSieve {
         panic!("cap() is not supported on ComposedStack")
     }
