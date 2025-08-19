@@ -1,6 +1,8 @@
 use proptest::prelude::*;
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 use crate::partitioning::{
     partition, PartitionerConfig, PartitionerError, PartitionMap
@@ -81,11 +83,21 @@ proptest! {
         k in 2usize..5,
         edge_prob in 0.1f64..0.9f64,  // probability each undirected edge exists
     ) {
+        // Seed RNG from test parameters so graph and baseline partition are reproducible
+        let seed = {
+            let mut h = DefaultHasher::new();
+            n.hash(&mut h);
+            k.hash(&mut h);
+            edge_prob.to_bits().hash(&mut h);
+            h.finish()
+        };
+        let mut rng = SmallRng::seed_from_u64(seed);
+
         // 1) Build random adjacency list
         let mut edges = Vec::new();
         for u in 0..n {
             for v in (u+1)..n {
-                if rand::random::<f64>() < edge_prob {
+                if rng.gen::<f64>() < edge_prob {
                     edges.push((u,v));
                 }
             }
@@ -131,7 +143,6 @@ proptest! {
 
         // C) edge_cut improvement vs. one random baseline
         let my_cut = edge_cut(&g, &pm);
-        let mut rng = SmallRng::seed_from_u64(0);
         let mut rnd_pm = PartitionMap::with_capacity(n);
         for v in 0..n {
             rnd_pm.insert(v, rng.gen_range(0..k));
