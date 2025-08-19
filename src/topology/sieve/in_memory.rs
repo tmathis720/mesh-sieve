@@ -3,8 +3,8 @@
 //! This module provides [`InMemorySieve`], a simple and efficient in-memory representation
 //! of a sieve using hash maps for adjacency storage. It supports generic point and payload types.
 
-use super::sieve_trait::Sieve;
 use super::sieve_ref::SieveRef;
+use super::sieve_trait::Sieve;
 use crate::topology::stratum::InvalidateCache;
 use crate::topology::stratum::StrataCache;
 use once_cell::sync::OnceCell;
@@ -187,6 +187,14 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
         self.invalidate_cache();
         removed
     }
+
+    fn reserve_cone(&mut self, p: P, additional: usize) {
+        self.adjacency_out.entry(p).or_default().reserve(additional);
+    }
+
+    fn reserve_support(&mut self, q: P, additional: usize) {
+        self.adjacency_in.entry(q).or_default().reserve(additional);
+    }
     // strata helpers now provided by Sieve trait default impls
     /// Adds a point to the sieve, creating empty adjacencies for it.
     ///
@@ -295,37 +303,27 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
     /// assert_eq!(cone, vec![(2, ()), (3, ())]);
     /// ```
     fn set_cone(&mut self, p: P, chain: impl IntoIterator<Item = (P, T)>) {
-        use std::collections::HashSet;
+        // New cone (vector) for p
+        let new_cone: Vec<(P, T)> = chain.into_iter().collect();
 
-        let new: Vec<(P, T)> = chain.into_iter().collect();
-        let new_dst: HashSet<P> = new.iter().map(|(d, _)| *d).collect();
+        // Take the old outgoing adjacency of p, leaving an empty vec in the map.
+        let old_cone: Vec<(P, T)> = std::mem::take(self.adjacency_out.entry(p).or_default());
 
-        let old = self.adjacency_out.remove(&p).unwrap_or_default();
-
-        for (dst, _) in &old {
-            if !new_dst.contains(dst) {
-                if let Some(ins) = self.adjacency_in.get_mut(dst) {
-                    if let Some(pos) = ins.iter().position(|(s, _)| *s == p) {
-                        ins.remove(pos);
-                        if ins.is_empty() {
-                            self.adjacency_in.remove(dst);
-                        }
-                    }
-                }
+        // 1) Remove mirror entries in adjacency_in for all old (p -> dst) edges
+        for (dst, _) in &old_cone {
+            if let Some(ins) = self.adjacency_in.get_mut(dst) {
+                ins.retain(|(src, _)| *src != p);
             }
         }
 
-        for (dst, pay) in &new {
-            self.adjacency_in.entry(*dst).or_default();
-            let ins = self.adjacency_in.get_mut(dst).unwrap();
-            if let Some(pos) = ins.iter().position(|(s, _)| *s == p) {
-                ins[pos] = (p, pay.clone());
-            } else {
-                ins.push((p, pay.clone()));
-            }
+        // 2) Install new outgoing list for p
+        self.adjacency_out.insert(p, new_cone.clone());
+
+        // 3) Add mirror entries in adjacency_in for all new (p -> dst) edges
+        for (dst, pay) in new_cone {
+            self.adjacency_in.entry(dst).or_default().push((p, pay));
         }
 
-        self.adjacency_out.insert(p, new);
         self.invalidate_cache();
     }
     /// Adds to the cone of a point, appending to any existing cone.
@@ -344,8 +342,9 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
     /// assert_eq!(cone, vec![(2, ()), (3, ())]);
     /// ```
     fn add_cone(&mut self, p: P, chain: impl IntoIterator<Item = (P, T)>) {
+        let out = self.adjacency_out.entry(p).or_default();
         for (dst, pay) in chain {
-            self.adjacency_out.entry(p).or_default().push((dst, pay.clone()));
+            out.push((dst, pay.clone()));
             self.adjacency_in.entry(dst).or_default().push((p, pay));
         }
         self.invalidate_cache();
@@ -366,17 +365,27 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
     /// assert_eq!(support, vec![(1, ()), (2, ())]);
     /// ```
     fn set_support(&mut self, q: P, chain: impl IntoIterator<Item = (P, T)>) {
-        self.adjacency_in.insert(q, chain.into_iter().collect());
-        // rebuild adjacency_out from adjacency_in
-        self.adjacency_out.clear();
-        for (&dst, ins) in &self.adjacency_in {
-            for &(src, ref pay) in ins {
-                self.adjacency_out
-                    .entry(src)
-                    .or_default()
-                    .push((dst, pay.clone()));
+        // New support (vector) for q
+        let new_sup: Vec<(P, T)> = chain.into_iter().collect();
+
+        // Take the old incoming adjacency of q, leaving an empty vec in the map.
+        let old_sup: Vec<(P, T)> = std::mem::take(self.adjacency_in.entry(q).or_default());
+
+        // 1) Remove mirror entries in adjacency_out for all old (src -> q) edges
+        for (src, _) in &old_sup {
+            if let Some(outs) = self.adjacency_out.get_mut(src) {
+                outs.retain(|(dst, _)| *dst != q);
             }
         }
+
+        // 2) Install new incoming list for q
+        self.adjacency_in.insert(q, new_sup.clone());
+
+        // 3) Add mirror entries in adjacency_out for all new (src -> q) edges
+        for (src, pay) in new_sup {
+            self.adjacency_out.entry(src).or_default().push((q, pay));
+        }
+
         self.invalidate_cache();
     }
     /// Adds to the support of a point, appending to any existing support.
@@ -482,30 +491,24 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
     }
 }
 
-impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> InMemorySieve<P, T> {
-    fn rebuild_support_from_out(&mut self) {
-        self.adjacency_in.clear();
-        for (&src, outs) in &self.adjacency_out {
-            for &(dst, ref pay) in outs {
-                self.adjacency_in
-                    .entry(dst)
-                    .or_default()
-                    .push((src, pay.clone()));
-            }
-        }
-    }
-}
-
 impl<P, T> SieveRef for InMemorySieve<P, T>
 where
     P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
     T: Clone,
 {
-    type ConeRefIter<'a> = ConeRefMapIter<'a, P, T> where Self: 'a;
-    type SupportRefIter<'a> = ConeRefMapIter<'a, P, T> where Self: 'a;
+    type ConeRefIter<'a>
+        = ConeRefMapIter<'a, P, T>
+    where
+        Self: 'a;
+    type SupportRefIter<'a>
+        = ConeRefMapIter<'a, P, T>
+    where
+        Self: 'a;
 
     fn cone_ref<'a>(&'a self, p: P) -> Self::ConeRefIter<'a> {
-        fn map_fn<P: Copy, T>((dst, pay): &(P, T)) -> (P, &T) { (*dst, pay) }
+        fn map_fn<P: Copy, T>((dst, pay): &(P, T)) -> (P, &T) {
+            (*dst, pay)
+        }
         let f: fn(&(P, T)) -> (P, &T) = map_fn::<P, T>;
         self.adjacency_out
             .get(&p)
@@ -514,7 +517,9 @@ where
     }
 
     fn support_ref<'a>(&'a self, p: P) -> Self::SupportRefIter<'a> {
-        fn map_fn<P: Copy, T>((src, pay): &(P, T)) -> (P, &T) { (*src, pay) }
+        fn map_fn<P: Copy, T>((src, pay): &(P, T)) -> (P, &T) {
+            (*src, pay)
+        }
         let f: fn(&(P, T)) -> (P, &T) = map_fn::<P, T>;
         self.adjacency_in
             .get(&p)
