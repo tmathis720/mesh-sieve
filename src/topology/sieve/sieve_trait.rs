@@ -322,6 +322,24 @@ where
         Ok(Box::new(pts.into_iter()))
     }
 
+    /// Deterministic contiguous index for a point within the strata chart.
+    fn chart_index(&mut self, p: Self::Point) -> Result<Option<usize>, MeshSieveError>
+    where
+        Self: Sized,
+    {
+        let cache = compute_strata(self)?;
+        Ok(cache.index_of(p))
+    }
+
+    /// Full chart of points in deterministic order (index → point).
+    fn chart_points(&mut self) -> Result<Vec<Self::Point>, MeshSieveError>
+    where
+        Self: Sized,
+    {
+        let cache = compute_strata(self)?;
+        Ok(cache.chart_points.clone())
+    }
+
     /// # Strata helpers example
     /// ```rust
     /// # use mesh_sieve::topology::sieve::Sieve;
