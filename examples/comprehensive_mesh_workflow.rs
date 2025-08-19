@@ -14,6 +14,7 @@
 
 #[cfg(feature = "mpi-support")]
 use mesh_sieve::{data::bundle::Bundle, prelude::{InMemorySieve, MpiComm, PointId, Section}};
+use mesh_sieve::algs::dual_graph::build_dual;
 #[cfg(feature = "metis-support")]
 fn main() {
     use mesh_sieve::algs::communicator::{Communicator, MpiComm};
