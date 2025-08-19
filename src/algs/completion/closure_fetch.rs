@@ -60,15 +60,17 @@ pub fn fetch_adjacency<C: Communicator>(
     };
     let mut pending_sends = Vec::new();
     let mut _keep_alive: Vec<Vec<WirePoint>> = Vec::new();
+    let mut _keep_hdrs: Vec<Vec<u8>> = Vec::new();
     for (&rank, pts) in requests {
         let mut body: Vec<WirePoint> = pts.iter().map(|p| WirePoint { id: p.get() }).collect();
-        let bytes_hdr = cast_slice(&[hdr]);
+        let hdr_bytes = cast_slice(&[hdr]).to_vec();
         let bytes_pts = cast_slice(&body);
-        pending_sends.push(comm.isend(rank, base_tag, bytes_hdr));
+        pending_sends.push(comm.isend(rank, base_tag, &hdr_bytes));
         let cnt = (body.len() as u32).to_le_bytes();
         pending_sends.push(comm.isend(rank, base_tag + 3, &cnt));
         pending_sends.push(comm.isend(rank, base_tag, bytes_pts));
         _keep_alive.push(body);
+        _keep_hdrs.push(hdr_bytes);
     }
 
     // 3) Gather reply sizes (number of WireAdj records)

@@ -295,19 +295,22 @@ where
 
     const TAG: u16 = 0xA100;
 
-    let mut fuse = |adj: &HashMap<Point, Vec<Point>>| {
+    // collect the incoming iterator so we can iterate it multiple times
+    let seed_vec: Vec<Point> = seeds.into_iter().collect();
+
+    let mut fuse = |s: &mut S, adj: &HashMap<Point, Vec<Point>>| {
         for (&src, dsts) in adj {
             for &dst in dsts {
-                sieve.add_arrow(src, dst, Default::default());
+                s.add_arrow(src, dst, Default::default());
             }
         }
-        sieve.invalidate_cache();
+        s.invalidate_cache();
     };
 
     if matches!(policy.timing, CompletionTiming::Pre)
         && matches!(policy.kind, CompletionKind::Cone | CompletionKind::Both)
     {
-        let mut q: VecDeque<(Point, u32)> = seeds.into_iter().map(|p| (p, 0)).collect();
+        let mut q: VecDeque<(Point, u32)> = seed_vec.iter().copied().map(|p| (p, 0)).collect();
         let mut seen = HashSet::new();
         let mut by_owner: HashMap<usize, Vec<Point>> = HashMap::new();
         while let Some((p, d)) = q.pop_front() {
@@ -327,12 +330,12 @@ where
         }
         if !by_owner.is_empty() {
             if let Ok(adj) = fetch_adjacency(&by_owner, ReqKind::Cone, comm, TAG) {
-                fuse(&adj);
+                fuse(sieve, &adj);
             }
         }
     }
 
-    let mut stack: Vec<Point> = seeds.into_iter().collect();
+    let mut stack: Vec<Point> = seed_vec.clone();
     let mut seen: HashSet<Point> = stack.iter().copied().collect();
     let mut batch: HashMap<usize, Vec<Point>> = HashMap::new();
 
@@ -356,11 +359,11 @@ where
             }
         }
 
-        if policy.batch > 0 {
+            if policy.batch > 0 {
             let total: usize = batch.values().map(|v| v.len()).sum();
             if total >= policy.batch {
                 if let Ok(adj) = fetch_adjacency(&batch, ReqKind::Cone, comm, TAG) {
-                    fuse(&adj);
+                    fuse(sieve, &adj);
                 }
                 batch.clear();
             }
@@ -369,7 +372,7 @@ where
 
     if !batch.is_empty() {
         if let Ok(adj) = fetch_adjacency(&batch, ReqKind::Cone, comm, TAG) {
-            fuse(&adj);
+            fuse(sieve, &adj);
         }
     }
 
