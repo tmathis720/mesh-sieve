@@ -59,6 +59,11 @@ where
 /// Computes the link of a point: `star(p) ∩ closure(p)` minus cone/support/p itself.
 ///
 /// Returns the set of points in both the closure and star of `p`, excluding direct neighbors and `p`.
+///
+/// Note: On a pure incidence DAG (arrows descend in topological dimension),
+/// `star(p)` (cofaces) and `closure(p)` (faces) intersect only at `p`,
+/// so this `link()` is typically empty. This matches the Sieve view that
+/// closure/star are the cell-complex operations. See Sieve Table 2 examples.
 pub fn link<S: Sieve<Point = Point>>(sieve: &S, p: Point) -> Vec<Point> {
     let mut cl = closure(sieve, [p]);
     let mut st = star(sieve, [p]);
