@@ -4,9 +4,9 @@
 //! 1. `StrataCache<P>`: stores precomputed height, depth, strata layers, and diameter for points of type `P`.
 //! 2. A cache invalidation mechanism in `InMemorySieve` and the core algorithm `compute_strata`.
 
-use std::collections::HashMap;
-use crate::topology::sieve::Sieve;
 use crate::mesh_error::MeshSieveError;
+use crate::topology::sieve::Sieve;
+use std::collections::HashMap;
 
 /// Anything that caches derived topology (strata, overlap footprints, dual graphs, …)
 /// should implement this.
@@ -31,6 +31,11 @@ pub struct StrataCache<P> {
     pub strata: Vec<Vec<P>>,
     /// Maximum height observed (also number of strata layers - 1).
     pub diameter: u32,
+
+    /// Deterministic global point order (height-major, then point order).
+    pub chart_points: Vec<P>, // index -> point
+    /// Reverse lookup for `chart_points`.
+    pub chart_index: HashMap<P, usize>, // point -> index
 }
 
 impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug> StrataCache<P> {
@@ -41,7 +46,27 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug> StrataCache<P> {
             depth: HashMap::new(),
             strata: Vec::new(),
             diameter: 0,
+            chart_points: Vec::new(),
+            chart_index: HashMap::new(),
         }
+    }
+
+    /// Index of a point in the chart, if present.
+    #[inline]
+    pub fn index_of(&self, p: P) -> Option<usize> {
+        self.chart_index.get(&p).copied()
+    }
+
+    /// Point stored at chart index `i`.
+    #[inline]
+    pub fn point_at(&self, i: usize) -> P {
+        self.chart_points[i]
+    }
+
+    /// Total number of points in the chart.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.chart_points.len()
     }
 }
 
@@ -60,7 +85,9 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> InMemoryS
     }
 }
 
-impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> InvalidateCache for InMemorySieve<P, T> {
+impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> InvalidateCache
+    for InMemorySieve<P, T>
+{
     fn invalidate_cache(&mut self) {
         // wipe strata cache
         self.strata.take();
@@ -69,7 +96,9 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Invalidat
 
 // Blanket impl for Box<T>
 impl<T: InvalidateCache> InvalidateCache for Box<T> {
-    fn invalidate_cache(&mut self) { (**self).invalidate_cache(); }
+    fn invalidate_cache(&mut self) {
+        (**self).invalidate_cache();
+    }
 }
 
 /// Build heights, depths, strata layers and diameter for *any* Sieve.
@@ -88,17 +117,22 @@ where
         }
     }
     // 2) topological sort
-    let mut stack: Vec<_> = in_deg.iter()
+    let mut stack: Vec<_> = in_deg
+        .iter()
         .filter(|&(_, &d)| d == 0)
-        .map(|(&p, _)| p).collect();
+        .map(|(&p, _)| p)
+        .collect();
     let mut topo = Vec::new();
     while let Some(p) = stack.pop() {
         topo.push(p);
         for (q, _) in sieve.cone(p) {
-            let deg = in_deg.get_mut(&q)
+            let deg = in_deg
+                .get_mut(&q)
                 .ok_or_else(|| MeshSieveError::MissingPointInCone(format!("{:?}", q)))?;
             *deg -= 1;
-            if *deg == 0 { stack.push(q) }
+            if *deg == 0 {
+                stack.push(q)
+            }
         }
     }
     // 3) detect cycles
@@ -108,24 +142,54 @@ where
     // 4) compute `height[p] = 1+max(height[pred])` in topo order
     let mut height = std::collections::HashMap::new();
     for &p in &topo {
-        let h = sieve.support(p)
-                     .map(|(pred,_)| height.get(&pred).copied().unwrap_or(0))
-                     .max().map_or(0, |m| m+1);
+        let h = sieve
+            .support(p)
+            .map(|(pred, _)| height.get(&pred).copied().unwrap_or(0))
+            .max()
+            .map_or(0, |m| m + 1);
         height.insert(p, h);
     }
     // 5) group into strata layers
     let max_h = *height.values().max().unwrap_or(&0);
-    let mut strata = vec![Vec::new(); (max_h+1) as usize];
-    for (&p,&h) in &height { strata[h as usize].push(p) }
+    let mut strata = vec![Vec::new(); (max_h + 1) as usize];
+    for (&p, &h) in &height {
+        strata[h as usize].push(p)
+    }
+
     // 6) compute `depth[p]` by reversing topsort
     let mut depth = std::collections::HashMap::new();
     for &p in topo.iter().rev() {
-        let d = sieve.cone(p)
-                     .map(|(succ,_)| depth.get(&succ).copied().unwrap_or(0))
-                     .max().map_or(0, |m| m+1);
+        let d = sieve
+            .cone(p)
+            .map(|(succ, _)| depth.get(&succ).copied().unwrap_or(0))
+            .max()
+            .map_or(0, |m| m + 1);
         depth.insert(p, d);
     }
-    Ok(StrataCache { height, depth, strata, diameter: max_h })
+
+    // 7) sort each stratum for deterministic chart order
+    for level in &mut strata {
+        level.sort_unstable();
+    }
+    // 8) flatten strata into chart_points (height-major order)
+    let mut chart_points = Vec::with_capacity(height.len());
+    for level in &strata {
+        chart_points.extend(level.iter().copied());
+    }
+    // 9) build reverse index
+    let mut chart_index = HashMap::with_capacity(chart_points.len());
+    for (i, p) in chart_points.iter().copied().enumerate() {
+        chart_index.insert(p, i);
+    }
+
+    Ok(StrataCache {
+        height,
+        depth,
+        strata,
+        diameter: max_h,
+        chart_points,
+        chart_index,
+    })
 }
 
 #[cfg(test)]
@@ -303,11 +367,11 @@ mod tests {
     #[test]
     fn sieve_cache_cleared_on_mutation() {
         let mut s = InMemorySieve::<u32, ()>::new();
-        s.add_arrow(1,2,());
+        s.add_arrow(1, 2, ());
         // first strata computed
         let d0 = s.diameter().unwrap();
         // mutate again
-        s.add_arrow(2,3,());
+        s.add_arrow(2, 3, ());
         // should not panic or reuse old strata
         let d1 = s.diameter().unwrap();
         assert!(d1 >= d0);
@@ -375,26 +439,28 @@ mod tests {
 
     #[test]
     fn explicit_invalidate_strata_forces_recompute() {
-        let mut s = InMemorySieve::<u32,()>::new();
-        s.add_arrow(1,2,());
+        let mut s = InMemorySieve::<u32, ()>::new();
+        s.add_arrow(1, 2, ());
         let d0 = s.diameter().unwrap();
         s.invalidate_strata();
-        s.add_arrow(2,3,());
+        s.add_arrow(2, 3, ());
         let d1 = s.diameter().unwrap();
         assert!(d1 > d0);
     }
 
     #[test]
     fn isolated_points_are_included() {
-        let mut s = InMemorySieve::<u32,()>::new();
+        let mut s = InMemorySieve::<u32, ()>::new();
         s.adjacency_out.insert(42, Vec::new());
-        let heights = crate::topology::stratum::compute_strata(&mut s).unwrap().height;
+        let heights = crate::topology::stratum::compute_strata(&mut s)
+            .unwrap()
+            .height;
         assert_eq!(heights.get(&42).copied(), Some(0));
     }
 
     #[test]
     fn empty_sieve_strata() {
-        let mut s = InMemorySieve::<u8,()>::default();
+        let mut s = InMemorySieve::<u8, ()>::default();
         assert_eq!(s.diameter().unwrap(), 0);
         assert!(s.height_stratum(0).unwrap().next().is_none());
         assert!(s.depth_stratum(0).unwrap().next().is_none());
@@ -402,9 +468,9 @@ mod tests {
 
     #[test]
     fn depth_stratum_exactness() {
-        let mut s = InMemorySieve::<u32,()>::new();
-        s.add_arrow(5,6,());
-        s.add_arrow(6,7,());
+        let mut s = InMemorySieve::<u32, ()>::new();
+        s.add_arrow(5, 6, ());
+        s.add_arrow(6, 7, ());
         let d0: Vec<_> = s.depth_stratum(0).unwrap().collect();
         let d1: Vec<_> = s.depth_stratum(1).unwrap().collect();
         let d2: Vec<_> = s.depth_stratum(2).unwrap().collect();
@@ -415,20 +481,23 @@ mod tests {
 
     #[test]
     fn strata_cache_new_is_empty() {
-        let cache: crate::topology::stratum::StrataCache<u8> = crate::topology::stratum::StrataCache::new();
+        let cache: crate::topology::stratum::StrataCache<u8> =
+            crate::topology::stratum::StrataCache::new();
         assert!(cache.height.is_empty());
         assert!(cache.depth.is_empty());
         assert!(cache.strata.is_empty());
         assert_eq!(cache.diameter, 0);
+        assert!(cache.chart_points.is_empty());
+        assert!(cache.chart_index.is_empty());
     }
 
     #[test]
     fn strata_cache_thread_safe() {
         use std::sync::{Arc, Mutex};
         use std::thread;
-        let mut s = InMemorySieve::<u32,()>::new();
-        s.add_arrow(1,2,());
-        s.add_arrow(2,3,());
+        let mut s = InMemorySieve::<u32, ()>::new();
+        s.add_arrow(1, 2, ());
+        s.add_arrow(2, 3, ());
         let shared = Arc::new(Mutex::new(s));
         let mut handles = Vec::new();
         for _ in 0..4 {
@@ -440,12 +509,15 @@ mod tests {
                 }
             }));
         }
-        for h in handles { h.join().unwrap(); }
+        for h in handles {
+            h.join().unwrap();
+        }
     }
 
     #[test]
     fn boxed_invalidate_cache() {
-        let mut s: Box<dyn crate::topology::stratum::InvalidateCache> = Box::new(InMemorySieve::<u8,()>::new());
+        let mut s: Box<dyn crate::topology::stratum::InvalidateCache> =
+            Box::new(InMemorySieve::<u8, ()>::new());
         s.invalidate_cache();
     }
 
@@ -464,8 +536,14 @@ mod tests {
         impl Sieve for BadSieve {
             type Point = u32;
             type Payload = ();
-            type ConeIter<'a> = std::vec::IntoIter<(u32, ())> where Self: 'a;
-            type SupportIter<'a> = std::vec::IntoIter<(u32, ())> where Self: 'a;
+            type ConeIter<'a>
+                = std::vec::IntoIter<(u32, ())>
+            where
+                Self: 'a;
+            type SupportIter<'a>
+                = std::vec::IntoIter<(u32, ())>
+            where
+                Self: 'a;
             fn cone<'a>(&'a self, _p: u32) -> Self::ConeIter<'a> {
                 // Return empty, so compute_strata sees no points and returns Ok
                 vec![].into_iter()
@@ -473,8 +551,12 @@ mod tests {
             fn support<'a>(&'a self, _p: u32) -> Self::SupportIter<'a> {
                 vec![].into_iter()
             }
-            fn add_arrow(&mut self, _src: u32, _dst: u32, _payload: ()) { unimplemented!() }
-            fn remove_arrow(&mut self, _src: u32, _dst: u32) -> Option<()> { unimplemented!() }
+            fn add_arrow(&mut self, _src: u32, _dst: u32, _payload: ()) {
+                unimplemented!()
+            }
+            fn remove_arrow(&mut self, _src: u32, _dst: u32) -> Option<()> {
+                unimplemented!()
+            }
             fn base_points<'a>(&'a self) -> Box<dyn Iterator<Item = u32> + 'a> {
                 Box::new([].iter().copied())
             }
@@ -521,12 +603,23 @@ mod sieve_strata_default_tests {
     impl Sieve for TrivialSieve {
         type Point = u32;
         type Payload = ();
-        type ConeIter<'a> = std::iter::Map<std::slice::Iter<'a, u32>, fn(&u32) -> (u32, ())> where Self: 'a;
-        type SupportIter<'a> = Box<dyn Iterator<Item = (u32, ())> + 'a> where Self: 'a;
+        type ConeIter<'a>
+            = std::iter::Map<std::slice::Iter<'a, u32>, fn(&u32) -> (u32, ())>
+        where
+            Self: 'a;
+        type SupportIter<'a>
+            = Box<dyn Iterator<Item = (u32, ())> + 'a>
+        where
+            Self: 'a;
         fn cone<'a>(&'a self, p: u32) -> Self::ConeIter<'a> {
-            fn map_fn(x: &u32) -> (u32, ()) { (*x, ()) }
+            fn map_fn(x: &u32) -> (u32, ()) {
+                (*x, ())
+            }
             let f: fn(&u32) -> (u32, ()) = map_fn;
-            self.edges.get(&p).map(|v| v.iter().map(f)).unwrap_or_else(|| [].iter().map(f))
+            self.edges
+                .get(&p)
+                .map(|v| v.iter().map(f))
+                .unwrap_or_else(|| [].iter().map(f))
         }
         fn support<'a>(&'a self, p: u32) -> Self::SupportIter<'a> {
             let mut preds = Vec::new();
@@ -537,8 +630,12 @@ mod sieve_strata_default_tests {
             }
             Box::new(preds.into_iter().map(|src| (src, ())))
         }
-        fn add_arrow(&mut self, _src: u32, _dst: u32, _payload: ()) { unimplemented!() }
-        fn remove_arrow(&mut self, _src: u32, _dst: u32) -> Option<()> { unimplemented!() }
+        fn add_arrow(&mut self, _src: u32, _dst: u32, _payload: ()) {
+            unimplemented!()
+        }
+        fn remove_arrow(&mut self, _src: u32, _dst: u32) -> Option<()> {
+            unimplemented!()
+        }
         fn base_points<'a>(&'a self) -> Box<dyn Iterator<Item = u32> + 'a> {
             Box::new(self.edges.keys().copied())
         }
