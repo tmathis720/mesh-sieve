@@ -23,111 +23,183 @@ Add to `Cargo.toml`:
 mesh-sieve = "1.0"
 
 # Optional features:
+# - mpi-support: MPI backend for distributed runs
+# - metis-support: METIS partitioning helpers
 # mesh-sieve = { version = "1.0", features = ["mpi-support", "metis-support"] }
-```
+````
 
 **Simple example:**
+
 ```rust
 use mesh_sieve::topology::sieve::InMemorySieve;
+use mesh_sieve::topology::sieve::Sieve;
 use mesh_sieve::topology::point::PointId;
 
 let mut sieve = InMemorySieve::default();
 let p1 = PointId::new(1).unwrap();
 let p2 = PointId::new(2).unwrap();
 
-// Add incidence relation
+// Add incidence relation p1 -> p2
 sieve.add_arrow(p1, p2, ());
 
-// Query topology
-for cap in sieve.cone(p1) {
-    println!("Point {} connects to {}", p1.get(), cap.get());
+// Query topology (point-only iteration avoids payload clones)
+for q in sieve.cone_points(p1) {
+    println!("{} -> {}", p1.get(), q.get());
 }
 
-// Compute strata
-if let Ok(strata) = sieve.compute_strata() {
-    println!("Height of point {}: {:?}", p1.get(), strata.height(p1));
-}
+// Strata queries (computed lazily; errors on cycles)
+println!("height({}): {:?}", p2.get(), sieve.height(p2));
+println!("depth({}): {:?}", p1.get(), sieve.depth(p1));
+println!("diameter():  {:?}", sieve.diameter());
 ```
 
 ## 3. Core Topology: Sieves
 
 ### 3.1. The `Sieve` Trait
 
-**Basic incidence operations:**
-- `cone(p)`: Iterator over points directly incident to `p` (downward arrows)
-- `support(p)`: Iterator over points having `p` in their cone (upward arrows)  
-- `add_arrow(src, dst, payload)`: Add incidence relation
-- `remove_arrow(src, dst)`: Remove incidence relation
+**Basic incidence operations**
+
+* `cone(p) -> Iterator<Item=(Point, Payload)>`
+* `support(p) -> Iterator<Item=(Point, Payload)>`
+* `add_arrow(src, dst, payload)`
+* `remove_arrow(src, dst) -> Option<Payload>`
+
+**Point-only adapters (preferred in hot paths)**
+
+* `cone_points(p) -> Iterator<Item=Point>`
+* `support_points(p) -> Iterator<Item=Point>`
+
+Most algorithms should use the point-only adapters to avoid cloning payloads.
 
 ```rust
-// Build triangle: vertex → edge → face
-sieve.add_arrow(face, edge1, ());
-sieve.add_arrow(face, edge2, ());
-sieve.add_arrow(edge1, vertex1, ());
-sieve.add_arrow(edge1, vertex2, ());
+// Build triangle: face -> edges -> vertices
+sieve.add_arrow(face, e1, ());
+sieve.add_arrow(face, e2, ());
+sieve.add_arrow(e1, v1, ());
+sieve.add_arrow(e1, v2, ());
+
+// Point-only iteration
+for v in sieve.cone_points(e1) {
+    // v1, v2
+}
 ```
 
-**Point iteration:**
-- `base_points()`: Higher-dimensional entities (cells, faces)
-- `cap_points()`: Lower-dimensional entities (vertices, edges)
-- `points()`: All points in the sieve
+**Point iteration**
 
-**Traversal methods:**
-- `closure(p)`: All points reachable from `p` by following cones
-- `star(p)`: All points that can reach `p` by following supports
-- `closure_both(p)`: Bidirectional closure combining cone/support paths
+* `base_points()`, `cap_points()`, `points()`
 
-**Lattice operations:**
-- `meet(a, b)`: Intersection of closures (minimal separator)
-- `join(a, b)`: Union of stars (maximal encompassing set)
+**Traversal methods**
 
-**Covering interface:**
-- `add_point(p)`, `remove_point(p)`: Manage individual points
-- `set_cone(p, iter)`: Replace cone of `p` with new points
-- `add_cone(p, iter)`: Add points to existing cone
-- `restrict_base(iter)`, `restrict_cap(iter)`: Filter to subset
+* Boxed, compatibility layer:
+
+  * `closure(seeds)`, `star(seeds)`, `closure_both(seeds)`
+* Concrete, zero dyn-dispatch:
+
+  * `closure_iter(seeds)`, `star_iter(seeds)`, `closure_both_iter(seeds)`
+
+```rust
+// Prefer concrete iterators in performance-sensitive code:
+let reach: Vec<_> = sieve.closure_iter([p]).collect();
+```
+
+**Lattice operations (minimal semantics)**
+
+* `meet(a, b)`: minimal shared sub-entities in `closure(a) ∩ closure(b)`
+* `join(a, b)`: minimal cofaces from `star(a) ∪ star(b)`
+
+Both return sorted & deduplicated minimal sets (no element contains another under the respective reachability).
+
+**Covering & updates**
+
+* `add_point(p)`, `remove_point(p)`
+* `set_cone(p, iter)`, `add_cone(p, iter)`
+* `set_support(q, iter)`, `add_support(q, iter)`
+* `restrict_base(iter)`, `restrict_cap(iter)`
+
+**Preallocation hints (new)**
+
+* `reserve_cone(p, additional)`
+* `reserve_support(q, additional)`
+
+Implementations may use these to reduce reallocations during bulk edits.
 
 ### 3.2. `InMemorySieve<P, Payload>`
 
-Primary implementation storing adjacency as hash maps:
+Primary implementation storing adjacency in hash maps. Mirrors stay consistent with **degree-local** updates:
+
+* `set_cone` / `set_support` update only mirrors of the touched point
+* `add_cone` / `add_support` incrementally update both directions
+* `reserve_cone` / `reserve_support` help preallocate
 
 ```rust
-use mesh_sieve::topology::sieve::InMemorySieve;
+use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
 use mesh_sieve::topology::point::PointId;
 
-let mut sieve = InMemorySieve::<PointId, ()>::default();
-sieve.add_arrow(PointId::new(1).unwrap(), PointId::new(2).unwrap(), ());
+let mut s = InMemorySieve::<PointId, ()>::default();
+let a = PointId::new(1).unwrap();
+let b = PointId::new(2).unwrap();
 
-// Construction from arrows
-let arrows = vec![
-    (PointId::new(1).unwrap(), PointId::new(2).unwrap(), ()),
-    (PointId::new(2).unwrap(), PointId::new(3).unwrap(), ()),
-];
-let sieve = InMemorySieve::from_arrows(arrows);
+s.reserve_cone(a, 4);
+s.add_cone(a, [(b, ())]);
 ```
 
-Features automatic caching of derived data (strata, heights) with invalidation on mutation.
+## 4. Traversal & Completion
 
-## 4. Strata & Derived Data
+### 4.1. Local traversals
+
+* `closure_iter(seeds)` / `star_iter(seeds)` / `closure_both_iter(seeds)`
+* `closure()` / `star()` / `closure_both()` keep the legacy boxed API
+
+### 4.2. Distributed closures via completion (new)
+
+Run closure across partitions by fetching missing adjacency over an **Overlap** using a **Communicator** and fusing the result locally.
+
+* `closure_completed(sieve, seeds, overlap, comm, my_rank, policy) -> Vec<Point>`
+
+**Policy**
+
+* Direction: `Cone`, `Support`, or `Both`
+* Timing: `Pre` (prefetch up to a depth) or `OnDemand` (fetch when needed)
+* Batch size for on-demand requests
+
+```rust
+use mesh_sieve::algs::traversal::{closure_completed, CompletionPolicy};
+use mesh_sieve::overlap::overlap::Overlap;
+use mesh_sieve::algs::communicator::NoComm; // or RayonComm/MpiComm
+
+let mut local = InMemorySieve::<PointId,()>::default();
+let overlap: Overlap = InMemorySieve::default();
+
+// ... fill local & overlap ...
+
+let comm = NoComm;
+let seeds = [PointId::new(42).unwrap()];
+let policy = CompletionPolicy::cone_ondemand();
+let global_reach = closure_completed(&mut local, seeds, &overlap, &comm, 0, policy);
+```
+
+## 5. Strata & Derived Data
 
 `StrataCache` stores computed topological information:
-- **Heights:** Downward distance to cap points
-- **Depths:** Upward distance to base points  
-- **Strata layers:** Points grouped by height/depth
-- **Diameter:** Maximum distance between any two points
 
-**Computing strata:**
-```rust
-let strata = sieve.compute_strata()?;
-println!("Height of point {}: {:?}", point.get(), strata.height(point));
-println!("Depth of point {}: {:?}", point.get(), strata.depth(point));
-```
+* **Heights:** distance from sources (downward)
+* **Depths:** distance to sinks (upward)
+* **Strata layers:** points grouped by height
+* **Diameter:** maximum height
 
-Caches are automatically invalidated on sieve mutations and lazily recomputed when needed.
+**Queries on `Sieve`**
 
-## 5. Stacks: Vertical Composition
+* `height(p) -> Result<u32, MeshSieveError>`
+* `depth(p) -> Result<u32, MeshSieveError>`
+* `diameter() -> Result<u32, MeshSieveError>`
+* `height_stratum(k) -> Iterator<Point>`
+* `depth_stratum(k) -> Iterator<Point>`
 
-The `Stack` trait models vertical relationships between "base" and "cap" sieves:
+Caches invalidate on mutation and recompute lazily.
+
+## 6. Stacks: Vertical Composition
+
+The `Stack` trait models vertical relationships between "base" and "cap" sieves.
 
 ```rust
 use mesh_sieve::topology::stack::InMemoryStack;
@@ -136,256 +208,171 @@ use mesh_sieve::topology::point::PointId;
 let mut stack = InMemoryStack::new();
 let base = PointId::new(1).unwrap();
 let cap1 = PointId::new(10).unwrap();
-let cap2 = PointId::new(11).unwrap();
 
-// Add vertical arrows
 stack.add_arrow(base, cap1, ());
-stack.add_arrow(base, cap2, ());
-
-// Query relationships
-for (cap, _payload) in stack.lift(base) {
-    println!("Base {} lifts to cap {}", base.get(), cap.get());
+for (cap, _) in stack.lift(base) {
+    println!("{} ↑ {}", base.get(), cap.get());
 }
 ```
 
-**Key methods:**
-- `lift(base)`: Iterator over caps above a base point
-- `drop(cap)`: Base point below a cap point
-- `add_arrow(base, cap, payload)`: Add vertical relation
-- `base()`, `cap()`: Access underlying sieves
+Key methods: `lift`, `drop`, `add_arrow`, `base()`, `cap()`.
+Composed stacks enable multi-level hierarchies.
 
-**Composed stacks** chain multiple levels:
-```rust
-use mesh_sieve::topology::stack::ComposedStack;
-let composed = ComposedStack::new(stack1, stack2);
-// lift/drop operations traverse both levels
-```
+## 7. Field Data: Atlas & Section
 
-## 6. Field Data: Atlas & Section
+**Atlas** declares layout (sparse, per-point lengths).
+**Section<V>** stores values over an Atlas.
 
-**Atlas** maps points to data layout:
 ```rust
 use mesh_sieve::data::atlas::Atlas;
+use mesh_sieve::data::section::Section;
 use mesh_sieve::topology::point::PointId;
 
+let p = PointId::new(1).unwrap();
 let mut atlas = Atlas::default();
-let p1 = PointId::new(1).unwrap();
-atlas.try_insert(p1, 3).unwrap(); // Point p1 has 3 values
+atlas.try_insert(p, 3).unwrap();
 
-// Query layout
-if let Some((offset, len)) = atlas.get(p1) {
-    println!("Point {} at offset {}, length {}", p1.get(), offset, len);
-}
+let mut sec = Section::<f64>::new(atlas);
+sec.try_set(p, &[1.0,2.0,3.0]).unwrap();
+
+let vals = sec.try_restrict(p).unwrap(); // &[f64]
 ```
 
-**Section** stores field data:
-```rust
-use mesh_sieve::data::section::Section;
+All accessors are error-safe (`Result<..>`). Deprecated `restrict/set/insert` variants exist for compatibility.
 
-let mut section = Section::<f64>::new(atlas);
-section.try_set(p1, &[1.0, 2.0, 3.0]).unwrap();
-
-// Access data
-let values = section.try_restrict(p1).unwrap();
-println!("Values: {:?}", values);
-
-// Mutable access
-let values_mut = section.try_restrict_mut(p1).unwrap();
-values_mut[0] = 42.0;
-```
-
-**Error-safe API:**
-All methods return `Result` types. Deprecated panic-free versions (marked `#[deprecated]`) are available for compatibility:
-- `try_restrict` vs deprecated `restrict`
-- `try_set` vs deprecated `set`
-- `try_insert` vs deprecated `insert`
-
-## 7. Data Refinement & Assembly
-
-**The `Delta<V>` trait** defines data transformations:
-```rust
-pub trait Delta<V> {
-    type Part;
-    fn restrict(&self, v: &V) -> Self::Part;
-    fn fuse(local: &mut V, incoming: Self::Part);
-}
-```
-
-**Built-in implementations:**
-- `CopyDelta`: Direct copy without transformation
-- `AddDelta`: Sum values for assembly operations
-- `Orientation`: Handle sign/permutation changes
-
-**Bundle** combines topology + data for workflows:
-```rust
-use mesh_sieve::data::bundle::Bundle;
-use mesh_sieve::overlap::delta::CopyDelta;
-
-let bundle = Bundle {
-    stack,        // InMemoryStack
-    section,      // Section<V>  
-    delta: CopyDelta,
-};
-
-// Push data down (base → cap)
-bundle.refine([base_point]).unwrap();
-
-// Pull data up (cap → base)  
-bundle.assemble([base_point]).unwrap();
-```
-
-**SievedArray** provides refinement-specific data structures:
-```rust
-use mesh_sieve::data::refine::sieved_array::SievedArray;
-
-let mut coarse = SievedArray::new(coarse_atlas);
-let mut fine = SievedArray::new(fine_atlas);
-
-// Refine from coarse to fine
-fine.try_refine(&coarse, &refinement_map).unwrap();
-
-// Assemble from fine to coarse  
-fine.try_assemble(&mut coarse, &refinement_map).unwrap();
-```
+**Delta<V>** defines how to restrict/fuse values during exchange.
+Built-ins: `CopyDelta` (clone/overwrite), others may be provided for additive/assembly semantics.
 
 ## 8. Partitioning & METIS Integration
 
-**Graph partitioning** with METIS support:
-```rust
-#[cfg(feature = "metis-support")]
-{
-    use mesh_sieve::algs::metis_partition::DualGraph;
-    
-    let dual_graph = DualGraph {
-        vwgt: vec![1; n_vertices],   // vertex weights
-        xadj: vec![...],             // adjacency offsets  
-        adjncy: vec![...],           // adjacency list
-    };
-    
-    let partition = dual_graph.metis_partition(n_parts);
-    for (vertex, part) in partition.iter() {
-        println!("Vertex {} assigned to partition {}", vertex, part);
-    }
-}
-```
+With `metis-support`, you can build a dual graph and run METIS to partition cells.
+Use `distribute_mesh` (with a `Communicator`) to construct the local submesh and its `Overlap`.
 
-**Distribute mesh** across processes:
 ```rust
 #[cfg(feature = "mpi-support")]
 {
     use mesh_sieve::algs::distribute::distribute_mesh;
-    
-    let (local_sieve, overlap) = distribute_mesh(
-        &global_sieve,
-        &partition_assignment,
-        &comm
-    ).unwrap();
+    let (local, overlap) = distribute_mesh(&global, &partition, &comm).unwrap();
 }
 ```
 
-## 9. Parallel Computing & MPI
+## 9. Parallel Computing
 
-**Overlap** tracks shared points between partitions:
+### 9.1. Communicators
+
+`Communicator` abstracts non-blocking send/recv:
+
+* **NoComm**: serial/testing
+* **RayonComm**: in-process “ranks” (threads)
+* **MpiComm** *(feature `mpi-support`)*: real MPI
+
+```rust
+use mesh_sieve::algs::communicator::{Communicator, NoComm};
+
+let comm = NoComm;
+let send = comm.isend(0, 0xCAFE, &[1,2,3,4]);
+let mut buf = [0u8; 4];
+let recv = comm.irecv(0, 0xCAFE, &mut buf);
+
+let _ = send.wait();
+let got = recv.wait().unwrap();
+```
+
+### 9.2. Overlap
+
+An `Overlap` is a `Sieve<PointId, Remote>` describing sharing:
+`local_point ──(Remote{rank, remote_point})──▶ partition_point(rank)`
+
 ```rust
 use mesh_sieve::overlap::overlap::{Overlap, Remote};
-
-let mut overlap = Overlap::default();
-overlap.add_arrow(
-    local_point,
-    remote_partition_point, 
-    Remote { rank: remote_rank, remote_point }
-);
+let mut ovlp = Overlap::default();
+ovlp.add_arrow(local_p, remote_partition_pt, Remote { rank: nbr, remote_point: remote_p });
 ```
 
-**Communicators** abstract parallel communication:
-```rust
-use mesh_sieve::algs::communicator::{Communicator, NoComm, MpiComm};
+### 9.3. Completion Algorithms
 
-// Serial/testing
-let comm = NoComm;
+* **Sieve completion (topology):**
 
-// MPI distributed 
-#[cfg(feature = "mpi-support")]
-let comm = MpiComm::default();
+  * `complete_sieve(&mut overlap, &overlap_clone, &comm, my_rank)`
+  * `complete_sieve_until_converged(..)`
+  * Preserves `Remote { rank, remote_point }` exactly.
 
-// Non-blocking send/receive
-let send_handle = comm.isend(target_rank, tag, &data);
-let recv_handle = comm.irecv(source_rank, tag, &mut buffer);
-```
+* **Section completion (data):**
 
-**Completion algorithms** synchronize distributed data:
-```rust
-use mesh_sieve::algs::completion::{complete_sieve, complete_section, complete_stack};
+  * `neighbour_links(&section, &overlap, my_rank) -> map<rank, (send_loc, recv_loc)>`
+  * `exchange_sizes_symmetric(..)` then `exchange_data_symmetric::<V, D, _>(..)`
+  * `complete_section::<V, D, _>(&mut section, &mut overlap, &comm, &delta, my_rank, n_ranks)`
 
-// Complete topology
-complete_sieve(&mut local_sieve, &overlap, &comm, my_rank).unwrap();
+* **Stack completion (vertical):**
 
-// Complete field data  
-complete_section(&mut section, &mut overlap, &comm, &delta, my_rank, n_ranks).unwrap();
+  * `complete_stack(&mut stack, &overlap, &comm, my_rank, n_ranks)`
 
-// Complete vertical composition
-complete_stack(&mut stack, &overlap, &comm, my_rank, n_ranks).unwrap();
-```
+All routines use symmetric handshakes and return `Result<(), MeshSieveError>`.
 
-**Error handling:** All completion functions return `Result<(), MeshSieveError>` for robust error handling in distributed environments.
+## 10. Adjacency & Lattice Helpers
 
-## 10. Error Handling & Best Practices
+**Neighbor queries**
 
-**Error-safe API design:**
-- Modern API uses `Result<T, MeshSieveError>` for all fallible operations
-- Deprecated methods marked with `#[deprecated]` may panic (use `try_*` variants)
-- Comprehensive error types for topology, communication, and data access failures
+* `adjacent(&mut sieve, p) -> Vec<Point>`: cell-to-cell by shared face
+* `adjacent_with(&mut sieve, p, policy)`: select composition policy (e.g., face-to-volume)
 
-**Performance considerations:**
-- Automatic cache invalidation on mutations ensures correctness
-- For batch operations, explicit cache management may improve performance
-- Use `bytemuck`-compatible types for efficient MPI serialization
-- Choose appropriate communicator: `NoComm` (serial), `RayonComm` (threads), `MpiComm` (distributed)
+**Meet/Join minimality**
+Results are sorted, deduped, and minimal/maximal as appropriate.
 
-**Memory safety:**
-- All operations use safe Rust patterns (`Arc`, `Vec`, `HashMap`)
-- Zero-cost abstractions through generics and trait objects
-- Automatic cleanup prevents buffer leaks in distributed operations
+## 11. Error Handling & Best Practices
 
-## 11. Examples & Testing
+* All fallible operations return `Result<T, MeshSieveError>`.
+* Traversals use point-only adapters to avoid payload cloning.
+* Mutations are **degree-local**; call `reserve_cone`/`reserve_support` before bulk edits.
+* For large traversals, prefer concrete iterators (`*_iter`) over boxed variants.
+* For distributed runs, keep tag ranges distinct per algorithm (e.g., sieve/section/closure).
 
-**Running examples:**
+## 12. Examples & Testing
+
+**Run examples**
+
 ```bash
-# Serial examples
+# Serial
 cargo run --example partition
 
-# MPI examples (requires mpi-support feature)
+# MPI (requires feature)
 cargo mpirun -n 4 --features mpi-support --example mpi_complete
-cargo mpirun -n 2 --features mpi-support --example mpi_complete_stack
 ```
 
-**Key examples:**
-- `mpi_complete.rs`: Two-rank section completion
-- `mpi_complete_stack.rs`: Stack completion across ranks  
-- `mpi_partition_exchange.rs`: 4-rank partitioning and data exchange
-- `distribute_mpi.rs`: Mesh distribution example
+**Key examples**
 
-**Testing:** Each module includes comprehensive unit tests covering topology operations, data access, refinement logic, and parallel communication patterns.
+* `mpi_complete.rs`: section completion across ranks
+* `mpi_complete_stack.rs`: stack completion
+* `distribute_mpi.rs`: mesh distribution
+* `closure_completed.rs`: distributed closures via completion
 
-## 12. API Reference
+**Testing**
+Unit tests cover topology, traversal parity (boxed vs. concrete), degree-local updates, completion handshakes, and error propagation.
 
-**Core traits and types:**
+## 13. API Reference (At a Glance)
 
-| Component | Key Methods | Purpose |
-|-----------|-------------|---------|
-| `Sieve` | `cone`, `support`, `add_arrow`, `closure`, `star` | Mesh topology queries/mutations |
-| `Stack` | `lift`, `drop`, `add_arrow` | Vertical composition |
-| `Atlas` | `try_insert`, `get`, `points` | Point-to-data mapping |
-| `Section<V>` | `try_restrict`, `try_restrict_mut`, `try_set` | Field data access |
-| `Delta<V>` | `restrict`, `fuse` | Data transformation |
-| `Communicator` | `isend`, `irecv`, `rank`, `size` | Parallel communication |
+| Component      | Key Methods                                                                 | Purpose                   |
+| -------------- | --------------------------------------------------------------------------- | ------------------------- |
+| `Sieve`        | `cone(_), support(_)`, `cone_points(_), support_points(_)`, `*_iter`        | Mesh topology & traversal |
+| `Stack`        | `lift(_), drop(_)`                                                          | Vertical composition      |
+| `Atlas`        | `try_insert, get`                                                           | Layout                    |
+| `Section<V>`   | `try_restrict(_), try_restrict_mut(_), try_set(_)`                          | Field data                |
+| `Delta<V>`     | `restrict, fuse`                                                            | Exchange semantics        |
+| `Communicator` | `isend, irecv, rank, size, barrier`                                         | Parallel comms            |
+| Completion     | `complete_sieve`, `complete_section`, `complete_stack`, `closure_completed` | Sync topology & data      |
 
-**Typical signatures:**
+**Common signatures**
+
 ```rust
-fn cone(&self, p: PointId) -> impl Iterator<Item = (PointId, &Payload)>
-fn try_restrict(&self, p: PointId) -> Result<&[V], MeshSieveError>  
-fn try_insert(&mut self, p: PointId, len: usize) -> Result<(), MeshSieveError>
-fn complete_sieve<C: Communicator>(sieve: &mut InMemorySieve<PointId, Remote>, 
-                                  overlap: &Overlap, comm: &C, my_rank: usize) 
-                                  -> Result<(), MeshSieveError>
+fn cone_points(&self, p: PointId) -> impl Iterator<Item=PointId>;
+fn closure_iter<'a,I>(&'a self, seeds: I) -> impl Iterator<Item=PointId>
+  where I: IntoIterator<Item=PointId>;
+
+fn height(&mut self, p: PointId) -> Result<u32, MeshSieveError>;
+fn complete_section<V,D,C>(section: &mut Section<V>, overlap: &mut Overlap, comm: &C,
+                           delta: &D, my_rank: usize, n_ranks: usize) -> Result<(), MeshSieveError>;
+
+fn closure_completed<S,C,I>(sieve: &mut S, seeds: I, overlap: &Overlap, comm: &C,
+                            my_rank: usize, policy: CompletionPolicy) -> Vec<PointId>
+  where S: Sieve<Point=PointId>;
 ```
