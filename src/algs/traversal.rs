@@ -1,10 +1,12 @@
 //! DFS/BFS traversal helpers for Sieve topologies.
 
 use crate::mesh_error::MeshSieveError;
+use crate::overlap::overlap::Overlap;
 use crate::topology::point::PointId;
-use crate::topology::sieve::Sieve;
 use crate::topology::sieve::strata::compute_strata;
-use std::collections::{HashSet, VecDeque};
+use crate::topology::sieve::Sieve;
+use crate::topology::stratum::InvalidateCache;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 pub type Point = PointId;
 
@@ -169,6 +171,15 @@ where
         .run()
 }
 
+/// Alias for local closure without communication.
+pub fn closure_local<I, S>(sieve: &S, seeds: I) -> Vec<Point>
+where
+    S: Sieve<Point = Point>,
+    I: IntoIterator<Item = Point>,
+{
+    closure(sieve, seeds)
+}
+
 /// Complete transitive star following `support` arrows.
 pub fn star<I, S>(sieve: &S, seeds: I) -> Vec<Point>
 where
@@ -219,6 +230,150 @@ pub fn depth_map<S: Sieve<Point = Point>>(sieve: &S, seed: Point) -> Vec<(Point,
         .collect();
     v.sort_by_key(|&(p, _)| p);
     v
+}
+
+/// Completion type for `closure_completed`.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum CompletionKind {
+    Cone,
+    Support,
+    Both,
+}
+
+/// When to perform completion.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum CompletionTiming {
+    Pre,
+    OnDemand,
+}
+
+/// Policy controlling distributed closure completion.
+#[derive(Copy, Clone, Debug)]
+pub struct CompletionPolicy {
+    pub kind: CompletionKind,
+    pub timing: CompletionTiming,
+    pub batch: usize,
+    pub depth_limit: Option<u32>,
+}
+
+impl CompletionPolicy {
+    pub fn cone_ondemand() -> Self {
+        Self {
+            kind: CompletionKind::Cone,
+            timing: CompletionTiming::OnDemand,
+            batch: 128,
+            depth_limit: None,
+        }
+    }
+    pub fn cone_pre(depth: Option<u32>) -> Self {
+        Self {
+            kind: CompletionKind::Cone,
+            timing: CompletionTiming::Pre,
+            batch: 0,
+            depth_limit: depth,
+        }
+    }
+}
+
+/// Completed transitive closure on a partitioned mesh. Fetches missing
+/// cones/supports for remote frontier points according to `policy`.
+pub fn closure_completed<S, C, I>(
+    sieve: &mut S,
+    seeds: I,
+    overlap: &Overlap,
+    comm: &C,
+    my_rank: usize,
+    policy: CompletionPolicy,
+) -> Vec<Point>
+where
+    S: Sieve<Point = Point> + InvalidateCache,
+    S::Payload: Default + Clone,
+    I: IntoIterator<Item = Point>,
+    C: crate::algs::communicator::Communicator + Sync,
+{
+    use crate::algs::completion::closure_fetch::{fetch_adjacency, ReqKind};
+
+    const TAG: u16 = 0xA100;
+
+    let mut fuse = |adj: &HashMap<Point, Vec<Point>>| {
+        for (&src, dsts) in adj {
+            for &dst in dsts {
+                sieve.add_arrow(src, dst, Default::default());
+            }
+        }
+        sieve.invalidate_cache();
+    };
+
+    if matches!(policy.timing, CompletionTiming::Pre)
+        && matches!(policy.kind, CompletionKind::Cone | CompletionKind::Both)
+    {
+        let mut q: VecDeque<(Point, u32)> = seeds.into_iter().map(|p| (p, 0)).collect();
+        let mut seen = HashSet::new();
+        let mut by_owner: HashMap<usize, Vec<Point>> = HashMap::new();
+        while let Some((p, d)) = q.pop_front() {
+            if !seen.insert(p) {
+                continue;
+            }
+            if policy.depth_limit.map_or(true, |L| d < L) {
+                for (qpt, _) in sieve.cone(p) {
+                    q.push_back((qpt, d + 1));
+                }
+            }
+            if let Some(owner) = overlap.cone(p).find_map(|(_, r)| Some(r.rank)) {
+                if owner != my_rank {
+                    by_owner.entry(owner).or_default().push(p);
+                }
+            }
+        }
+        if !by_owner.is_empty() {
+            if let Ok(adj) = fetch_adjacency(&by_owner, ReqKind::Cone, comm, TAG) {
+                fuse(&adj);
+            }
+        }
+    }
+
+    let mut stack: Vec<Point> = seeds.into_iter().collect();
+    let mut seen: HashSet<Point> = stack.iter().copied().collect();
+    let mut batch: HashMap<usize, Vec<Point>> = HashMap::new();
+
+    while let Some(p) = stack.pop() {
+        let mut advanced = false;
+        for (qpt, _) in sieve.cone(p) {
+            if seen.insert(qpt) {
+                stack.push(qpt);
+                advanced = true;
+            }
+        }
+
+        if !advanced && matches!(policy.kind, CompletionKind::Cone | CompletionKind::Both) {
+            if let Some(owner) = overlap.cone(p).find_map(|(_, r)| Some(r.rank)) {
+                if owner != my_rank {
+                    let e = batch.entry(owner).or_default();
+                    if !e.iter().any(|&x| x == p) {
+                        e.push(p);
+                    }
+                }
+            }
+        }
+
+        if policy.batch > 0 {
+            let total: usize = batch.values().map(|v| v.len()).sum();
+            if total >= policy.batch {
+                if let Ok(adj) = fetch_adjacency(&batch, ReqKind::Cone, comm, TAG) {
+                    fuse(&adj);
+                }
+                batch.clear();
+            }
+        }
+    }
+
+    if !batch.is_empty() {
+        if let Ok(adj) = fetch_adjacency(&batch, ReqKind::Cone, comm, TAG) {
+            fuse(&adj);
+        }
+    }
+
+    closure_local(sieve, seen.into_iter())
 }
 
 // --- ordered traversals using strata chart ---

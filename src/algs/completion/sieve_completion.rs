@@ -13,8 +13,8 @@ use crate::mesh_error::MeshSieveError;
 use crate::overlap::overlap::Remote;
 use crate::prelude::{Communicator, Overlap};
 use crate::topology::point::PointId;
-use crate::topology::sieve::InMemorySieve;
 use crate::topology::sieve::sieve_trait::Sieve;
+use crate::topology::sieve::InMemorySieve;
 use crate::topology::stratum::InvalidateCache;
 
 /// Packed arrow for network transport.
@@ -23,6 +23,7 @@ use crate::topology::stratum::InvalidateCache;
 struct WireTriple {
     src: u64,
     dst: u64,
+    remote_point: u64,
     rank: usize,
 }
 
@@ -50,7 +51,10 @@ pub fn complete_sieve<C: Communicator>(
         for (_d, _) in outs {
             for (_d2, rem) in overlap.cone(p) {
                 if rem.rank != my_rank {
-                    nb_links.entry(rem.rank).or_default().push((p, rem.remote_point));
+                    nb_links
+                        .entry(rem.rank)
+                        .or_default()
+                        .push((p, rem.remote_point));
                 }
             }
         }
@@ -59,7 +63,10 @@ pub fn complete_sieve<C: Communicator>(
         let me_pt = crate::algs::completion::partition_point(my_rank);
         for (src, rem) in overlap.support(me_pt) {
             if rem.rank != my_rank {
-                nb_links.entry(rem.rank).or_default().push((rem.remote_point, src));
+                nb_links
+                    .entry(rem.rank)
+                    .or_default()
+                    .push((rem.remote_point, src));
             }
         }
     }
@@ -137,6 +144,7 @@ pub fn complete_sieve<C: Communicator>(
                         triples.push(WireTriple {
                             src: src.get(),
                             dst: d.get(),
+                            remote_point: payload.remote_point.get(),
                             rank: payload.rank,
                         });
                     }
@@ -155,16 +163,37 @@ pub fn complete_sieve<C: Communicator>(
             Some(raw) if raw.len() == buffer.len() * std::mem::size_of::<WireTriple>() => {
                 let view = bytemuck::cast_slice_mut(buffer.as_mut_slice());
                 view.copy_from_slice(&raw);
-                for &WireTriple { src, dst, rank } in &buffer {
-                    match (PointId::new(src), PointId::new(dst)) {
-                        (Ok(src_pt), Ok(dst_pt)) => {
-                            let payload = Remote { rank, remote_point: dst_pt };
+                for &WireTriple {
+                    src,
+                    dst,
+                    remote_point,
+                    rank,
+                } in &buffer
+                {
+                    match (
+                        PointId::new(src),
+                        PointId::new(dst),
+                        PointId::new(remote_point),
+                    ) {
+                        (Ok(src_pt), Ok(dst_pt), Ok(rem_pt)) => {
+                            let payload = Remote {
+                                rank,
+                                remote_point: rem_pt,
+                            };
                             if inserted.insert((src_pt, dst_pt)) {
-                                sieve.adjacency_out.entry(src_pt).or_default().push((dst_pt, payload));
-                                sieve.adjacency_in.entry(dst_pt).or_default().push((src_pt, payload));
+                                sieve
+                                    .adjacency_out
+                                    .entry(src_pt)
+                                    .or_default()
+                                    .push((dst_pt, payload));
+                                sieve
+                                    .adjacency_in
+                                    .entry(dst_pt)
+                                    .or_default()
+                                    .push((src_pt, payload));
                             }
                         }
-                        (Err(e), _) | (_, Err(e)) => {
+                        (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => {
                             maybe_err.get_or_insert_with(|| MeshSieveError::MeshError(Box::new(e)));
                         }
                     }
