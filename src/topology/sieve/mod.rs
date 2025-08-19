@@ -17,6 +17,8 @@ pub mod sieve_ref;
 pub mod strata;
 /// Sieve implementation using arc payloads.
 pub mod arc_payload;
+/// Concrete traversal iterators without dynamic dispatch.
+pub mod traversal_iter;
 
 // Re-export the core trait and in‐memory impl at top level
 pub use sieve_trait::Sieve;
@@ -24,3 +26,4 @@ pub use oriented::{Orientation, OrientedSieve};
 pub use in_memory::InMemorySieve;
 pub use in_memory_oriented::InMemoryOrientedSieve;
 pub use sieve_ref::SieveRef;
+pub use traversal_iter::{ClosureBothIter, ClosureIter, StarIter};
