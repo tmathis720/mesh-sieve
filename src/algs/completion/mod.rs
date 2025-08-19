@@ -1,3 +1,4 @@
+pub mod closure_fetch;
 pub mod data_exchange;
 pub mod neighbour_links;
 pub mod section_completion;

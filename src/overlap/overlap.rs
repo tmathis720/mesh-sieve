@@ -38,18 +38,19 @@ impl Overlap {
         // Enforce closure-of-support: for each leaf in support(part_pt),
         // add closure(leaf) to the overlap if not already present.
         let leaves: Vec<_> = Sieve::support(self, part_pt).map(|(l, _)| l).collect();
+        let mut existing: std::collections::HashSet<PointId> =
+            Sieve::support(self, part_pt).map(|(src, _)| src).collect();
         for &leaf in &leaves {
             let closure: Vec<_> = Sieve::closure(self, std::iter::once(leaf)).collect();
             for q in closure {
-                // Add link q→part_pt if missing
-                if !self.cone(q).any(|(dst, _)| dst == part_pt) {
+                if existing.insert(q) {
                     Sieve::add_arrow(
                         self,
                         q,
                         part_pt,
                         Remote {
                             rank: remote_rank,
-                            remote_point: remote,
+                            remote_point: q,
                         },
                     );
                 }
@@ -83,7 +84,10 @@ impl Overlap {
                         self,
                         q,
                         partition_point(0), // dummy partition
-                        Remote { rank: 0, remote_point: q },
+                        Remote {
+                            rank: 0,
+                            remote_point: q,
+                        },
                     );
                 }
             }
@@ -141,7 +145,7 @@ mod tests {
                 // If a cycle is detected, the test setup is not suitable for diameter computation.
                 // The important part is that the cache is invalidated and no panic occurs.
                 return;
-            },
+            }
             Err(e) => panic!("Failed to compute diameter d0: {e:?}"),
         };
         ovlp.add_link(PointId::new(2).unwrap(), 2, PointId::new(201).unwrap());
@@ -158,7 +162,8 @@ mod tests {
         let mut ovlp = Overlap::default();
         ovlp.add_link(PointId::new(1).unwrap(), 1, PointId::new(101).unwrap());
         // After add_link, closure of 1 should be present
-        let closure: Vec<_> = Sieve::closure(&ovlp, std::iter::once(PointId::new(1).unwrap())).collect();
+        let closure: Vec<_> =
+            Sieve::closure(&ovlp, std::iter::once(PointId::new(1).unwrap())).collect();
         for p in closure {
             assert!(ovlp.points().any(|x| x == p));
         }
