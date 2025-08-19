@@ -43,6 +43,11 @@ pub trait OrientedSieve: Sieve {
     fn cone_o<'a>(&'a self, p: Self::Point) -> Self::ConeOIter<'a>;
 
     /// Oriented incoming incidence to `p`. Pairs `(src, orient(src->p))`.
+    ///
+    /// The orientation returned here corresponds to the stored **forward**
+    /// arrow from `src` to `p`. When traversing "upward" against that arrow
+    /// (e.g. in [`star_o`](OrientedSieve::star_o)), the orientation must be
+    /// inverted.
     fn support_o<'a>(&'a self, p: Self::Point) -> Self::SupportOIter<'a>;
 
     /// Insert an oriented arrow `src -> dst` with payload and orientation.
@@ -79,6 +84,10 @@ pub trait OrientedSieve: Sieve {
     }
 
     /// Transitive star with accumulated orientations (upward).
+    ///
+    /// Because `support_o` reports the orientation of the forward arrow
+    /// (`src -> dst`), following the arrow in reverse requires composing
+    /// with its inverse at each step.
     fn star_o<'s, I>(&'s self, seeds: I) -> Vec<(Self::Point, Self::Orient)>
     where
         I: IntoIterator<Item = Self::Point>,
@@ -91,8 +100,11 @@ pub trait OrientedSieve: Sieve {
         while let Some((p, acc)) = stack.pop() {
             if best.contains_key(&p) { continue; }
             best.insert(p, acc);
-            for (q, o) in self.support_o(p) {
-                let nxt = <Self::Orient as Orientation>::compose(acc, o);
+            for (q, o_src_p) in self.support_o(p) {
+                // Walking "up" the arrow means composing with the inverse
+                // of the stored orientation.
+                let step = <Self::Orient as Orientation>::inverse(o_src_p);
+                let nxt = <Self::Orient as Orientation>::compose(acc, step);
                 if !best.contains_key(&q) {
                     stack.push((q, nxt));
                 }
