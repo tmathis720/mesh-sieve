@@ -4,6 +4,7 @@
 //! of a sieve using hash maps for adjacency storage. It supports generic point and payload types.
 
 use super::sieve_trait::Sieve;
+use super::sieve_refs::SieveRefs;
 use crate::topology::stratum::InvalidateCache;
 use crate::topology::stratum::StrataCache;
 use once_cell::sync::OnceCell;
@@ -65,6 +66,8 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> InMemoryS
 }
 
 type ConeMapIter<'a, P, T> = std::iter::Map<std::slice::Iter<'a, (P, T)>, fn(&'a (P, T)) -> (P, T)>;
+type ConeRefMapIter<'a, P, T> =
+    std::iter::Map<std::slice::Iter<'a, (P, T)>, fn(&'a (P, T)) -> (P, &'a T)>;
 
 impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
     for InMemorySieve<P, T>
@@ -292,8 +295,37 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
     /// assert_eq!(cone, vec![(2, ()), (3, ())]);
     /// ```
     fn set_cone(&mut self, p: P, chain: impl IntoIterator<Item = (P, T)>) {
-        self.adjacency_out.insert(p, chain.into_iter().collect());
-        self.rebuild_support_from_out();
+        use std::collections::HashSet;
+
+        let new: Vec<(P, T)> = chain.into_iter().collect();
+        let new_dst: HashSet<P> = new.iter().map(|(d, _)| *d).collect();
+
+        let old = self.adjacency_out.remove(&p).unwrap_or_default();
+
+        for (dst, _) in &old {
+            if !new_dst.contains(dst) {
+                if let Some(ins) = self.adjacency_in.get_mut(dst) {
+                    if let Some(pos) = ins.iter().position(|(s, _)| *s == p) {
+                        ins.remove(pos);
+                        if ins.is_empty() {
+                            self.adjacency_in.remove(dst);
+                        }
+                    }
+                }
+            }
+        }
+
+        for (dst, pay) in &new {
+            self.adjacency_in.entry(*dst).or_default();
+            let ins = self.adjacency_in.get_mut(dst).unwrap();
+            if let Some(pos) = ins.iter().position(|(s, _)| *s == p) {
+                ins[pos] = (p, pay.clone());
+            } else {
+                ins.push((p, pay.clone()));
+            }
+        }
+
+        self.adjacency_out.insert(p, new);
         self.invalidate_cache();
     }
     /// Adds to the cone of a point, appending to any existing cone.
@@ -312,10 +344,10 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
     /// assert_eq!(cone, vec![(2, ()), (3, ())]);
     /// ```
     fn add_cone(&mut self, p: P, chain: impl IntoIterator<Item = (P, T)>) {
-        for (d, pay) in chain {
-            self.adjacency_out.entry(p).or_default().push((d, pay));
+        for (dst, pay) in chain {
+            self.adjacency_out.entry(p).or_default().push((dst, pay.clone()));
+            self.adjacency_in.entry(dst).or_default().push((p, pay));
         }
-        self.rebuild_support_from_out();
         self.invalidate_cache();
     }
     /// Sets the support for a point, replacing any existing support.
@@ -461,6 +493,33 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> InMemoryS
                     .push((src, pay.clone()));
             }
         }
+    }
+}
+
+impl<P, T> SieveRefs for InMemorySieve<P, T>
+where
+    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    T: Clone,
+{
+    type ConeRefIter<'a> = ConeRefMapIter<'a, P, T> where Self: 'a;
+    type SupportRefIter<'a> = ConeRefMapIter<'a, P, T> where Self: 'a;
+
+    fn cone_ref<'a>(&'a self, p: P) -> Self::ConeRefIter<'a> {
+        fn map_fn<P: Copy, T>((dst, pay): &(P, T)) -> (P, &T) { (*dst, pay) }
+        let f: fn(&(P, T)) -> (P, &T) = map_fn::<P, T>;
+        self.adjacency_out
+            .get(&p)
+            .map(|v| v.iter().map(f))
+            .unwrap_or_else(|| [].iter().map(f))
+    }
+
+    fn support_ref<'a>(&'a self, p: P) -> Self::SupportRefIter<'a> {
+        fn map_fn<P: Copy, T>((src, pay): &(P, T)) -> (P, &T) { (*src, pay) }
+        let f: fn(&(P, T)) -> (P, &T) = map_fn::<P, T>;
+        self.adjacency_in
+            .get(&p)
+            .map(|v| v.iter().map(f))
+            .unwrap_or_else(|| [].iter().map(f))
     }
 }
 
