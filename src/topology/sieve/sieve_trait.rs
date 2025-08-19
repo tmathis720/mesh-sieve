@@ -6,6 +6,7 @@
 
 use crate::mesh_error::MeshSieveError;
 use crate::topology::sieve::strata::compute_strata;
+use crate::topology::sieve::traversal_iter::{ClosureBothIter, ClosureIter, StarIter};
 
 pub use crate::topology::stratum::InvalidateCache;
 
@@ -89,70 +90,51 @@ where
     }
 
     // --- graph traversals ---
+    /// Concrete iterator over the transitive closure (downward) from `seeds`.
+    /// Prefer this over [`closure`] for zero-alloc traversal.
+    fn closure_iter<'s, I>(&'s self, seeds: I) -> ClosureIter<'s, Self>
+    where
+        I: IntoIterator<Item = Self::Point>,
+        Self: Sized,
+    {
+        ClosureIter::new(self, seeds)
+    }
+
+    /// Concrete iterator over the transitive star (upward) from `seeds`.
+    fn star_iter<'s, I>(&'s self, seeds: I) -> StarIter<'s, Self>
+    where
+        I: IntoIterator<Item = Self::Point>,
+        Self: Sized,
+    {
+        StarIter::new(self, seeds)
+    }
+
+    /// Concrete iterator over both directions (cone + support).
+    fn closure_both_iter<'s, I>(&'s self, seeds: I) -> ClosureBothIter<'s, Self>
+    where
+        I: IntoIterator<Item = Self::Point>,
+        Self: Sized,
+    {
+        ClosureBothIter::new(self, seeds)
+    }
+
     fn closure<'s, I>(&'s self, seeds: I) -> Box<dyn Iterator<Item = Self::Point> + 's>
     where
         I: IntoIterator<Item = Self::Point>,
     {
-        use std::collections::HashSet;
-        let mut stack: Vec<_> = seeds.into_iter().collect();
-        let mut seen: HashSet<Self::Point> = stack.iter().copied().collect();
-        Box::new(std::iter::from_fn(move || {
-            if let Some(p) = stack.pop() {
-                for (q, _) in self.cone(p) {
-                    if seen.insert(q) {
-                        stack.push(q);
-                    }
-                }
-                Some(p)
-            } else {
-                None
-            }
-        }))
+        Box::new(self.closure_iter(seeds))
     }
     fn star<'s, I>(&'s self, seeds: I) -> Box<dyn Iterator<Item = Self::Point> + 's>
     where
         I: IntoIterator<Item = Self::Point>,
     {
-        use std::collections::HashSet;
-        let mut stack: Vec<_> = seeds.into_iter().collect();
-        let mut seen: HashSet<Self::Point> = stack.iter().copied().collect();
-        Box::new(std::iter::from_fn(move || {
-            if let Some(p) = stack.pop() {
-                for (q, _) in self.support(p) {
-                    if seen.insert(q) {
-                        stack.push(q);
-                    }
-                }
-                Some(p)
-            } else {
-                None
-            }
-        }))
+        Box::new(self.star_iter(seeds))
     }
     fn closure_both<'s, I>(&'s self, seeds: I) -> Box<dyn Iterator<Item = Self::Point> + 's>
     where
         I: IntoIterator<Item = Self::Point>,
     {
-        use std::collections::HashSet;
-        let mut stack: Vec<_> = seeds.into_iter().collect();
-        let mut seen: HashSet<Self::Point> = stack.iter().copied().collect();
-        Box::new(std::iter::from_fn(move || {
-            if let Some(p) = stack.pop() {
-                for (q, _) in self.cone(p) {
-                    if seen.insert(q) {
-                        stack.push(q)
-                    }
-                }
-                for (q, _) in self.support(p) {
-                    if seen.insert(q) {
-                        stack.push(q)
-                    }
-                }
-                Some(p)
-            } else {
-                None
-            }
-        }))
+        Box::new(self.closure_both_iter(seeds))
     }
 
     // --- lattice ops ---

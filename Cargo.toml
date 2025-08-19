@@ -47,6 +47,7 @@ criterion = "0.4"
 default = []            # keep core lean
 mpi-support = ["mpi", "rayon", "rand", "ahash"]
 metis-support = ["metis", "metis-sys", "libffi-sys"]
+sieve_point_only = []
 
 
 [build-dependencies]
