@@ -480,6 +480,17 @@ where
         }
         InvalidateCache::invalidate_cache(self);
     }
+
+    /// Hint to preallocate additional space in the cone (outgoing) adjacency of `p`.
+    ///
+    /// Implementations may ignore this. It must not change the topology or invalidate caches.
+    fn reserve_cone(&mut self, _p: Self::Point, _additional: usize) {}
+
+    /// Hint to preallocate additional space in the support (incoming) adjacency of `q`.
+    ///
+    /// Implementations may ignore this. It must not change the topology or invalidate caches.
+    fn reserve_support(&mut self, _q: Self::Point, _additional: usize) {}
+
     /// Produce a new Sieve containing only the base points in `chain` (and their arrows).
     fn restrict_base(&self, chain: impl IntoIterator<Item = Self::Point>) -> Self
     where
