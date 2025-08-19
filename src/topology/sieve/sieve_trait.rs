@@ -56,13 +56,21 @@ where
 
     /// Convenience iterator over the destination points in `p`'s cone,
     /// discarding payload values.
-    fn cone_points<'a>(&'a self, p: Self::Point) -> Box<dyn Iterator<Item = Self::Point> + 'a> {
-        Box::new(self.cone(p).map(|(q, _)| q))
+    #[inline]
+    fn cone_points<'a>(&'a self, p: Self::Point) -> impl Iterator<Item = Self::Point> + 'a
+    where
+        Self: Sized,
+    {
+        self.cone(p).map(|(q, _)| q)
     }
     /// Convenience iterator over the source points in `p`'s support,
     /// discarding payload values.
-    fn support_points<'a>(&'a self, p: Self::Point) -> Box<dyn Iterator<Item = Self::Point> + 'a> {
-        Box::new(self.support(p).map(|(q, _)| q))
+    #[inline]
+    fn support_points<'a>(&'a self, p: Self::Point) -> impl Iterator<Item = Self::Point> + 'a
+    where
+        Self: Sized,
+    {
+        self.support(p).map(|(q, _)| q)
     }
 
     /// Return an iterator over **all** points in this Sieve’s domain
