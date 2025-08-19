@@ -44,7 +44,7 @@ proptest = "1.0"
 criterion = "0.4"
 
 [features]
-default = []            # keep core lean
+default = ["mpi-support","rayon"]            # keep core lean
 mpi-support = ["mpi", "rayon", "rand", "ahash"]
 metis-support = ["metis", "metis-sys", "libffi-sys"]
 
