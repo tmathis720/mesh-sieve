@@ -6,7 +6,7 @@
 
 use rayon::prelude::ParallelSliceMut;
 use std::cmp::Reverse;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Represents a “cluster” as an item to be packed into one of `k` parts.
@@ -58,6 +58,10 @@ pub fn partition_clusters(
     // 4. Prepare the output vector: cluster_id → part_id.
     let mut cluster_to_part = vec![0; n];
 
+    // Map cluster IDs to indices for quick lookup of neighbors with non-contiguous cids
+    let cid_to_index: HashMap<usize, usize> =
+        items.iter().enumerate().map(|(i, it)| (it.cid, i)).collect();
+
     // 5. Compute balance threshold
     let total_load: u64 = items.iter().map(|it| it.load).sum();
     let threshold = ((1.0 + epsilon) * (total_load as f64 / k as f64)).ceil() as u64;
@@ -67,8 +71,8 @@ pub fn partition_clusters(
         // (a) Try to place in a part containing a neighbor (adjacency-aware)
         let mut chosen_bucket = None;
         for &(nbr_cid, _) in &items[idx].adj {
-            if nbr_cid < cluster_to_part.len() {
-                let part = cluster_to_part[nbr_cid];
+            if let Some(&nbr_idx) = cid_to_index.get(&nbr_cid) {
+                let part = cluster_to_part[nbr_idx];
                 let load_b = buckets[part].load(Ordering::Relaxed);
                 if load_b + items[idx].load <= threshold {
                     chosen_bucket = Some(part);
@@ -255,6 +259,32 @@ mod tests {
         let parts = partition_clusters(&items, 2, 2.0).unwrap(); // Allow up to 3x imbalance
         assert!(parts[0] != parts[1]);
         assert!(parts[0] < 2 && parts[1] < 2);
+    }
+
+    #[test]
+    fn non_contiguous_cids() {
+        let items = vec![
+            Item {
+                cid: 10,
+                load: 5,
+                adj: vec![(20, 1)],
+            },
+            Item {
+                cid: 20,
+                load: 4,
+                adj: vec![(10, 1)],
+            },
+            Item {
+                cid: 30,
+                load: 3,
+                adj: vec![],
+            },
+        ];
+
+        let parts = partition_clusters(&items, 2, 2.0).unwrap(); // allow high imbalance
+        assert_eq!(parts.len(), 3);
+        // Items 10 and 20 reference each other by non-contiguous cids and should end up together
+        assert_eq!(parts[0], parts[1]);
     }
 
     #[test]
