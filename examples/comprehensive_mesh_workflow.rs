@@ -13,8 +13,8 @@
 //! - Error handling and robustness testing
 
 #[cfg(feature = "mpi-support")]
-
-
+use mesh_sieve::{data::bundle::Bundle, prelude::{InMemorySieve, MpiComm, PointId, Section}};
+use mesh_sieve::algs::dual_graph::build_dual;
 #[cfg(feature = "metis-support")]
 fn main() {
     use mesh_sieve::algs::communicator::{Communicator, MpiComm};
@@ -33,6 +33,7 @@ fn main() {
     use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
     use mesh_sieve::topology::stack::{InMemoryStack, Stack};
     use mesh_sieve::algs::dual_graph::build_dual;
+    use mesh_sieve::prelude::*;
 
     let comm = MpiComm::default();
     let size = comm.size();
@@ -134,6 +135,10 @@ fn main() {
 /// Build a complex tetrahedral mesh with refinement hierarchy
 #[cfg(feature = "mpi-support")]
 fn build_hierarchical_tetrahedral_mesh() -> (InMemorySieve<PointId, ()>, Vec<PointId>, InMemorySieve<PointId, ()>, Bundle<f64>) {
+    use mesh_sieve::prelude::*;
+    use mesh_sieve::prelude::Stack;
+    use mesh_sieve::topology::arrow::Orientation;
+
     println!("[rank 0] Building hierarchical tetrahedral mesh...");
     
     let mut mesh = InMemorySieve::<PointId, ()>::default();
@@ -186,9 +191,15 @@ fn build_hierarchical_tetrahedral_mesh() -> (InMemorySieve<PointId, ()>, Vec<Poi
     for (i, &face) in faces.iter().enumerate() {
         atlas.try_insert(face, 1).unwrap();
         for j in 0..3 {
+
+
             let dof_id = PointId::new(1000 + i as u64 * 10 + j as u64).unwrap();
             atlas.try_insert(dof_id, 1).unwrap();
-            let orientation = if j % 2 == 0 { Orientation::Forward } else { Orientation::Reverse };
+            let orientation = if j % 2 == 0 {
+                Orientation::Forward
+            } else {
+                Orientation::Reverse
+            };
             let _ = stack.add_arrow(face, dof_id, orientation);
             refined_mesh.add_point(dof_id);
         }
@@ -212,9 +223,12 @@ fn build_hierarchical_tetrahedral_mesh() -> (InMemorySieve<PointId, ()>, Vec<Poi
 #[cfg(feature = "mpi-support")]
 fn test_lattice_operations(mesh: &InMemorySieve<PointId, ()>, cells: &[PointId]) {
     println!("[rank 0] Testing lattice operations...");
-    
+    use mesh_sieve::prelude::*;
+
     if cells.len() >= 2 {
         // Test meet operation on shared elements
+
+        use mesh_sieve::algs::adjacent;
         let meet_result: Vec<_> = mesh.meet(cells[0], cells[1]).collect();
         println!("  meet({:?}, {:?}) = {:?}", cells[0], cells[1], meet_result);
         
@@ -245,6 +259,9 @@ fn test_lattice_operations(mesh: &InMemorySieve<PointId, ()>, cells: &[PointId])
 /// Test refinement helpers (restrict_closure, restrict_star)
 #[cfg(feature = "mpi-support")]
 fn test_refinement_helpers(mesh: &InMemorySieve<PointId, ()>, _section: &Section<f64>) {
+    use mesh_sieve::prelude::*;
+    use mesh_sieve::data::refine::*;
+
     println!("[rank 0] Testing refinement helpers...");
     
     // Create a comprehensive test section that covers all mesh points
@@ -271,6 +288,8 @@ fn test_refinement_helpers(mesh: &InMemorySieve<PointId, ()>, _section: &Section
     } else {
         for &point in &test_points {
             // Test closure restriction
+
+            
             let closure_data: Vec<_> = restrict_closure(mesh, &test_section, [point]).collect();
             let closure_vec = restrict_closure_vec(mesh, &test_section, [point]);
             assert_eq!(closure_data, closure_vec, "Closure variants should match");
@@ -292,6 +311,7 @@ fn test_refinement_helpers(mesh: &InMemorySieve<PointId, ()>, _section: &Section
 #[cfg(feature = "mpi-support")]
 fn test_stratum_computation(mesh: &InMemorySieve<PointId, ()>) {
     println!("[rank 0] Testing stratum computation...");
+    use mesh_sieve::prelude::*;
     
     // Test height and depth computations
     let test_points: Vec<_> = mesh.points().take(5).collect();
@@ -375,6 +395,9 @@ fn test_distributed_completion(
     rank: usize,
     size: usize,
 ) {
+    use mesh_sieve::algs::distribute_mesh;
+    use mesh_sieve::prelude::*;
+
     println!("[rank {}] Testing distributed completion...", rank);
     
     // Distribute the mesh
@@ -417,6 +440,8 @@ fn test_distributed_completion(
 #[cfg(feature = "mpi-support")]
 fn test_bundle_operations(rank: usize) {
     println!("[rank {}] Testing Bundle operations...", rank);
+    use mesh_sieve::prelude::*;
+    use mesh_sieve::topology::arrow::Orientation;
     
     // Create test bundle
     let mut atlas = Atlas::default();
@@ -471,6 +496,8 @@ fn test_bundle_operations(rank: usize) {
 /// Test SievedArray refinement and assembly
 #[cfg(feature = "mpi-support")]
 fn test_sieved_array_operations(rank: usize) {
+    use mesh_sieve::{data::refine::SievedArray, prelude::Atlas};
+
     println!("[rank {}] Testing SievedArray operations...", rank);
     
     // Create coarse and fine arrays
@@ -515,6 +542,8 @@ fn test_sieved_array_operations(rank: usize) {
 /// Test error handling and robustness
 #[cfg(feature = "mpi-support")]
 fn test_error_handling_robustness(rank: usize) {
+    use mesh_sieve::{overlap::delta::ZeroDelta, prelude::{Atlas, Delta, Section, Sieve}};
+
     println!("[rank {}] Testing error handling robustness...", rank);
     
     let mut atlas = Atlas::default();
@@ -568,8 +597,8 @@ fn test_error_handling_robustness(rank: usize) {
     println!("[rank {}] Error handling robustness test passed", rank);
 }
 
-#[cfg(not(feature = "mpi-support"))]
+#[cfg(not(feature = "metis-support"))]
 fn main() {
-    println!("This example requires the 'mpi-support' feature enabled.");
+    println!("This example requires the 'metis-support' feature enabled.");
     println!("Run with: cargo mpirun -n 4 --features mpi-support,metis-support --example comprehensive_mesh_workflow");
 }

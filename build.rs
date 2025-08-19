@@ -18,6 +18,7 @@ fn main() {
     use std::env;
     use std::fs::{self, read_to_string, write};
     use std::path::Path;
+    use std::thread::Builder;
 
     // ─── 1. Find METIS include/lib directories ───────────────────────────────────
     let (include_dir, _lib_dir) = if env::var_os("METIS_NO_PKG_CONFIG").is_some() {
