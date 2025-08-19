@@ -4,7 +4,7 @@
 //! of a sieve using hash maps for adjacency storage. It supports generic point and payload types.
 
 use super::sieve_trait::Sieve;
-use super::sieve_refs::SieveRefs;
+use super::sieve_ref::SieveRef;
 use crate::topology::stratum::InvalidateCache;
 use crate::topology::stratum::StrataCache;
 use once_cell::sync::OnceCell;
@@ -496,7 +496,7 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> InMemoryS
     }
 }
 
-impl<P, T> SieveRefs for InMemorySieve<P, T>
+impl<P, T> SieveRef for InMemorySieve<P, T>
 where
     P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
     T: Clone,

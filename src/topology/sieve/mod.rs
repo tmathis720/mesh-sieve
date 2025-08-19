@@ -12,7 +12,7 @@ pub mod in_memory;
 /// In-memory implementation storing per-arrow orientations.
 pub mod in_memory_oriented;
 /// Reference-returning extensions to [`Sieve`].
-pub mod sieve_refs;
+pub mod sieve_ref;
 /// Strata sieve implementation.
 pub mod strata;
 /// Sieve implementation using arc payloads.
@@ -23,4 +23,4 @@ pub use sieve_trait::Sieve;
 pub use oriented::{Orientation, OrientedSieve};
 pub use in_memory::InMemorySieve;
 pub use in_memory_oriented::InMemoryOrientedSieve;
-pub use sieve_refs::SieveRefs;
+pub use sieve_ref::SieveRef;
