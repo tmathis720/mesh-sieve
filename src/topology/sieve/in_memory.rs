@@ -5,9 +5,9 @@
 
 use super::sieve_trait::Sieve;
 use crate::topology::stratum::InvalidateCache;
+use crate::topology::stratum::StrataCache;
 use once_cell::sync::OnceCell;
 use std::collections::HashMap;
-use crate::topology::stratum::StrataCache;
 
 /// An in-memory sieve implementation using hash maps for adjacency storage.
 ///
@@ -15,19 +15,19 @@ use crate::topology::stratum::StrataCache;
 /// - `P`: The type of points in the sieve. Must implement `Ord`.
 /// - `T`: The type of payloads associated with arrows. Defaults to `()`.
 #[derive(Clone, Debug)]
-pub struct InMemorySieve<P, T=()>
+pub struct InMemorySieve<P, T = ()>
 where
     P: Ord + std::fmt::Debug,
 {
     /// Outgoing adjacency: maps each point to a vector of (destination, payload) pairs.
-    pub adjacency_out: HashMap<P, Vec<(P,T)>>,
+    pub adjacency_out: HashMap<P, Vec<(P, T)>>,
     /// Incoming adjacency: maps each point to a vector of (source, payload) pairs.
-    pub adjacency_in:  HashMap<P, Vec<(P,T)>>,
+    pub adjacency_in: HashMap<P, Vec<(P, T)>>,
     /// Cached strata information for the sieve.
     pub strata: OnceCell<StrataCache<P>>,
 }
 
-impl<P: Copy+Eq+std::hash::Hash+Ord+std::fmt::Debug, T> Default for InMemorySieve<P,T> {
+impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T> Default for InMemorySieve<P, T> {
     fn default() -> Self {
         Self {
             adjacency_out: HashMap::new(),
@@ -37,9 +37,11 @@ impl<P: Copy+Eq+std::hash::Hash+Ord+std::fmt::Debug, T> Default for InMemorySiev
     }
 }
 
-impl<P: Copy+Eq+std::hash::Hash+Ord+std::fmt::Debug, T:Clone> InMemorySieve<P,T> {
+impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> InMemorySieve<P, T> {
     /// Creates a new, empty `InMemorySieve`.
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
     /// Constructs an `InMemorySieve` from an iterator of arrows.
     ///
     /// # Example
@@ -64,11 +66,19 @@ impl<P: Copy+Eq+std::hash::Hash+Ord+std::fmt::Debug, T:Clone> InMemorySieve<P,T>
 
 type ConeMapIter<'a, P, T> = std::iter::Map<std::slice::Iter<'a, (P, T)>, fn(&'a (P, T)) -> (P, T)>;
 
-impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemorySieve<P,T> {
+impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
+    for InMemorySieve<P, T>
+{
     type Point = P;
     type Payload = T;
-    type ConeIter<'a> = ConeMapIter<'a, P, T> where Self: 'a;
-    type SupportIter<'a> = ConeMapIter<'a, P, T> where Self: 'a;
+    type ConeIter<'a>
+        = ConeMapIter<'a, P, T>
+    where
+        Self: 'a;
+    type SupportIter<'a>
+        = ConeMapIter<'a, P, T>
+    where
+        Self: 'a;
 
     /// Returns an iterator over the cone of a point.
     ///
@@ -86,9 +96,14 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// assert_eq!(cone, vec![2]);
     /// ```
     fn cone<'a>(&'a self, p: P) -> Self::ConeIter<'a> {
-        fn map_fn<P: Copy, T: Clone>((dst, pay): &(P, T)) -> (P, T) { (*dst, pay.clone()) }
+        fn map_fn<P: Copy, T: Clone>((dst, pay): &(P, T)) -> (P, T) {
+            (*dst, pay.clone())
+        }
         let f: fn(&(P, T)) -> (P, T) = map_fn::<P, T>;
-        self.adjacency_out.get(&p).map(|v| v.iter().map(f)).unwrap_or_else(|| [].iter().map(f))
+        self.adjacency_out
+            .get(&p)
+            .map(|v| v.iter().map(f))
+            .unwrap_or_else(|| [].iter().map(f))
     }
     /// Returns an iterator over the support of a point.
     ///
@@ -106,9 +121,14 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// assert_eq!(support, vec![1]);
     /// ```
     fn support<'a>(&'a self, p: P) -> Self::SupportIter<'a> {
-        fn map_fn<P: Copy, T: Clone>((src, pay): &(P, T)) -> (P, T) { (*src, pay.clone()) }
+        fn map_fn<P: Copy, T: Clone>((src, pay): &(P, T)) -> (P, T) {
+            (*src, pay.clone())
+        }
         let f: fn(&(P, T)) -> (P, T) = map_fn::<P, T>;
-        self.adjacency_in.get(&p).map(|v| v.iter().map(f)).unwrap_or_else(|| [].iter().map(f))
+        self.adjacency_in
+            .get(&p)
+            .map(|v| v.iter().map(f))
+            .unwrap_or_else(|| [].iter().map(f))
     }
     /// Adds a new arrow from `src` to `dst` with the given `payload`.
     ///
@@ -124,8 +144,14 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// assert_eq!(s.cone(1).count(), 1);
     /// ```
     fn add_arrow(&mut self, src: P, dst: P, payload: T) {
-        self.adjacency_out.entry(src).or_default().push((dst, payload.clone()));
-        self.adjacency_in.entry(dst).or_default().push((src, payload));
+        self.adjacency_out
+            .entry(src)
+            .or_default()
+            .push((dst, payload.clone()));
+        self.adjacency_in
+            .entry(dst)
+            .or_default()
+            .push((src, payload));
         self.invalidate_cache();
     }
 
@@ -265,7 +291,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// cone.sort_by_key(|(d, _)| *d);
     /// assert_eq!(cone, vec![(2, ()), (3, ())]);
     /// ```
-    fn set_cone(&mut self, p: P, chain: impl IntoIterator<Item=(P, T)>) {
+    fn set_cone(&mut self, p: P, chain: impl IntoIterator<Item = (P, T)>) {
         self.adjacency_out.insert(p, chain.into_iter().collect());
         self.rebuild_support_from_out();
         self.invalidate_cache();
@@ -285,7 +311,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// cone.sort_by_key(|(d, _)| *d);
     /// assert_eq!(cone, vec![(2, ()), (3, ())]);
     /// ```
-    fn add_cone(&mut self, p: P, chain: impl IntoIterator<Item=(P, T)>) {
+    fn add_cone(&mut self, p: P, chain: impl IntoIterator<Item = (P, T)>) {
         for (d, pay) in chain {
             self.adjacency_out.entry(p).or_default().push((d, pay));
         }
@@ -307,13 +333,16 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// support.sort_by_key(|(src, _)| *src);
     /// assert_eq!(support, vec![(1, ()), (2, ())]);
     /// ```
-    fn set_support(&mut self, q: P, chain: impl IntoIterator<Item=(P, T)>) {
+    fn set_support(&mut self, q: P, chain: impl IntoIterator<Item = (P, T)>) {
         self.adjacency_in.insert(q, chain.into_iter().collect());
         // rebuild adjacency_out from adjacency_in
         self.adjacency_out.clear();
         for (&dst, ins) in &self.adjacency_in {
             for &(src, ref pay) in ins {
-                self.adjacency_out.entry(src).or_default().push((dst, pay.clone()));
+                self.adjacency_out
+                    .entry(src)
+                    .or_default()
+                    .push((dst, pay.clone()));
             }
         }
         self.invalidate_cache();
@@ -333,9 +362,12 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// support.sort_by_key(|(src, _)| *src);
     /// assert_eq!(support, vec![(3, ())]);
     /// ```
-    fn add_support(&mut self, q: P, chain: impl IntoIterator<Item=(P, T)>) {
+    fn add_support(&mut self, q: P, chain: impl IntoIterator<Item = (P, T)>) {
         for (src, pay) in chain {
-            self.adjacency_in.entry(q).or_default().push((src, pay.clone()));
+            self.adjacency_in
+                .entry(q)
+                .or_default()
+                .push((src, pay.clone()));
             self.adjacency_out.entry(src).or_default().push((q, pay));
         }
         self.invalidate_cache();
@@ -352,7 +384,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// let restricted = s.restrict_base(vec![1, 3]);
     /// assert_eq!(restricted.cone(1).count() + restricted.cone(3).count(), 2);
     /// ```
-    fn restrict_base(&self, chain: impl IntoIterator<Item=P>) -> Self {
+    fn restrict_base(&self, chain: impl IntoIterator<Item = P>) -> Self {
         let mut out = Self::default();
         for p in chain {
             if let Some(outs) = self.adjacency_out.get(&p) {
@@ -375,7 +407,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// let restricted = s.restrict_cap(vec![2, 4]);
     /// assert_eq!(restricted.support(2).count() + restricted.support(4).count(), 2);
     /// ```
-    fn restrict_cap(&self, chain: impl IntoIterator<Item=P>) -> Self {
+    fn restrict_cap(&self, chain: impl IntoIterator<Item = P>) -> Self {
         let mut out = Self::default();
         for q in chain {
             if let Some(ins) = self.adjacency_in.get(&q) {
@@ -398,7 +430,7 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// all_points.sort();
     /// assert_eq!(all_points, vec![1, 2]);
     /// ```
-    fn base_points<'a>(&'a self) -> Box<dyn Iterator<Item=P> + 'a> {
+    fn base_points<'a>(&'a self) -> Box<dyn Iterator<Item = P> + 'a> {
         Box::new(self.adjacency_out.keys().copied())
     }
     /// Returns an iterator over all cap points in the sieve.
@@ -413,17 +445,20 @@ impl<P: Copy+Eq+std::hash::Hash+Ord + std::fmt::Debug, T:Clone> Sieve for InMemo
     /// all_caps.sort();
     /// assert_eq!(all_caps, vec![2]);
     /// ```
-    fn cap_points<'a>(&'a self) -> Box<dyn Iterator<Item=P> + 'a> {
+    fn cap_points<'a>(&'a self) -> Box<dyn Iterator<Item = P> + 'a> {
         Box::new(self.adjacency_in.keys().copied())
     }
 }
 
-impl<P: Copy+Eq+std::hash::Hash+Ord+std::fmt::Debug, T: Clone> InMemorySieve<P, T> {
+impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> InMemorySieve<P, T> {
     fn rebuild_support_from_out(&mut self) {
         self.adjacency_in.clear();
         for (&src, outs) in &self.adjacency_out {
             for &(dst, ref pay) in outs {
-                self.adjacency_in.entry(dst).or_default().push((src, pay.clone()));
+                self.adjacency_in
+                    .entry(dst)
+                    .or_default()
+                    .push((src, pay.clone()));
             }
         }
     }
@@ -438,15 +473,15 @@ mod sieve_tests {
     fn insertion_and_removal() {
         let mut s = InMemorySieve::<u32, ()>::new();
         assert_eq!(s.remove_arrow(1, 2), None);
-        s.add_arrow(1, 2,());
+        s.add_arrow(1, 2, ());
         assert_eq!(s.remove_arrow(1, 2), Some(()));
     }
 
     #[test]
     fn cone_and_support() {
         let mut s = InMemorySieve::<u32, ()>::new();
-        s.add_arrow(1, 2,());
-        s.add_arrow(2, 1,());
+        s.add_arrow(1, 2, ());
+        s.add_arrow(2, 1, ());
         let mut cone: Vec<_> = s.cone(1).map(|(d, _)| d).collect();
         cone.sort();
         assert_eq!(cone, vec![2]);
@@ -458,8 +493,8 @@ mod sieve_tests {
     #[test]
     fn closure_and_star_and_closure_both() {
         let mut s = InMemorySieve::<u32, ()>::new();
-        s.add_arrow(1, 2,());
-        s.add_arrow(2, 3,());
+        s.add_arrow(1, 2, ());
+        s.add_arrow(2, 3, ());
         // closure(1) == [1,2,3]
         let mut closure: Vec<_> = Sieve::closure(&s, [1]).collect();
         closure.sort();
@@ -477,22 +512,22 @@ mod sieve_tests {
     #[test]
     fn meet_and_join() {
         let mut s = InMemorySieve::<u32, ()>::new();
-        s.add_arrow(1, 2,());
-        s.add_arrow(2, 3,());
+        s.add_arrow(1, 2, ());
+        s.add_arrow(2, 3, ());
         let mut m: Vec<_> = s.meet(1, 2).collect();
         m.sort();
         let mut j: Vec<_> = s.join(2, 3).collect();
         j.sort();
-        // Documented behavior: meet(1,2) = [], join(2,3) = [1,2,3] for this implementation
-        assert_eq!(m, Vec::<u32>::new());
-        assert_eq!(j, vec![1, 2, 3]);
+        // Minimal separators: meet(1,2) = {2}, join(2,3) = {1}
+        assert_eq!(m, vec![2]);
+        assert_eq!(j, vec![1]);
     }
 
     #[test]
     fn points_base_points_cap_points() {
         let mut s = InMemorySieve::<u32, ()>::new();
-        s.add_arrow(1, 2,());
-        s.add_arrow(2, 3,());
+        s.add_arrow(1, 2, ());
+        s.add_arrow(2, 3, ());
         let mut all: Vec<_> = s.points().collect();
         all.sort();
         assert_eq!(all, vec![1, 2, 3]);

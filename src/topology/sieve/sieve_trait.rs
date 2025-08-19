@@ -26,13 +26,18 @@ pub use crate::topology::stratum::InvalidateCache;
 /// - Lattice operations (meet, join)
 /// - Strata helpers (height, depth, diameter)
 pub trait Sieve: Default + InvalidateCache
-    where Self::Point: Ord + std::fmt::Debug
+where
+    Self::Point: Ord + std::fmt::Debug,
 {
     type Point: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug;
     type Payload;
 
-    type ConeIter<'a>: Iterator<Item = (Self::Point, Self::Payload)> where Self: 'a;
-    type SupportIter<'a>: Iterator<Item = (Self::Point, Self::Payload)> where Self: 'a;
+    type ConeIter<'a>: Iterator<Item = (Self::Point, Self::Payload)>
+    where
+        Self: 'a;
+    type SupportIter<'a>: Iterator<Item = (Self::Point, Self::Payload)>
+    where
+        Self: 'a;
 
     /// Outgoing arrows from `p`.
     fn cone<'a>(&'a self, p: Self::Point) -> Self::ConeIter<'a>;
@@ -55,15 +60,19 @@ pub trait Sieve: Default + InvalidateCache
         use std::collections::HashSet;
         let mut set = HashSet::new();
         // collect anything with outgoing or incoming arrows
-        for p in self.base_points() { set.insert(p); }
-        for p in self.cap_points()  { set.insert(p); }
+        for p in self.base_points() {
+            set.insert(p);
+        }
+        for p in self.cap_points() {
+            set.insert(p);
+        }
         Box::new(set.into_iter())
     }
 
     // --- graph traversals ---
-    fn closure<'s, I>(&'s self, seeds: I) -> Box<dyn Iterator<Item=Self::Point> + 's>
+    fn closure<'s, I>(&'s self, seeds: I) -> Box<dyn Iterator<Item = Self::Point> + 's>
     where
-        I: IntoIterator<Item=Self::Point>,
+        I: IntoIterator<Item = Self::Point>,
     {
         use std::collections::HashSet;
         let mut stack: Vec<_> = seeds.into_iter().collect();
@@ -81,9 +90,9 @@ pub trait Sieve: Default + InvalidateCache
             }
         }))
     }
-    fn star<'s, I>(&'s self, seeds: I) -> Box<dyn Iterator<Item=Self::Point> + 's>
+    fn star<'s, I>(&'s self, seeds: I) -> Box<dyn Iterator<Item = Self::Point> + 's>
     where
-        I: IntoIterator<Item=Self::Point>,
+        I: IntoIterator<Item = Self::Point>,
     {
         use std::collections::HashSet;
         let mut stack: Vec<_> = seeds.into_iter().collect();
@@ -101,9 +110,9 @@ pub trait Sieve: Default + InvalidateCache
             }
         }))
     }
-    fn closure_both<'s, I>(&'s self, seeds: I) -> Box<dyn Iterator<Item=Self::Point> + 's>
+    fn closure_both<'s, I>(&'s self, seeds: I) -> Box<dyn Iterator<Item = Self::Point> + 's>
     where
-        I: IntoIterator<Item=Self::Point>,
+        I: IntoIterator<Item = Self::Point>,
     {
         use std::collections::HashSet;
         let mut stack: Vec<_> = seeds.into_iter().collect();
@@ -131,95 +140,104 @@ pub trait Sieve: Default + InvalidateCache
     // --- Lattice operations: meet and join ---
     /// Computes the minimal separator (meet) of two points in the Sieve.
     ///
-    /// The meet is the set of points in the intersection of the closures of `a` and `b`,
-    /// excluding the closure of `{a, b}`. This is useful for finding shared faces or minimal
-    /// common subcells.
-    ///
-    /// # Example
-    /// ```
-    /// use mesh_sieve::topology::sieve::{Sieve, InMemorySieve};
-    /// let mut s = InMemorySieve::<u32>::default();
-    /// s.add_arrow(1, 2, ());
-    /// s.add_arrow(1, 3, ());
-    /// s.add_arrow(2, 4, ());
-    /// s.add_arrow(3, 4, ());
-    /// let meet: Vec<_> = s.meet(2, 3).collect();
-    /// assert_eq!(meet, vec![]);
-    /// ```
-    fn meet<'s>(&'s self, a: Self::Point, b: Self::Point) -> Box<dyn Iterator<Item=Self::Point> + 's>
+    /// Definition (Sieve): the smallest set whose removal makes `closure(a)` and
+    /// `closure(b)` disjoint. We compute `C = closure(a) ∩ closure(b)` and keep
+    /// only elements minimal w.r.t. the downward reachability (cone-transitive)
+    /// order: drop `x` if some other candidate's closure contains `x`
+    /// (equivalently, if `x` appears in another candidate's cone). See
+    /// Knepley–Karpeev: Table 1/2 (meet).  // refs: SPR-2009 Table 1,2
+    fn meet<'s>(
+        &'s self,
+        a: Self::Point,
+        b: Self::Point,
+    ) -> Box<dyn Iterator<Item = Self::Point> + 's>
     where
         Self::Point: Ord,
     {
+        use std::collections::HashSet;
+
+        // Candidate set: intersection of closures
         let mut ca: Vec<_> = self.closure(std::iter::once(a)).collect();
         let mut cb: Vec<_> = self.closure(std::iter::once(b)).collect();
         ca.sort_unstable();
         cb.sort_unstable();
-        let mut inter = Vec::with_capacity(ca.len().min(cb.len()));
-        let (mut i, mut j) = (0, 0);
-        while i < ca.len() && j < cb.len() {
-            use std::cmp::Ordering;
-            match ca[i].cmp(&cb[j]) {
-                Ordering::Less => i += 1,
-                Ordering::Greater => j += 1,
-                Ordering::Equal => {
-                    inter.push(ca[i]);
-                    i += 1;
-                    j += 1;
+        let mut cand: Vec<_> = ca
+            .into_iter()
+            .filter(|x| cb.binary_search(x).is_ok())
+            .collect();
+        cand.sort_unstable();
+        cand.dedup();
+
+        // HashSet for O(1) membership test
+        let cand_set: HashSet<_> = cand.iter().copied().collect();
+
+        // Keep only minimal elements: x is minimal if no other candidate's closure contains x
+        let mut out: Vec<_> = cand
+            .into_iter()
+            .filter(|&x| {
+                let mut minimal = true;
+                for y in self.star(std::iter::once(x)) {
+                    if y != x && cand_set.contains(&y) {
+                        minimal = false; // some candidate covers x -> not minimal
+                        break;
+                    }
                 }
-            }
-        }
-        let mut to_rm: Vec<_> = self.closure([a, b]).collect();
-        to_rm.sort_unstable();
-        to_rm.dedup();
-        let filtered = inter.into_iter().filter(move |x| to_rm.binary_search(x).is_err());
-        Box::new(filtered)
+                minimal
+            })
+            .collect();
+
+        out.sort_unstable();
+        out.dedup();
+        Box::new(out.into_iter())
     }
 
-    /// Computes the dual separator (join) of two points in the Sieve.
+    /// Computes the minimal separator (join) of two points in the Sieve.
     ///
-    /// The join is the set of points in the union of the stars of `a` and `b`.
-    /// This is useful for finding all cofaces or minimal common supersets.
-    ///
-    /// # Example
-    /// ```
-    /// use mesh_sieve::topology::sieve::{Sieve, InMemorySieve};
-    /// let mut s = InMemorySieve::<u32>::default();
-    /// s.add_arrow(2, 4, ());
-    /// s.add_arrow(3, 4, ());
-    /// s.add_arrow(4, 5, ());
-    /// let join: Vec<_> = s.join(2, 3).collect();
-    /// assert_eq!(join, vec![2, 3]);
-    /// ```
-    fn join<'s>(&'s self, a: Self::Point, b: Self::Point) -> Box<dyn Iterator<Item=Self::Point> + 's>
+    /// Definition (Sieve): the smallest set whose removal makes `star(a)` and
+    /// `star(b)` disjoint. We compute `C = star(a) ∩ star(b)` and keep only
+    /// elements minimal w.r.t. the upward reachability (support-transitive)
+    /// order: drop x if x reaches another candidate via star.  See
+    /// Knepley–Karpeev: Table 1/2 (join).  // refs: SPR-2009 Table 1,2
+    fn join<'s>(
+        &'s self,
+        a: Self::Point,
+        b: Self::Point,
+    ) -> Box<dyn Iterator<Item = Self::Point> + 's>
     where
         Self::Point: Ord,
     {
+        use std::collections::HashSet;
+
+        // Candidate set: intersection of stars
         let mut sa: Vec<_> = self.star(std::iter::once(a)).collect();
         let mut sb: Vec<_> = self.star(std::iter::once(b)).collect();
         sa.sort_unstable();
         sb.sort_unstable();
-        let mut out = Vec::with_capacity(sa.len() + sb.len());
-        let (mut i, mut j) = (0, 0);
-        while i < sa.len() && j < sb.len() {
-            use std::cmp::Ordering;
-            match sa[i].cmp(&sb[j]) {
-                Ordering::Less => {
-                    out.push(sa[i]);
-                    i += 1
+        let mut cand: Vec<_> = sa
+            .into_iter()
+            .filter(|x| sb.binary_search(x).is_ok())
+            .collect();
+        cand.sort_unstable();
+        cand.dedup();
+
+        let cand_set: HashSet<_> = cand.iter().copied().collect();
+
+        // Keep only minimal elements in the upward (support) order:
+        // x is minimal if star(x) contains no other candidate.
+        let mut out: Vec<_> = cand
+            .into_iter()
+            .filter(|&x| {
+                let mut minimal = true;
+                for y in self.star(std::iter::once(x)) {
+                    if y != x && cand_set.contains(&y) {
+                        minimal = false; // x reaches a higher candidate -> not minimal
+                        break;
+                    }
                 }
-                Ordering::Greater => {
-                    out.push(sb[j]);
-                    j += 1
-                }
-                Ordering::Equal => {
-                    out.push(sa[i]);
-                    i += 1;
-                    j += 1
-                }
-            }
-        }
-        out.extend_from_slice(&sa[i..]);
-        out.extend_from_slice(&sb[j..]);
+                minimal
+            })
+            .collect();
+
         out.sort_unstable();
         out.dedup();
         Box::new(out.into_iter())
@@ -228,7 +246,9 @@ pub trait Sieve: Default + InvalidateCache
     // --- strata helpers (default impl via compute_strata) ---
     /// Distance from any zero-in-degree “source” to `p`.
     fn height(&mut self, p: Self::Point) -> Result<u32, MeshSieveError>
-    where Self::Point: Ord, Self: Sized
+    where
+        Self::Point: Ord,
+        Self: Sized,
     {
         let cache = compute_strata(self)?;
         Ok(cache.height.get(&p).copied().unwrap_or(0))
@@ -236,7 +256,9 @@ pub trait Sieve: Default + InvalidateCache
 
     /// Distance from `p` down to any zero-out-degree “sink”.
     fn depth(&mut self, p: Self::Point) -> Result<u32, MeshSieveError>
-    where Self::Point: Ord, Self: Sized
+    where
+        Self::Point: Ord,
+        Self: Sized,
     {
         let cache = compute_strata(self)?;
         Ok(cache.depth.get(&p).copied().unwrap_or(0))
@@ -244,7 +266,8 @@ pub trait Sieve: Default + InvalidateCache
 
     /// Maximum height (diameter of the DAG).
     fn diameter(&mut self) -> Result<u32, MeshSieveError>
-    where Self: Sized
+    where
+        Self: Sized,
     {
         Ok(compute_strata(self)?.diameter)
     }
@@ -252,25 +275,24 @@ pub trait Sieve: Default + InvalidateCache
     /// Iterator over all points at height `k`.
     fn height_stratum<'a>(
         &'a mut self,
-        k: u32
-    ) -> Result<Box<dyn Iterator<Item=Self::Point> + 'a>, MeshSieveError>
-    where Self: Sized
+        k: u32,
+    ) -> Result<Box<dyn Iterator<Item = Self::Point> + 'a>, MeshSieveError>
+    where
+        Self: Sized,
     {
         let cache = compute_strata(self)?;
-        let items = cache
-            .strata
-            .get(k as usize)
-            .cloned()
-            .unwrap_or_default();
+        let items = cache.strata.get(k as usize).cloned().unwrap_or_default();
         Ok(Box::new(items.into_iter()))
     }
 
     /// Iterator over all points at depth `k`.
     fn depth_stratum<'a>(
         &'a mut self,
-        k: u32
-    ) -> Result<Box<dyn Iterator<Item=Self::Point> + 'a>, MeshSieveError>
-    where Self::Point: Ord, Self: Sized
+        k: u32,
+    ) -> Result<Box<dyn Iterator<Item = Self::Point> + 'a>, MeshSieveError>
+    where
+        Self::Point: Ord,
+        Self: Sized,
     {
         let cache = compute_strata(self)?;
         let pts: Vec<_> = cache
@@ -326,44 +348,107 @@ pub trait Sieve: Default + InvalidateCache
     /// Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     /// Insert a brand-new point `p` into the domain (no arrows yet).
-    fn add_point(&mut self, _p: Self::Point) where Self: InvalidateCache {}
+    fn add_point(&mut self, _p: Self::Point)
+    where
+        Self: InvalidateCache,
+    {
+    }
     /// Remove point `p` and all its arrows.
-    fn remove_point(&mut self, _p: Self::Point) where Self: InvalidateCache {}
+    fn remove_point(&mut self, _p: Self::Point)
+    where
+        Self: InvalidateCache,
+    {
+    }
     /// Ensure `p` appears in the base (outgoing) point set, even if no arrows yet.
-    fn add_base_point(&mut self, _p: Self::Point) where Self: InvalidateCache {}
+    fn add_base_point(&mut self, _p: Self::Point)
+    where
+        Self: InvalidateCache,
+    {
+    }
     /// Ensure `p` appears in the cap   (incoming) point set.
-    fn add_cap_point(&mut self, _p: Self::Point) where Self: InvalidateCache {}
+    fn add_cap_point(&mut self, _p: Self::Point)
+    where
+        Self: InvalidateCache,
+    {
+    }
     /// Remove `p` from base_points (dropping its outgoing arrows).
-    fn remove_base_point(&mut self, _p: Self::Point) where Self: InvalidateCache {}
+    fn remove_base_point(&mut self, _p: Self::Point)
+    where
+        Self: InvalidateCache,
+    {
+    }
     /// Remove `p` from cap_points  (dropping its incoming arrows).
-    fn remove_cap_point(&mut self, _p: Self::Point) where Self: InvalidateCache {}
+    fn remove_cap_point(&mut self, _p: Self::Point)
+    where
+        Self: InvalidateCache,
+    {
+    }
     /// Replace `p`’s entire cone with the given chain (dst↦payload).
-    fn set_cone(&mut self, p: Self::Point, chain: impl IntoIterator<Item=(Self::Point, Self::Payload)>) where Self: InvalidateCache {
-        let dsts: Vec<_> = self.cone(p).map(|(dst,_)| dst).collect();
-        for dst in dsts { let _ = self.remove_arrow(p, dst); }
-        for (dst, pay) in chain { self.add_arrow(p, dst, pay); }
+    fn set_cone(
+        &mut self,
+        p: Self::Point,
+        chain: impl IntoIterator<Item = (Self::Point, Self::Payload)>,
+    ) where
+        Self: InvalidateCache,
+    {
+        let dsts: Vec<_> = self.cone(p).map(|(dst, _)| dst).collect();
+        for dst in dsts {
+            let _ = self.remove_arrow(p, dst);
+        }
+        for (dst, pay) in chain {
+            self.add_arrow(p, dst, pay);
+        }
         InvalidateCache::invalidate_cache(self);
     }
     /// Append the given chain to `p`’s cone.
-    fn add_cone(&mut self, p: Self::Point, chain: impl IntoIterator<Item=(Self::Point, Self::Payload)>) where Self: InvalidateCache {
-        for (dst, pay) in chain { self.add_arrow(p, dst, pay); }
+    fn add_cone(
+        &mut self,
+        p: Self::Point,
+        chain: impl IntoIterator<Item = (Self::Point, Self::Payload)>,
+    ) where
+        Self: InvalidateCache,
+    {
+        for (dst, pay) in chain {
+            self.add_arrow(p, dst, pay);
+        }
         InvalidateCache::invalidate_cache(self);
     }
     /// Replace `q`’s entire support with the given chain (src↦payload).
-    fn set_support(&mut self, q: Self::Point, chain: impl IntoIterator<Item=(Self::Point, Self::Payload)>) where Self: InvalidateCache {
-        let srcs: Vec<_> = self.support(q).map(|(src,_)| src).collect();
-        for src in srcs { let _ = self.remove_arrow(src, q); }
-        for (src, pay) in chain { self.add_arrow(src, q, pay); }
+    fn set_support(
+        &mut self,
+        q: Self::Point,
+        chain: impl IntoIterator<Item = (Self::Point, Self::Payload)>,
+    ) where
+        Self: InvalidateCache,
+    {
+        let srcs: Vec<_> = self.support(q).map(|(src, _)| src).collect();
+        for src in srcs {
+            let _ = self.remove_arrow(src, q);
+        }
+        for (src, pay) in chain {
+            self.add_arrow(src, q, pay);
+        }
         InvalidateCache::invalidate_cache(self);
     }
     /// Append the given chain to `q`’s support.
-    fn add_support(&mut self, q: Self::Point, chain: impl IntoIterator<Item=(Self::Point, Self::Payload)>) where Self: InvalidateCache {
-        for (src, pay) in chain { self.add_arrow(src, q, pay); }
+    fn add_support(
+        &mut self,
+        q: Self::Point,
+        chain: impl IntoIterator<Item = (Self::Point, Self::Payload)>,
+    ) where
+        Self: InvalidateCache,
+    {
+        for (src, pay) in chain {
+            self.add_arrow(src, q, pay);
+        }
         InvalidateCache::invalidate_cache(self);
     }
     /// Produce a new Sieve containing only the base points in `chain` (and their arrows).
-    fn restrict_base(&self, chain: impl IntoIterator<Item=Self::Point>) -> Self
-        where Self: Sized + Default, Self::Payload: Clone {
+    fn restrict_base(&self, chain: impl IntoIterator<Item = Self::Point>) -> Self
+    where
+        Self: Sized + Default,
+        Self::Payload: Clone,
+    {
         let mut out = Self::default();
         for p in chain {
             for (dst, pay) in self.cone(p) {
@@ -373,8 +458,11 @@ pub trait Sieve: Default + InvalidateCache
         out
     }
     /// Produce a new Sieve containing only the cap points in `chain` (and their arrows).
-    fn restrict_cap(&self, chain: impl IntoIterator<Item=Self::Point>) -> Self
-        where Self: Sized + Default, Self::Payload: Clone {
+    fn restrict_cap(&self, chain: impl IntoIterator<Item = Self::Point>) -> Self
+    where
+        Self: Sized + Default,
+        Self::Payload: Clone,
+    {
         let mut out = Self::default();
         for q in chain {
             for (src, pay) in self.support(q) {

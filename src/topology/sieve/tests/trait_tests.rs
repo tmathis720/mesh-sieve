@@ -1,6 +1,6 @@
 // Trait-level and minimal separator tests for Sieve
-use crate::topology::sieve::{InMemorySieve, Sieve};
 use crate::topology::point::PointId;
+use crate::topology::sieve::{InMemorySieve, Sieve};
 
 fn v(i: u64) -> PointId {
     PointId::new(i)
@@ -65,11 +65,11 @@ fn meet_two_triangles_shared_edge_entity() {
     s.add_arrow(v(10), v(21), ()); // edge (1,2)
     s.add_arrow(v(10), v(20), ()); // edge (2,3)
     s.add_arrow(v(10), v(22), ()); // edge (3,1)
-    // triangle 11
+                                   // triangle 11
     s.add_arrow(v(11), v(20), ()); // edge (2,3)
     s.add_arrow(v(11), v(23), ()); // edge (3,4)
     s.add_arrow(v(11), v(24), ()); // edge (4,2)
-    // edge to vertices
+                                   // edge to vertices
     s.add_arrow(v(20), v(2), ());
     s.add_arrow(v(20), v(3), ());
     s.add_arrow(v(21), v(1), ());
@@ -107,11 +107,11 @@ fn meet_two_triangles_shared_edge_entity_refined() {
     s.add_arrow(v(10), v(21), ()); // edge (1,2)
     s.add_arrow(v(10), v(20), ()); // edge (2,3)
     s.add_arrow(v(10), v(22), ()); // edge (3,1)
-    // triangle 11
+                                   // triangle 11
     s.add_arrow(v(11), v(20), ()); // edge (2,3)
     s.add_arrow(v(11), v(23), ()); // edge (3,4)
     s.add_arrow(v(11), v(24), ()); // edge (4,2)
-    // edge to vertices
+                                   // edge to vertices
     s.add_arrow(v(20), v(2), ());
     s.add_arrow(v(20), v(3), ());
     s.add_arrow(v(21), v(1), ());
@@ -130,12 +130,12 @@ fn meet_two_triangles_shared_edge_entity_refined() {
 fn join_on_star_graph() {
     // Star: 1→2, 1→3, 1→4
     let mut s = InMemorySieve::<u32, ()>::default();
-    s.add_arrow(1, 2,());
-    s.add_arrow(1, 3,());
-    s.add_arrow(1, 4,());
+    s.add_arrow(1, 2, ());
+    s.add_arrow(1, 3, ());
+    s.add_arrow(1, 4, ());
     let join: Vec<_> = s.join(2, 3).collect();
     // join(2,3) should yield [1,2,3] (closure_both)
-    let mut expected = vec![1,2,3];
+    let mut expected = vec![1, 2, 3];
     join.iter().for_each(|x| assert!(expected.contains(x)));
     assert_eq!(join.len(), 3);
 }
@@ -145,19 +145,27 @@ fn meet_and_join_combined() {
     // Two triangles sharing edge 20 (2,3)
     let mut s = InMemorySieve::<u32, ()>::default();
     // triangle 10: 10→21,10→20,10→22; triangle 11: 11→20,11→23,11→24
-    s.add_arrow(10, 21, ()); s.add_arrow(10, 20, ()); s.add_arrow(10, 22,());
-    s.add_arrow(11, 20, ()); s.add_arrow(11, 23, ()); s.add_arrow(11, 24,());
+    s.add_arrow(10, 21, ());
+    s.add_arrow(10, 20, ());
+    s.add_arrow(10, 22, ());
+    s.add_arrow(11, 20, ());
+    s.add_arrow(11, 23, ());
+    s.add_arrow(11, 24, ());
     // edge to vertices
-    s.add_arrow(20, 2, ()); s.add_arrow(20, 3,());
-    s.add_arrow(21, 1, ()); s.add_arrow(21, 2,());
-    s.add_arrow(22, 3, ()); s.add_arrow(22, 1,());
-    s.add_arrow(23, 3, ()); s.add_arrow(23, 4,());
-    s.add_arrow(24, 4, ()); s.add_arrow(24, 2,());
-    // meet(10,11) should be empty (no minimal separator)
+    s.add_arrow(20, 2, ());
+    s.add_arrow(20, 3, ());
+    s.add_arrow(21, 1, ());
+    s.add_arrow(21, 2, ());
+    s.add_arrow(22, 3, ());
+    s.add_arrow(22, 1, ());
+    s.add_arrow(23, 3, ());
+    s.add_arrow(23, 4, ());
+    s.add_arrow(24, 4, ());
+    s.add_arrow(24, 2, ());
+    // meet(10,11) should yield the shared edge {20}
     let sep: Vec<_> = s.meet(10, 11).collect();
-    assert_eq!(sep, vec![]);
-    // join(21,23) should yield [10,11,21,23] (closure_both)
-    let mut join: Vec<_> = s.join(21, 23).collect();
-    join.sort();
-    assert_eq!(join, vec![10,11,21,23]);
+    assert_eq!(sep, vec![20]);
+    // join(21,20) should yield the shared cell {10}
+    let join: Vec<_> = s.join(21, 20).collect();
+    assert_eq!(join, vec![10]);
 }
