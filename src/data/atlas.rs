@@ -7,7 +7,7 @@
 
 use crate::mesh_error::MeshSieveError;
 use crate::topology::point::PointId;
-use crate::topology::stratum::InvalidateCache;
+use crate::topology::cache::InvalidateCache;
 use std::collections::HashMap;
 
 /// `Atlas` maintains:
@@ -158,7 +158,7 @@ mod tests {
 
     #[test]
     fn atlas_cache_cleared_on_insert() {
-        use crate::topology::stratum::InvalidateCache;
+        use crate::topology::cache::InvalidateCache;
         use crate::topology::point::PointId;
         let mut atlas = Atlas::default();
         let _ = atlas.try_insert(PointId::new(1).unwrap(), 2);

@@ -15,7 +15,7 @@ use crate::prelude::{Communicator, Overlap};
 use crate::topology::point::PointId;
 use crate::topology::sieve::sieve_trait::Sieve;
 use crate::topology::sieve::InMemorySieve;
-use crate::topology::stratum::InvalidateCache;
+use crate::topology::cache::InvalidateCache;
 
 /// Packed arrow for network transport.
 #[repr(C)]

@@ -7,7 +7,7 @@
 use crate::data::atlas::Atlas;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::point::PointId;
-use crate::topology::stratum::InvalidateCache;
+use crate::topology::cache::InvalidateCache;
 
 /// Storage for per-point field data, backed by an `Atlas`.
 #[derive(Clone, Debug)]
@@ -69,7 +69,7 @@ impl<V: Clone + Default> Section<V> {
             return Err(MeshSieveError::SliceLengthMismatch { point: p, expected, found });
         }
         target.clone_from_slice(val);
-        crate::topology::stratum::InvalidateCache::invalidate_cache(self);
+        crate::topology::cache::InvalidateCache::invalidate_cache(self);
         Ok(())
     }
     #[deprecated(note = "Use try_set which returns Result instead of panicking")]
@@ -89,7 +89,7 @@ impl<V: Clone + Default> Section<V> {
     pub fn try_add_point(&mut self, p: PointId, len: usize) -> Result<(), MeshSieveError> {
         self.atlas.try_insert(p, len).map_err(|e| MeshSieveError::AtlasInsertionFailed(p, Box::new(e)))?;
         self.data.resize(self.atlas.total_len(), V::default());
-        crate::topology::stratum::InvalidateCache::invalidate_cache(self);
+        crate::topology::cache::InvalidateCache::invalidate_cache(self);
         Ok(())
     }
 
@@ -107,7 +107,7 @@ impl<V: Clone + Default> Section<V> {
             new_data.extend_from_slice(old_slice);
         }
         self.data = new_data;
-        crate::topology::stratum::InvalidateCache::invalidate_cache(self);
+        crate::topology::cache::InvalidateCache::invalidate_cache(self);
         Ok(())
     }
 }
@@ -132,7 +132,7 @@ impl<V: Clone + Send> Section<V> {
             dest.clone_from_slice(chunk);
             start = end;
         }
-        crate::topology::stratum::InvalidateCache::invalidate_cache(self);
+        crate::topology::cache::InvalidateCache::invalidate_cache(self);
         Ok(())
     }
 }

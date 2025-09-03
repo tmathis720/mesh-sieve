@@ -12,7 +12,8 @@ pub mod arrow;
 pub mod point;
 pub mod sieve;
 pub mod stack;
-pub mod stratum;
+pub mod cache;
 pub mod utils;
 
 pub use sieve::*;
+pub use cache::InvalidateCache;

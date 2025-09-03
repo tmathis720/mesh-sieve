@@ -5,9 +5,10 @@ use once_cell::sync::OnceCell;
 use std::collections::HashMap;
 
 use super::sieve_trait::Sieve;
-use super::super::stratum::{InvalidateCache, StrataCache, compute_strata};
 use super::oriented::{OrientedSieve, Orientation};
 use crate::mesh_error::MeshSieveError;
+use crate::topology::cache::InvalidateCache;
+use crate::topology::sieve::strata::{StrataCache, compute_strata};
 
 #[derive(Clone, Debug)]
 pub struct InMemoryOrientedSieve<P, T=(), O=i32>
@@ -57,14 +58,12 @@ where
         }
     }
 
-    pub fn strata_cache(&mut self) -> Result<&StrataCache<P>, MeshSieveError> {
-        let self_ptr: *mut Self = self;
-        self.strata.get_or_try_init(|| {
-            let sieve = unsafe { &mut *self_ptr };
-            compute_strata(sieve)
-        })
+    #[inline]
+    pub fn strata_cache(&self) -> Result<&StrataCache<P>, MeshSieveError> {
+        self.strata.get_or_try_init(|| compute_strata(self))
     }
 
+    #[inline]
     pub fn invalidate_strata(&mut self) { self.strata.take(); }
 }
 
@@ -130,6 +129,54 @@ where
     fn cap_points<'a>(&'a self) -> Box<dyn Iterator<Item = P> + 'a> {
         Box::new(self.adjacency_in.keys().copied())
     }
+
+    fn height(&mut self, p: P) -> Result<u32, MeshSieveError> {
+        let cache = self.strata_cache()?;
+        Ok(cache.height.get(&p).copied().unwrap_or(0))
+    }
+
+    fn depth(&mut self, p: P) -> Result<u32, MeshSieveError> {
+        let cache = self.strata_cache()?;
+        Ok(cache.depth.get(&p).copied().unwrap_or(0))
+    }
+
+    fn diameter(&mut self) -> Result<u32, MeshSieveError> {
+        Ok(self.strata_cache()?.diameter)
+    }
+
+    fn height_stratum<'a>(
+        &'a mut self,
+        k: u32,
+    ) -> Result<Box<dyn Iterator<Item = P> + 'a>, MeshSieveError> {
+        let items = self
+            .strata_cache()?
+            .strata
+            .get(k as usize)
+            .cloned()
+            .unwrap_or_default();
+        Ok(Box::new(items.into_iter()))
+    }
+
+    fn depth_stratum<'a>(
+        &'a mut self,
+        k: u32,
+    ) -> Result<Box<dyn Iterator<Item = P> + 'a>, MeshSieveError> {
+        let cache = self.strata_cache()?;
+        let pts: Vec<_> = cache
+            .depth
+            .iter()
+            .filter_map(|(&p, &d)| if d == k { Some(p) } else { None })
+            .collect();
+        Ok(Box::new(pts.into_iter()))
+    }
+
+    fn chart_index(&mut self, p: P) -> Result<Option<usize>, MeshSieveError> {
+        Ok(self.strata_cache()?.index_of(p))
+    }
+
+    fn chart_points(&mut self) -> Result<Vec<P>, MeshSieveError> {
+        Ok(self.strata_cache()?.chart_points.clone())
+    }
 }
 
 impl<P, T, O> OrientedSieve for InMemoryOrientedSieve<P, T, O>
@@ -167,6 +214,7 @@ where
     T: Clone,
     O: Orientation,
 {
+    #[inline]
     fn invalidate_cache(&mut self) {
         self.strata.take();
     }

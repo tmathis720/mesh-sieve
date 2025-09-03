@@ -8,7 +8,7 @@ use crate::mesh_error::MeshSieveError;
 use crate::topology::sieve::strata::compute_strata;
 use crate::topology::sieve::traversal_iter::{ClosureBothIter, ClosureIter, StarIter};
 
-pub use crate::topology::stratum::InvalidateCache;
+pub use crate::topology::cache::InvalidateCache;
 
 /// Core bidirectional incidence API for mesh topology.
 ///
@@ -251,7 +251,7 @@ where
         Self::Point: Ord,
         Self: Sized,
     {
-        let cache = compute_strata(self)?;
+        let cache = compute_strata(&*self)?;
         Ok(cache.height.get(&p).copied().unwrap_or(0))
     }
 
@@ -261,7 +261,7 @@ where
         Self::Point: Ord,
         Self: Sized,
     {
-        let cache = compute_strata(self)?;
+        let cache = compute_strata(&*self)?;
         Ok(cache.depth.get(&p).copied().unwrap_or(0))
     }
 
@@ -270,7 +270,7 @@ where
     where
         Self: Sized,
     {
-        Ok(compute_strata(self)?.diameter)
+        Ok(compute_strata(&*self)?.diameter)
     }
 
     /// Iterator over all points at height `k`.
@@ -281,7 +281,7 @@ where
     where
         Self: Sized,
     {
-        let cache = compute_strata(self)?;
+        let cache = compute_strata(&*self)?;
         let items = cache.strata.get(k as usize).cloned().unwrap_or_default();
         Ok(Box::new(items.into_iter()))
     }
@@ -295,7 +295,7 @@ where
         Self::Point: Ord,
         Self: Sized,
     {
-        let cache = compute_strata(self)?;
+        let cache = compute_strata(&*self)?;
         let pts: Vec<_> = cache
             .depth
             .iter()
@@ -309,7 +309,7 @@ where
     where
         Self: Sized,
     {
-        let cache = compute_strata(self)?;
+        let cache = compute_strata(&*self)?;
         Ok(cache.index_of(p))
     }
 
@@ -318,7 +318,7 @@ where
     where
         Self: Sized,
     {
-        let cache = compute_strata(self)?;
+        let cache = compute_strata(&*self)?;
         Ok(cache.chart_points.clone())
     }
 
