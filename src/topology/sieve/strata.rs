@@ -72,7 +72,7 @@ impl<P: Copy + Eq + std::hash::Hash + Ord> StrataCache<P> {
 /// # Errors
 /// Returns `Err(MeshSieveError::MissingPointInCone(p))` if a `cone` points to `p` not in `points()`,
 /// or `Err(MeshSieveError::CycleDetected)` if the topology contains a cycle.
-pub fn compute_strata<S>(s: &mut S) -> Result<StrataCache<S::Point>, MeshSieveError>
+pub fn compute_strata<S>(s: &S) -> Result<StrataCache<S::Point>, MeshSieveError>
 where
     S: Sieve,
     S::Point: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,

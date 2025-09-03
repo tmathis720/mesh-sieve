@@ -7,7 +7,7 @@
 
 use super::sieve::InMemorySieve;
 use crate::mesh_error::MeshSieveError;
-use crate::topology::stratum::InvalidateCache;
+use crate::topology::cache::InvalidateCache;
 use std::collections::HashMap;
 
 /// A `Stack` links a *base* Sieve to a *cap* Sieve via vertical arrows.

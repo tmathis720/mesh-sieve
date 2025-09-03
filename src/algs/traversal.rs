@@ -5,7 +5,7 @@ use crate::overlap::overlap::Overlap;
 use crate::topology::point::PointId;
 use crate::topology::sieve::strata::compute_strata;
 use crate::topology::sieve::Sieve;
-use crate::topology::stratum::InvalidateCache;
+use crate::topology::cache::InvalidateCache;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 pub type Point = PointId;
@@ -389,7 +389,7 @@ where
     S::Point: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
     I: IntoIterator<Item = S::Point>,
 {
-    let cache = compute_strata(sieve)?;
+    let cache = compute_strata(&*sieve)?;
     let chart = cache.chart_points;
     let index_map = cache.chart_index;
     let n = chart.len();
@@ -440,7 +440,7 @@ where
     S::Point: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
     I: IntoIterator<Item = S::Point>,
 {
-    let cache = compute_strata(sieve)?;
+    let cache = compute_strata(&*sieve)?;
     let chart = cache.chart_points;
     let index_map = cache.chart_index;
     let n = chart.len();

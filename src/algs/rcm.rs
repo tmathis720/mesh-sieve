@@ -226,7 +226,7 @@ mod tests {
     use std::collections::HashSet;
 
     // Minimal mock Sieve for testing: undirected graph as adjacency list
-    use crate::topology::stratum::InvalidateCache;
+    use crate::topology::cache::InvalidateCache;
 
     #[derive(Debug, Default)]
     struct MockSieve {

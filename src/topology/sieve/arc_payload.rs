@@ -17,7 +17,7 @@
 //! ```
 
 use super::sieve_trait::Sieve;
-use crate::topology::stratum::InvalidateCache;
+use crate::topology::cache::InvalidateCache;
 use std::cell::RefCell;
 
 /// A wrapper sieve that presents `Payload = Arc<P>` for any inner sieve with payload `P`.

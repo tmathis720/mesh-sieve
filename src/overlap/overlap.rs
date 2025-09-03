@@ -7,7 +7,7 @@
 
 use crate::topology::point::PointId;
 use crate::topology::sieve::{InMemorySieve, Sieve};
-use crate::topology::stratum::InvalidateCache;
+use crate::topology::cache::InvalidateCache;
 
 /// A sieve that stores sharing relationships between partitions.
 ///
