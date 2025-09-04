@@ -201,7 +201,7 @@ fn build_hierarchical_tetrahedral_mesh() -> (InMemorySieve<PointId, ()>, Vec<Poi
                 Orientation::Reverse
             };
             let _ = stack.add_arrow(face, dof_id, orientation);
-            refined_mesh.add_point(dof_id);
+            mesh_sieve::topology::Sieve::add_point(&mut refined_mesh, dof_id);
         }
     }
     
