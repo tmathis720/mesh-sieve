@@ -1,7 +1,7 @@
 //! DFS/BFS traversal helpers for Sieve topologies.
 
 use crate::mesh_error::MeshSieveError;
-use crate::overlap::overlap::Overlap;
+use crate::overlap::overlap::{local, Overlap};
 use crate::topology::point::PointId;
 use crate::topology::sieve::strata::compute_strata;
 use crate::topology::sieve::Sieve;
@@ -323,7 +323,7 @@ where
                     q.push_back((qpt, d + 1));
                 }
             }
-            if let Some(owner) = overlap.cone(p).find_map(|(_, r)| Some(r.rank)) {
+            if let Some(owner) = overlap.cone(local(p)).find_map(|(_, r)| Some(r.rank)) {
                 if owner != my_rank {
                     by_owner.entry(owner).or_default().push(p);
                 }
@@ -350,7 +350,7 @@ where
         }
 
         if !advanced && matches!(policy.kind, CompletionKind::Cone | CompletionKind::Both) {
-            if let Some(owner) = overlap.cone(p).find_map(|(_, r)| Some(r.rank)) {
+            if let Some(owner) = overlap.cone(local(p)).find_map(|(_, r)| Some(r.rank)) {
                 if owner != my_rank {
                     let e = batch.entry(owner).or_default();
                     if !e.iter().any(|&x| x == p) {

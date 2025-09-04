@@ -7,7 +7,7 @@
 
 use crate::data::section::Section;
 use crate::mesh_error::MeshSieveError;
-use crate::overlap::overlap::Overlap;
+use crate::overlap::overlap::{local, Overlap};
 use crate::topology::point::PointId;
 use crate::topology::sieve::sieve_trait::Sieve;
 use std::collections::HashMap;
@@ -39,7 +39,7 @@ where
             continue; // nothing to send for this point
         }
         has_owned = true;
-        for (_unused, rem) in ovlp.cone(p) {
+        for (_dst, rem) in ovlp.cone(local(p)) {
             if rem.rank != my_rank {
                 out.entry(rem.rank)
                     .or_default()
@@ -52,15 +52,14 @@ where
     //    that appears in adjacency_in.  rems holds (local_mesh_pt, Remote),
     //    so fetch `rem.remote_point` into `local_mesh_pt`.
     if !has_owned {
-        for rems in ovlp.adjacency_in.values() {
-            for &(local_pt, ref rem) in rems {
-                if rem.rank == my_rank {
-                    continue;
-                }
-                // send from remote_point, receive into the real local_pt
-                out.entry(rem.rank)
+        for nbr in ovlp.neighbor_ranks() {
+            if nbr == my_rank {
+                continue;
+            }
+            for (local_pt, remote_pt) in ovlp.links_to(nbr) {
+                out.entry(nbr)
                     .or_default()
-                    .push((rem.remote_point, local_pt));
+                    .push((remote_pt, local_pt));
             }
         }
     }
@@ -86,9 +85,8 @@ mod tests {
     use super::*;
     use crate::data::atlas::Atlas;
     use crate::data::section::Section;
-    use crate::overlap::overlap::{Overlap, Remote};
+    use crate::overlap::overlap::Overlap;
     use crate::topology::point::PointId;
-    use crate::topology::sieve::InMemorySieve;
 
     fn make_section(points: &[u64]) -> Section<i32> {
         let mut atlas = Atlas::default();
@@ -103,18 +101,9 @@ mod tests {
     }
 
     fn make_overlap(_owner: usize, ghost: usize, owned: &[u64], ghosted: &[u64]) -> Overlap {
-        // owner owns `owned`, ghost wants `ghosted`
-        let mut ovlp = InMemorySieve::<PointId, Remote>::default();
+        let mut ovlp = Overlap::new();
         for (&src, &dst) in owned.iter().zip(ghosted.iter()) {
-            // Owner's point src is ghosted to ghost's dst
-            ovlp.add_arrow(
-                PointId::new(src).unwrap(),
-                PointId::new(dst).unwrap(),
-                Remote {
-                    rank: ghost,
-                    remote_point: PointId::new(dst).unwrap(),
-                },
-            );
+            ovlp.add_link(PointId::new(src).unwrap(), ghost, PointId::new(dst).unwrap());
         }
         ovlp
     }
@@ -142,7 +131,7 @@ mod tests {
     fn no_links_for_isolated_rank() {
         // Rank 2 owns 2, but no overlap
         let section = make_section(&[2]);
-        let mut ovlp = InMemorySieve::<PointId, Remote>::default();
+        let mut ovlp = Overlap::new();
         let links = neighbour_links(&section, &mut ovlp, 2);
         assert!(matches!(links, Err(MeshSieveError::MissingOverlap { .. })));
     }
@@ -151,23 +140,9 @@ mod tests {
     fn multiple_neighbors() {
         // Rank 0 owns 1,2, ghosted to rank 1 as 101, rank 2 as 201
         let section = make_section(&[1, 2]);
-        let mut ovlp = InMemorySieve::<PointId, Remote>::default();
-        ovlp.add_arrow(
-            PointId::new(1).unwrap(),
-            PointId::new(101).unwrap(),
-            Remote {
-                rank: 1,
-                remote_point: PointId::new(101).unwrap(),
-            },
-        );
-        ovlp.add_arrow(
-            PointId::new(2).unwrap(),
-            PointId::new(201).unwrap(),
-            Remote {
-                rank: 2,
-                remote_point: PointId::new(201).unwrap(),
-            },
-        );
+        let mut ovlp = Overlap::new();
+        ovlp.add_link(PointId::new(1).unwrap(), 1, PointId::new(101).unwrap());
+        ovlp.add_link(PointId::new(2).unwrap(), 2, PointId::new(201).unwrap());
         let links = neighbour_links(&section, &mut ovlp, 0).unwrap();
         assert_eq!(links.len(), 2);
         assert_eq!(links[&1], vec![(PointId::new(1).unwrap(), PointId::new(101).unwrap())]);

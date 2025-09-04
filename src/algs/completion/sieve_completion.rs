@@ -10,7 +10,7 @@ use bytemuck::Zeroable;
 
 use crate::algs::communicator::Wait;
 use crate::mesh_error::MeshSieveError;
-use crate::overlap::overlap::Remote;
+use crate::overlap::overlap::{local, OvlId, Remote};
 use crate::prelude::{Communicator, Overlap};
 use crate::topology::point::PointId;
 use crate::topology::sieve::sieve_trait::Sieve;
@@ -49,7 +49,7 @@ pub fn complete_sieve<C: Communicator>(
     let mut nb_links: HashMap<usize, Vec<(PointId, PointId)>> = HashMap::new();
     for (&p, outs) in &sieve.adjacency_out {
         for (_d, _) in outs {
-            for (_d2, rem) in overlap.cone(p) {
+            for (_d2, rem) in overlap.cone(local(p)) {
                 if rem.rank != my_rank {
                     nb_links
                         .entry(rem.rank)
@@ -60,13 +60,15 @@ pub fn complete_sieve<C: Communicator>(
         }
     }
     if nb_links.is_empty() {
-        let me_pt = crate::algs::completion::partition_point(my_rank);
+        let me_pt = Overlap::partition_node_id(my_rank);
         for (src, rem) in overlap.support(me_pt) {
             if rem.rank != my_rank {
-                nb_links
-                    .entry(rem.rank)
-                    .or_default()
-                    .push((rem.remote_point, src));
+                if let OvlId::Local(src_pt) = src {
+                    nb_links
+                        .entry(rem.rank)
+                        .or_default()
+                        .push((rem.remote_point, src_pt));
+                }
             }
         }
     }
