@@ -15,7 +15,7 @@
 //!
 //! ## Typical lifecycle
 //! 1. Seed structure: for each shared local mesh point `p`, call
-//!    [`Overlap::add_link_structural`].
+//!    [`Overlap::add_link_structural_one`].
 //! 2. Complete structure: call [`ensure_closure_of_support`] with the mesh.
 //! 3. Discover mapping via neighbor exchange (e.g., global IDs).
 //! 4. Resolve: call [`Overlap::resolve_remote_point`] (or the batch variant)
@@ -129,8 +129,8 @@ impl Overlap {
     /// Add a typed link: `Local(p) -> Part(r)` with known `remote` ID.
     ///
     /// This is the primary constructor for edges when the remote mapping is
-    /// already known.  For structure-only insertion, use
-    /// [`add_link_structural`].
+    /// already known. For structure-only insertion, use
+    /// [`add_link_structural_one`].
     pub fn add_link(&mut self, p: PointId, r: usize, remote: PointId) {
         self.add_arrow(
             local(p),
@@ -142,17 +142,35 @@ impl Overlap {
         );
     }
 
-    /// Insert `Local(p) -> Part(r)` structurally (`remote_point = None`).
-    /// Dedupe if the link already exists.
-    pub fn add_link_structural(&mut self, p: PointId, r: usize) {
+    #[inline]
+    fn has_link_structural(&self, p: PointId, r: usize) -> bool {
         let src = local(p);
         let dst = part(r);
-        if self.inner.cone(src).any(|(q, _)| q == dst) {
-            return;
+        self.inner
+            .adjacency_out
+            .get(&src)
+            .map_or(false, |v| v.iter().any(|(q, _)| *q == dst))
+    }
+
+    /// Adds `Local(p) -> Part(r)` structurally (`remote_point = None`).
+    ///
+    /// Returns `true` if the edge was inserted, or `false` if it already
+    /// existed.
+    #[inline]
+    pub fn add_link_structural_one(&mut self, p: PointId, r: usize) -> bool {
+        if self.has_link_structural(p, r) {
+            return false;
         }
+
+        let src = local(p);
+        let dst = part(r);
+
+        // Ensure maps exist & pre-reserve one slot to avoid immediate growth
         self.inner.reserve_cone(src, 1);
         self.inner.reserve_support(dst, 1);
-        self.add_arrow(
+
+        // Invariant: Local -> Part, payload.rank == r
+        self.inner.add_arrow(
             src,
             dst,
             Remote {
@@ -160,7 +178,71 @@ impl Overlap {
                 remote_point: None,
             },
         );
-        // add_arrow already enforces Local->Part and rank equality
+        true
+    }
+
+    /// Insert many structural edges; returns the number of new edges inserted.
+    ///
+    /// Dedupe both against existing edges and duplicates within the batch.
+    /// Pre-reserves capacity for all affected cones and supports and invalidates
+    /// caches once at the end.
+    pub fn add_links_structural_bulk<I>(&mut self, edges: I) -> usize
+    where
+        I: IntoIterator<Item = (PointId, usize)>,
+    {
+        use std::collections::HashMap;
+
+        let mut to_add: Vec<(OvlId, OvlId)> = Vec::new();
+        let mut need_cone: HashMap<OvlId, usize> = HashMap::new();
+        let mut need_support: HashMap<OvlId, usize> = HashMap::new();
+
+        for (p, r) in edges {
+            let src = local(p);
+            let dst = part(r);
+            // Skip if already present or duplicated within this batch
+            if self
+                .inner
+                .adjacency_out
+                .get(&src)
+                .map_or(false, |v| v.iter().any(|(q, _)| *q == dst))
+                || to_add.iter().any(|&(s, d)| s == src && d == dst)
+            {
+                continue;
+            }
+            *need_cone.entry(src).or_insert(0) += 1;
+            *need_support.entry(dst).or_insert(0) += 1;
+            to_add.push((src, dst));
+        }
+
+        if to_add.is_empty() {
+            return 0;
+        }
+
+        for (src, k) in need_cone {
+            self.inner.reserve_cone(src, k);
+        }
+        for (dst, k) in need_support {
+            self.inner.reserve_support(dst, k);
+        }
+
+        for (src, dst) in to_add.iter().copied() {
+            let r = match dst {
+                OvlId::Part(r) => r,
+                _ => unreachable!(),
+            };
+            self.inner.add_arrow(
+                src,
+                dst,
+                Remote {
+                    rank: r,
+                    remote_point: None,
+                },
+            );
+        }
+
+        self.invalidate_cache();
+
+        to_add.len()
     }
 
     /// Resolve the remote ID for `(Local(local) -> Part(rank))`.
@@ -390,7 +472,12 @@ impl Sieve for Overlap {
                 return;
             }
         }
-        if self.inner.cone(src).any(|(q, _)| q == dst) {
+        if self
+            .inner
+            .adjacency_out
+            .get(&src)
+            .map_or(false, |v| v.iter().any(|(q, _)| *q == dst))
+        {
             return;
         }
         self.inner.reserve_cone(src, 1);
@@ -453,18 +540,7 @@ pub fn expand_one_layer_mesh<M: Sieve<Point = PointId>>(
         }
     }
 
-    let mut added = 0;
-    for q in to_add {
-        let src = local(q);
-        let dst = part(neighbor);
-        let is_new = !ov.inner.cone(src).any(|(d, _)| d == dst);
-        ov.add_link_structural(q, neighbor);
-        if is_new {
-            added += 1;
-        }
-    }
-    ov.invalidate_cache();
-    added
+    ov.add_links_structural_bulk(to_add.into_iter().map(|q| (q, neighbor)))
 }
 
 /// Ensure closure-of-support: for any `Local(p) -> Part(r)` edge already present,
@@ -493,14 +569,15 @@ pub fn ensure_closure_of_support<M: Sieve<Point = PointId>>(ov: &mut Overlap, me
         .collect();
 
     let mut seen: HashSet<(PointId, usize)> = seeds.iter().copied().collect();
+    let mut to_add: Vec<(PointId, usize)> = Vec::new();
     for (p, r) in seeds {
         for q in mesh.closure(std::iter::once(p)) {
             if seen.insert((q, r)) {
-                ov.add_link_structural(q, r);
+                to_add.push((q, r));
             }
         }
     }
-    ov.invalidate_cache();
+    ov.add_links_structural_bulk(to_add);
 }
 
 /// Incremental variant: expand closure only from explicit `(point, rank)` seeds.
@@ -534,14 +611,15 @@ pub fn ensure_closure_of_support_from_seeds<M: Sieve<Point = PointId>, I>(
         })
         .collect();
 
+    let mut to_add: Vec<(PointId, usize)> = Vec::new();
     for (p, r) in seeds {
         for q in mesh.closure(std::iter::once(p)) {
             if seen.insert((q, r)) {
-                ov.add_link_structural(q, r);
+                to_add.push((q, r));
             }
         }
     }
-    ov.invalidate_cache();
+    ov.add_links_structural_bulk(to_add);
 }
 
 #[cfg(test)]
@@ -580,10 +658,34 @@ mod tests {
     }
 
     #[test]
+    fn structural_dedup_single() {
+        let mut ov = Overlap::new();
+        let p = PointId::new(1).unwrap();
+        let r = 1usize;
+        assert!(ov.add_link_structural_one(p, r));
+        assert!(!ov.add_link_structural_one(p, r));
+        assert_eq!(ov.links_to(r).count(), 1);
+        ov.validate_invariants().unwrap();
+    }
+
+    #[test]
+    fn bulk_dedup() {
+        let mut ov = Overlap::new();
+        let p1 = PointId::new(1).unwrap();
+        let p2 = PointId::new(2).unwrap();
+        let r = 3usize;
+        let added = ov.add_links_structural_bulk(vec![(p1, r), (p1, r), (p2, r)]);
+        assert_eq!(added, 2);
+        let added2 = ov.add_links_structural_bulk(vec![(p1, r), (p2, r)]);
+        assert_eq!(added2, 0);
+        ov.validate_invariants().unwrap();
+    }
+
+    #[test]
     fn structural_then_resolve() {
         let mut ov = Overlap::new();
         let p = PointId::new(1).unwrap();
-        ov.add_link_structural(p, 1);
+        ov.add_link_structural_one(p, 1);
         let v_unresolved: Vec<_> = ov.links_to(1).collect();
         assert_eq!(v_unresolved, vec![(p, None)]);
         assert!(ov.links_to_resolved(1).next().is_none());
@@ -598,7 +700,7 @@ mod tests {
     fn resolve_idempotent_and_conflict() {
         let mut ov = Overlap::new();
         let p = PointId::new(1).unwrap();
-        ov.add_link_structural(p, 1);
+        ov.add_link_structural_one(p, 1);
         ov.resolve_remote_point(p, 1, PointId::new(10).unwrap())
             .unwrap();
         // Idempotent
@@ -643,7 +745,7 @@ mod tests {
         mesh.add_arrow(f1, v3, ());
 
         let mut ov = Overlap::new();
-        ov.add_link_structural(cell, 7);
+        ov.add_link_structural_one(cell, 7);
         ensure_closure_of_support(&mut ov, &mesh);
 
         let links: Vec<_> = ov.links_to(7).collect();
@@ -658,7 +760,7 @@ mod tests {
         let mut mesh = Mesh::<PointId, ()>::default();
         mesh.add_arrow(PointId::new(1).unwrap(), PointId::new(2).unwrap(), ());
         let mut ov = Overlap::new();
-        ov.add_link_structural(PointId::new(1).unwrap(), 7);
+        ov.add_link_structural_one(PointId::new(1).unwrap(), 7);
         ensure_closure_of_support(&mut ov, &mesh);
         let count = ov.links_to(7).count();
         ensure_closure_of_support(&mut ov, &mesh);
@@ -670,8 +772,8 @@ mod tests {
         let mut mesh = Mesh::<PointId, ()>::default();
         mesh.add_arrow(PointId::new(1).unwrap(), PointId::new(2).unwrap(), ());
         let mut ov = Overlap::new();
-        ov.add_link_structural(PointId::new(1).unwrap(), 1);
-        ov.add_link_structural(PointId::new(1).unwrap(), 2);
+        ov.add_link_structural_one(PointId::new(1).unwrap(), 1);
+        ov.add_link_structural_one(PointId::new(1).unwrap(), 2);
         ensure_closure_of_support(&mut ov, &mesh);
 
         let set1: std::collections::HashSet<_> = ov.links_to(1).collect();
@@ -708,8 +810,8 @@ mod tests {
         let r = 9usize;
 
         let mut ov = Overlap::new();
-        ov.add_link_structural(PointId::new(1).unwrap(), r);
-        ov.add_link_structural(PointId::new(3).unwrap(), r);
+        ov.add_link_structural_one(PointId::new(1).unwrap(), r);
+        ov.add_link_structural_one(PointId::new(3).unwrap(), r);
 
         ensure_closure_of_support_from_seeds(&mut ov, &mesh, [(PointId::new(1).unwrap(), r)]);
         let links: std::collections::HashSet<_> = ov.links_to(r).collect();
