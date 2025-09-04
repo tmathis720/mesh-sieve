@@ -17,6 +17,10 @@ pub mod in_memory_oriented;
 pub mod mutable;
 /// Orientation-aware extensions to [`Sieve`].
 pub mod oriented;
+/// Additional edge query helpers built on top of [`Sieve`].
+pub mod query_ext;
+/// Bulk arrow insertion helpers.
+pub mod build_ext;
 /// Reference-returning extensions to [`Sieve`].
 pub mod sieve_ref;
 /// Core trait for sieve data structures.
@@ -29,6 +33,8 @@ pub mod reserve;
 pub mod traversal_iter;
 /// Frozen CSR representation for deterministic, cache-friendly traversal.
 pub mod frozen_csr;
+/// Deterministic in-memory sieve backed by `BTreeMap`.
+pub mod in_memory_det;
 
 // Re-export the core trait and in‐memory impl at top level
 pub use in_memory::InMemorySieve;
@@ -37,6 +43,9 @@ pub use mutable::MutableSieve;
 pub use oriented::{Orientation, OrientedSieve};
 pub use sieve_ref::SieveRef;
 pub use sieve_trait::Sieve;
+pub use query_ext::SieveQueryExt;
+pub use build_ext::SieveBuildExt;
+pub use in_memory_det::InMemorySieveDeterministic;
 pub use reserve::SieveReserveExt;
 pub use traversal_iter::{
     ClosureBothIter, ClosureBothIterRef, ClosureIter, ClosureIterRef, StarIter, StarIterRef,
