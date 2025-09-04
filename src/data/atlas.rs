@@ -8,6 +8,7 @@
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cache::InvalidateCache;
 use crate::topology::point::PointId;
+use crate::data::DebugInvariants;
 use std::collections::HashMap;
 
 /// `Atlas` maintains:
@@ -15,6 +16,18 @@ use std::collections::HashMap;
 ///   global data buffer,
 /// - an `order` vector to preserve insertion order for deterministic I/O,
 /// - and `total_len` to track the next free offset.
+///
+/// # Invariants
+///
+/// - Each point appears exactly once in `order`.
+/// - `map` contains precisely the keys listed in `order`.
+/// - Every slice has `len > 0` and `offset + len` fits in `usize`.
+/// - Offsets are contiguous in insertion order and `total_len` equals the sum
+///   of all lengths.
+///
+/// These invariants are checked after mutations in debug builds and when the
+/// `check-invariants` feature is enabled. They can also be verified manually via
+/// [`validate_invariants`](Self::validate_invariants).
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct Atlas {
     /// Maps each point to its slice descriptor: (starting offset, length).
@@ -69,7 +82,7 @@ impl Atlas {
         self.total_len += len;
         self.version = self.version.wrapping_add(1);
         InvalidateCache::invalidate_cache(self);
-        #[cfg(debug_assertions)]
+        #[cfg(any(debug_assertions, feature = "check-invariants"))]
         self.debug_assert_invariants();
         Ok(offset)
     }
@@ -165,55 +178,81 @@ impl Atlas {
         self.total_len = next_offset;
         self.version = self.version.wrapping_add(1);
         InvalidateCache::invalidate_cache(self);
-        #[cfg(debug_assertions)]
+        #[cfg(any(debug_assertions, feature = "check-invariants"))]
         self.debug_assert_invariants();
-        Ok(())
-    }
-
-    /// Validate atlas invariants in production.
-    pub fn validate(&self) -> Result<(), MeshSieveError> {
-        use std::collections::HashSet;
-        let set: HashSet<_> = self.order.iter().copied().collect();
-        if set.len() != self.order.len() {
-            if let Some(&p) = self.order.first() {
-                return Err(MeshSieveError::MeshError(Box::new(
-                    MeshSieveError::DuplicatePoint(p),
-                )));
-            }
-        }
-        if set.len() != self.map.len() {
-            if let Some(&p) = self.order.first() {
-                return Err(MeshSieveError::MeshError(Box::new(
-                    MeshSieveError::MissingAtlasPoint(p),
-                )));
-            }
-        }
-        let mut off = 0usize;
-        for &p in &self.order {
-            let (o, len) = self
-                .map
-                .get(&p)
-                .copied()
-                .ok_or(MeshSieveError::MissingAtlasPoint(p))?;
-            if o != off {
-                return Err(MeshSieveError::ScatterChunkMismatch { offset: o, len });
-            }
-            off = off.saturating_add(len);
-        }
-        if off != self.total_len {
-            return Err(MeshSieveError::ScatterLengthMismatch {
-                expected: off,
-                found: self.total_len,
-            });
-        }
         Ok(())
     }
 }
 
-#[cfg(any(debug_assertions, feature = "strict-invariants"))]
+impl DebugInvariants for Atlas {
+    fn debug_assert_invariants(&self) {
+        crate::data_debug_assert_ok!(self.validate_invariants(), "Atlas invalid");
+    }
+
+    fn validate_invariants(&self) -> Result<(), MeshSieveError> {
+        use std::collections::HashSet;
+
+        // 1) order is unique
+        let set: HashSet<_> = self.order.iter().copied().collect();
+        if set.len() != self.order.len() {
+            // find duplicate if possible
+            let mut seen = HashSet::new();
+            if let Some(&dup) = self.order.iter().find(|&&p| !seen.insert(p)) {
+                return Err(MeshSieveError::DuplicatePoint(dup));
+            } else {
+                return Err(MeshSieveError::DuplicatePoint(self.order[0]));
+            }
+        }
+
+        // 2) map.keys == order
+        if set.len() != self.map.len() {
+            if let Some(&p) = self.order.iter().find(|&&p| !self.map.contains_key(&p)) {
+                return Err(MeshSieveError::MissingAtlasPoint(p));
+            }
+            if let Some(&p) = self.map.keys().find(|p| !set.contains(p)) {
+                return Err(MeshSieveError::DuplicatePoint(p));
+            }
+        }
+
+        // 3) positive lengths and checked add
+        for &p in &self.order {
+            let (off, len) = self.map[&p];
+            if len == 0 {
+                return Err(MeshSieveError::ZeroLengthSlice);
+            }
+            let _end = off
+                .checked_add(len)
+                .ok_or_else(|| MeshSieveError::ScatterChunkMismatch { offset: off, len })?;
+        }
+
+        // 4) contiguity and total_len
+        let mut expected_off = 0usize;
+        let mut sum = 0usize;
+        for &p in &self.order {
+            let (off, len) = self.map[&p];
+            if off != expected_off {
+                return Err(MeshSieveError::ScatterChunkMismatch { offset: off, len });
+            }
+            expected_off = off + len;
+            sum = sum
+                .checked_add(len)
+                .ok_or_else(|| MeshSieveError::ScatterLengthMismatch { expected: usize::MAX, found: 0 })?;
+        }
+        if sum != self.total_len {
+            return Err(MeshSieveError::ScatterLengthMismatch { expected: sum, found: self.total_len });
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 impl Atlas {
-    pub(crate) fn debug_assert_invariants(&self) {
-        self.validate().unwrap();
+    /// Test helper to force the offset of a point without adjusting others.
+    pub fn force_offset(&mut self, p: PointId, new_off: usize) {
+        if let Some((_, len)) = self.map.get(&p).copied() {
+            self.map.insert(p, (new_off, len));
+        }
     }
 }
 
