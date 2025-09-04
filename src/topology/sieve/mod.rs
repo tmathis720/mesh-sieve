@@ -25,6 +25,8 @@ pub mod sieve_trait;
 pub mod strata;
 /// Concrete traversal iterators without dynamic dispatch.
 pub mod traversal_iter;
+/// Frozen CSR representation for deterministic, cache-friendly traversal.
+pub mod frozen_csr;
 
 // Re-export the core trait and in‐memory impl at top level
 pub use in_memory::InMemorySieve;
@@ -36,6 +38,7 @@ pub use sieve_trait::Sieve;
 pub use traversal_iter::{
     ClosureBothIter, ClosureBothIterRef, ClosureIter, ClosureIterRef, StarIter, StarIterRef,
 };
+pub use frozen_csr::{freeze_csr, FrozenSieveCsr};
 
 use std::sync::Arc;
 
