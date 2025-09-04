@@ -76,6 +76,18 @@ impl<V> Section<V> {
         self.try_restrict_mut(p).unwrap()
     }
 
+    /// Read-only handle to the backing atlas.
+    ///
+    /// Mutations must go through [`with_atlas_mut`](Self::with_atlas_mut)
+    /// to keep `Section` and its data buffer consistent.
+    ///
+    /// # Complexity
+    /// **O(1)**.
+    #[inline]
+    pub fn atlas(&self) -> &Atlas {
+        &self.atlas
+    }
+
     /// Iterate over `(PointId, &[V])` for all points in atlas order.
     pub fn iter(&self) -> impl Iterator<Item = (PointId, &[V])> + '_ {
         self.atlas
@@ -348,6 +360,63 @@ impl<V: Clone + Default> Section<V> {
             .try_insert(p, len)
             .map_err(|e| MeshSieveError::AtlasInsertionFailed(p, Box::new(e)))?;
         self.data.resize(self.atlas.total_len(), V::default());
+        crate::topology::cache::InvalidateCache::invalidate_cache(self);
+        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        self.debug_assert_invariants();
+        Ok(())
+    }
+
+    /// Safely mutate the atlas and rebuild `data` to remain consistent.
+    ///
+    /// - New points get `len` default-initialized values.
+    /// - Removed points drop data.
+    /// - Reordered/retuned points keep their old values (by `PointId`),
+    ///   copied into the new contiguous layout.
+    ///
+    /// # Complexity
+    /// **O(n)** mapping + **O(total_len_new)** copy/initialize.
+    ///
+    /// # Determinism
+    /// Rebuild order follows atlas insertion order deterministically.
+    pub fn with_atlas_mut<F>(&mut self, f: F) -> Result<(), MeshSieveError>
+    where
+        F: FnOnce(&mut Atlas),
+    {
+        // Snapshot current atlas to pull old spans
+        let before = self.atlas.clone();
+
+        // Let the user mutate
+        f(&mut self.atlas);
+
+        // Validate new atlas (Stage 6)
+        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        self.atlas.debug_assert_invariants();
+
+        // Rebuild data following insertion order of the new atlas
+        let mut new_data = Vec::with_capacity(self.atlas.total_len());
+        for pid in self.atlas.points() {
+            match before.get(pid) {
+                // Existing point: copy old slice
+                Some((off, len)) => {
+                    let end = off + len;
+                    let src = self
+                        .data
+                        .get(off..end)
+                        .ok_or(MeshSieveError::MissingSectionPoint(pid))?;
+                    new_data.extend_from_slice(src);
+                }
+                // New point: fill with defaults
+                None => {
+                    let (_off_new, len_new) = self
+                        .atlas
+                        .get(pid)
+                        .ok_or(MeshSieveError::MissingAtlasPoint(pid))?;
+                    new_data.extend(std::iter::repeat_with(V::default).take(len_new));
+                }
+            }
+        }
+
+        self.data = new_data;
         crate::topology::cache::InvalidateCache::invalidate_cache(self);
         #[cfg(any(debug_assertions, feature = "check-invariants"))]
         self.debug_assert_invariants();

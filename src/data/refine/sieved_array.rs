@@ -44,15 +44,46 @@ where
             .ok_or(crate::mesh_error::MeshSieveError::SievedArrayPointNotInAtlas(p))?;
         Ok(&mut self.data[off..off + len])
     }
-    /// Iterate over all points and their associated slices, returning Results.
-    pub fn try_iter<'s>(
-        &'s self,
-    ) -> impl Iterator<Item = Result<(PointId, &'s [V]), crate::mesh_error::MeshSieveError>> + 's
-    {
+    /// Fallible iterator over `(PointId, &[V])` in atlas insertion order.
+    ///
+    /// # Complexity
+    /// **O(n)** to traverse, **O(1)** per element.
+    ///
+    /// # Determinism
+    /// Iteration strictly follows atlas insertion order.
+    #[inline]
+    pub fn try_iter_in_order(
+        &self,
+    ) -> impl Iterator<Item = Result<(PointId, &[V]), crate::mesh_error::MeshSieveError>> + '_ {
         self.atlas
             .points()
-            .map(move |p| self.try_get(p).map(|slice| (p, slice)))
+            .map(move |pid| self.try_get(pid).map(|sl| (pid, sl)))
     }
+
+    /// Non-fallible iterator over `(PointId, &[V])` in atlas insertion order.
+    ///
+    /// # Complexity
+    /// **O(n)** to traverse, **O(1)** per element.
+    ///
+    /// # Determinism
+    /// Iteration strictly follows atlas insertion order.
+    #[inline]
+    pub fn iter_in_order(&self) -> impl Iterator<Item = (PointId, &[V])> + '_ {
+        self.atlas.points().map(move |pid| {
+            let (off, len) = self.atlas.get(pid).expect("atlas missing point");
+            let sl = &self.data[off..off + len];
+            (pid, sl)
+        })
+    }
+
+    /// Iterate over all points and their associated slices, returning Results.
+    #[deprecated(note = "Use try_iter_in_order instead")]
+    pub fn try_iter(
+        &self,
+    ) -> impl Iterator<Item = Result<(PointId, &[V]), crate::mesh_error::MeshSieveError>> + '_ {
+        self.try_iter_in_order()
+    }
+
     /// Backwards-compatible panicking versions (deprecated)
     #[deprecated(note = "Use try_get instead")]
     pub fn get(&self, p: PointId) -> &[V] {
@@ -382,7 +413,7 @@ mod tests {
         arr.try_set(pt(2), &[3]).unwrap();
         assert_eq!(arr.try_get(pt(1)).unwrap(), &[1, 2]);
         assert_eq!(arr.try_get(pt(2)).unwrap(), &[3]);
-        let vals: Vec<_> = arr.try_iter().map(|r| r.unwrap().1[0]).collect();
+        let vals: Vec<_> = arr.try_iter_in_order().map(|r| r.unwrap().1[0]).collect();
         assert_eq!(vals, vec![1, 3]);
     }
 
