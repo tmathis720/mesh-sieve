@@ -122,6 +122,45 @@ where
             }
         }
     }
+
+    #[inline]
+    pub fn has_arrow(&self, src: P, dst: P) -> bool {
+        self.adjacency_out
+            .get(&src)
+            .map_or(false, |v| v.iter().any(|(d, _, _)| *d == dst))
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn debug_assert_no_parallel_edges_src(&self, src: P) {
+        if let Some(v) = self.adjacency_out.get(&src) {
+            use std::collections::HashSet;
+            let mut seen = HashSet::new();
+            for (dst, _, _) in v {
+                assert!(
+                    seen.insert(*dst),
+                    "duplicate edges out of {:?} to {:?}",
+                    src,
+                    dst
+                );
+            }
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn debug_assert_no_parallel_edges_dst(&self, dst: P) {
+        if let Some(v) = self.adjacency_in.get(&dst) {
+            use std::collections::HashSet;
+            let mut seen = HashSet::new();
+            for (src, _, _) in v {
+                assert!(
+                    seen.insert(*src),
+                    "duplicate edges into {:?} from {:?}",
+                    dst,
+                    src
+                );
+            }
+        }
+    }
 }
 
 // ----------- Sieve (payload-only view) -----------
@@ -351,17 +390,32 @@ where
     }
 
     fn add_arrow_o(&mut self, src: P, dst: P, payload: T, orient: O) {
-        self.adjacency_out
-            .entry(src)
-            .or_default()
-            .push((dst, payload.clone(), orient));
-        self.adjacency_in
-            .entry(dst)
-            .or_default()
-            .push((src, payload, orient));
+        // Upsert outgoing
+        let outs = self.adjacency_out.entry(src).or_default();
+        if let Some(slot) = outs.iter_mut().find(|(d, _, _)| *d == dst) {
+            slot.1 = payload.clone();
+            slot.2 = orient;
+        } else {
+            outs.push((dst, payload.clone(), orient));
+        }
+
+        // Upsert incoming
+        let ins = self.adjacency_in.entry(dst).or_default();
+        if let Some(slot) = ins.iter_mut().find(|(s, _, _)| *s == src) {
+            slot.1 = payload;
+            slot.2 = orient;
+        } else {
+            ins.push((src, payload, orient));
+        }
+
         self.invalidate_cache();
+
         #[cfg(debug_assertions)]
-        self.debug_assert_consistent();
+        {
+            self.debug_assert_consistent();
+            self.debug_assert_no_parallel_edges_src(src);
+            self.debug_assert_no_parallel_edges_dst(dst);
+        }
     }
 }
 

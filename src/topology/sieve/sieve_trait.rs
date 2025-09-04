@@ -12,8 +12,16 @@ pub use crate::topology::cache::InvalidateCache;
 
 /// Core bidirectional incidence API for mesh topology.
 ///
-/// The `Sieve` trait abstracts the concept of a directed incidence structure (such as a mesh or cell complex),
-/// supporting efficient traversal and mutation of arrows (edges) between points (nodes).
+/// The `Sieve` trait abstracts the concept of a directed incidence structure (such as a
+/// mesh or cell complex), supporting efficient traversal and mutation of arrows (edges)
+/// between points (nodes).
+///
+/// Implementations must maintain a **simple directed graph** invariant: for any
+/// `(src, dst)` pair there is at most one stored arrow. Calling [`add_arrow`] on an
+/// existing pair must **replace** the payload in place rather than creating a parallel
+/// edge. All mutation routines are expected to keep the outgoing (`cone`) and
+/// incoming (`support`) adjacencies in perfect mirror, removing or updating both sides
+/// of the structure.
 ///
 /// # Associated Types
 /// - `Point`: The type of points in the sieve (must be `Copy`, `Eq`, `Hash`, and `Ord`).
@@ -45,7 +53,11 @@ where
     /// Incoming arrows to `p`.
     fn support<'a>(&'a self, p: Self::Point) -> Self::SupportIter<'a>;
 
-    /// Insert arrow `src → dst`.
+    /// Insert or replace the arrow `src → dst`.
+    ///
+    /// If an arrow already exists between the two points, its payload is replaced in
+    /// place. Implementations must ensure no parallel edges are created and must keep
+    /// the mirror entry in the support adjacency up to date.
     fn add_arrow(&mut self, src: Self::Point, dst: Self::Point, payload: Self::Payload);
     /// Remove arrow `src → dst`, returning its payload.
     fn remove_arrow(&mut self, src: Self::Point, dst: Self::Point) -> Option<Self::Payload>;
@@ -72,6 +84,15 @@ where
         Self: Sized,
     {
         self.support(p).map(|(q, _)| q)
+    }
+
+    /// Returns true if an arrow `src → dst` exists.
+    #[inline]
+    fn has_arrow(&self, src: Self::Point, dst: Self::Point) -> bool
+    where
+        Self: Sized,
+    {
+        self.cone_points(src).any(|q| q == dst)
     }
 
     /// Return an iterator over **all** points in this Sieve’s domain
