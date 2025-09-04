@@ -36,7 +36,7 @@ use crate::algs::communicator::Communicator;
 /// assert_eq!(local.cone(PointId::new(1).unwrap()).count(), 0);
 /// assert_eq!(local.cone(PointId::new(2).unwrap()).count(), 0);
 /// assert_eq!(local.cone(PointId::new(3).unwrap()).count(), 0);
-/// let ghosts: Vec<_> = overlap.links_to(1).collect();
+/// let ghosts: Vec<_> = overlap.links_to_resolved(1).collect();
 /// assert!(ghosts.contains(&(PointId::new(3).unwrap(), PointId::new(3).unwrap())));
 /// ```
 /// # Example (MPI)
