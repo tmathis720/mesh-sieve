@@ -1,7 +1,13 @@
-//! Sieve module: provides the core [`Sieve`] trait and implementations for in-memory, strata, and arc payload sieves.
+//! Sieve module: provides the core [`Sieve`] trait and in-memory implementations.
 //!
 //! This module defines the main interface for sieve data structures, which are used for efficient set membership queries.
-//! It also provides several implementations, including an in-memory version and others for specialized use cases.
+//! It also provides several implementations, including in-memory variants and helpers for orientation-aware storage.
+//!
+//! # Shared payloads
+//! When payloads are large or reused across many arrows, instantiate a sieve with `Payload = Arc<T>`.
+//! Traversals clone the `Arc` handle without cloning `T`. Use the [`InMemorySieveArc`],
+//! [`InMemoryOrientedSieveArc`], and [`InMemoryStackArc`] type aliases for convenience.
+//! Avoid wrappers that convert between `T` and `Arc<T>` on the fly; they add allocations and defeat sharing.
 
 /// Core trait for sieve data structures.
 pub mod sieve_trait;
@@ -17,8 +23,6 @@ pub mod in_memory_oriented;
 pub mod sieve_ref;
 /// Strata sieve implementation.
 pub mod strata;
-/// Sieve implementation using arc payloads.
-pub mod arc_payload;
 /// Concrete traversal iterators without dynamic dispatch.
 pub mod traversal_iter;
 
@@ -30,3 +34,13 @@ pub use in_memory::InMemorySieve;
 pub use in_memory_oriented::InMemoryOrientedSieve;
 pub use sieve_ref::SieveRef;
 pub use traversal_iter::{ClosureBothIter, ClosureIter, StarIter};
+
+use std::sync::Arc;
+
+/// In-memory sieve storing `Arc<T>` payloads for shared ownership.
+pub type InMemorySieveArc<P, T> = in_memory::InMemorySieve<P, Arc<T>>;
+/// Oriented in-memory sieve storing `Arc<T>` payloads.
+pub type InMemoryOrientedSieveArc<P, T, O = i32> =
+    in_memory_oriented::InMemoryOrientedSieve<P, Arc<T>, O>;
+/// Vertical stack with `Arc<T>` payload sharing.
+pub type InMemoryStackArc<B, C, T> = crate::topology::stack::InMemoryStack<B, C, Arc<T>>;

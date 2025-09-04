@@ -11,6 +11,7 @@ use crate::topology::cache::InvalidateCache;
 use crate::topology::sieve::strata::{compute_strata, StrataCache};
 use once_cell::sync::OnceCell;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// An in-memory sieve implementation using hash maps for adjacency storage.
 ///
@@ -28,6 +29,26 @@ where
     pub adjacency_in: HashMap<P, Vec<(P, T)>>,
     /// Cached strata information for the sieve.
     pub strata: OnceCell<StrataCache<P>>,
+}
+
+impl<P, T> InMemorySieve<P, Arc<T>>
+where
+    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+{
+    /// Insert by value; wraps once into `Arc<T>`.
+    #[inline]
+    pub fn add_arrow_val(&mut self, src: P, dst: P, payload: T) {
+        self.add_arrow(src, dst, Arc::new(payload));
+    }
+
+    /// Batch convenience that wraps each payload once.
+    #[inline]
+    pub fn add_cone_val(&mut self, p: P, chain: impl IntoIterator<Item = (P, T)>) {
+        for (dst, pay) in chain {
+            self.add_arrow(p, dst, Arc::new(pay));
+        }
+        self.invalidate_cache();
+    }
 }
 
 impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T> Default for InMemorySieve<P, T> {
