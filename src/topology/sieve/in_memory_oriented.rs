@@ -3,6 +3,7 @@
 
 use once_cell::sync::OnceCell;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use super::oriented::{Orientation, OrientedSieve};
 use super::sieve_trait::Sieve;
@@ -20,6 +21,24 @@ where
     pub adjacency_out: HashMap<P, Vec<(P, T, O)>>,
     pub adjacency_in: HashMap<P, Vec<(P, T, O)>>,
     pub strata: OnceCell<StrataCache<P>>,
+}
+
+impl<P, T, O> InMemoryOrientedSieve<P, Arc<T>, O>
+where
+    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    O: super::oriented::Orientation,
+{
+    /// Insert by value; wraps once into `Arc<T>`.
+    #[inline]
+    pub fn add_arrow_val(&mut self, src: P, dst: P, payload: T) {
+        self.add_arrow(src, dst, Arc::new(payload));
+    }
+
+    /// Oriented insert by value; wraps once into `Arc<T>`.
+    #[inline]
+    pub fn add_arrow_o_val(&mut self, src: P, dst: P, payload: T, orient: O) {
+        self.add_arrow_o(src, dst, Arc::new(payload), orient);
+    }
 }
 
 impl<P, T, O> Default for InMemoryOrientedSieve<P, T, O>

@@ -9,6 +9,7 @@ use super::sieve::InMemorySieve;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cache::InvalidateCache;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// A `Stack` links a *base* Sieve to a *cap* Sieve via vertical arrows.
 /// Each arrow carries a payload (e.g., orientation or permutation).
@@ -263,6 +264,18 @@ where
     /// Returns a mutable reference to the underlying cap Sieve.
     fn cap_mut(&mut self) -> Result<&mut Self::CapSieve, MeshSieveError> {
         Ok(&mut self.cap)
+    }
+}
+
+impl<B, C, T> InMemoryStack<B, C, Arc<T>>
+where
+    B: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    C: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+{
+    /// Insert by value; wraps once into `Arc<T>`.
+    #[inline]
+    pub fn add_arrow_val(&mut self, base: B, cap: C, payload: T) -> Result<(), MeshSieveError> {
+        self.add_arrow(base, cap, Arc::new(payload))
     }
 }
 

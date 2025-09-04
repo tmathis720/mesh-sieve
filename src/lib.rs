@@ -21,6 +21,13 @@
 //! ```
 //!
 //! For a complete API reference and usage guide, see [API_Guide.md](API_Guide.md).
+//!
+//! ## Shared payloads
+//! When payloads are large or shared across many arrows, instantiate a sieve with `Payload = Arc<T>`.
+//! Traversal and algorithms will clone the `Arc` handle (cheap) without copying `T`.
+//! Use type aliases [`topology::sieve::InMemorySieveArc`],
+//! [`topology::sieve::InMemoryOrientedSieveArc`], and [`topology::sieve::InMemoryStackArc`] for convenience.
+//! Avoid wrappers that convert between `T` and `Arc<T>` on the fly; they add allocations and defeat sharing.
 
 //! Public prelude for mesh-sieve: mesh/data-management library for PDE codes
 //!
@@ -38,9 +45,11 @@ pub mod partitioning;
 
 /// A convenient prelude to import the most-used traits & types:
 pub mod prelude {
-    pub use crate::topology::sieve::{Sieve, MutableSieve, OrientedSieve, Orientation};
-    pub use crate::topology::sieve::{InMemorySieve, InMemoryOrientedSieve};
-    pub use crate::topology::stack::{Stack, InMemoryStack};
+    pub use crate::topology::sieve::{
+        Sieve, MutableSieve, OrientedSieve, Orientation, InMemoryOrientedSieve,
+        InMemoryOrientedSieveArc, InMemorySieve, InMemorySieveArc, InMemoryStackArc,
+    };
+    pub use crate::topology::stack::{InMemoryStack, Stack};
     pub use crate::topology::point::PointId;
     pub use crate::data::atlas::Atlas;
     pub use crate::data::section::{Section, Map};
