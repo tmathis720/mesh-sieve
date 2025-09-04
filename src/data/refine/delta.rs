@@ -1,26 +1,42 @@
 //! A “delta” maps sources→dest slices, e.g. via Orientation permutation.
 //!
-//! This module defines the [`Delta`] trait for slice transformations and provides
-//! an implementation for [`Orientation`] to permute or reverse slices.
+//! This module defines the [`SliceDelta`] trait for slice-level transformations and
+//! provides an implementation for [`Orientation`] to permute or reverse slices.
+//!
+//! # Choosing the right `Delta`
+//! - [`crate::data::refine::delta::SliceDelta`] (re-exported as [`Delta`]):
+//!   transforms one *slice* into another (e.g. reverse for orientation).
+//! - [`crate::overlap::delta::Delta`]: describes *communication/merge semantics*
+//!   for overlap/exchange between parts.
+//!
+//! ## Disambiguation tip
+//! ```rust
+//! use mesh_sieve::data::refine::delta::SliceDelta;            // slice semantics
+//! use mesh_sieve::overlap::delta::Delta as OverlapDelta;      // communication semantics
+//! ```
 
+use crate::mesh_error::MeshSieveError;
 use crate::topology::arrow::Orientation;
 
 /// Trait for applying a transformation (delta) from a source slice to a destination slice.
 ///
 /// Implementors define how to map or permute values from `src` to `dest`.
-pub trait Delta<V: Clone + Default>: Sync {
+pub trait SliceDelta<V: Clone + Default>: Sync {
     /// Apply the transformation from `src` to `dest`.
     ///
-    /// Returns an error if `src.len() != dest.len()`.
-    fn apply(&self, src: &[V], dest: &mut [V]) -> Result<(), crate::mesh_error::MeshSieveError>;
+    /// Returns an error if lengths differ.
+    fn apply(&self, src: &[V], dest: &mut [V]) -> Result<(), MeshSieveError>;
 }
 
-impl<V: Clone + Default> Delta<V> for Orientation {
-    fn apply(&self, src: &[V], dest: &mut [V]) -> Result<(), crate::mesh_error::MeshSieveError> {
+/// Backward-compatible re-export: external code can still name this trait `Delta`.
+pub use SliceDelta as Delta;
+
+impl<V: Clone + Default> SliceDelta<V> for Orientation {
+    fn apply(&self, src: &[V], dest: &mut [V]) -> Result<(), MeshSieveError> {
         let expected = src.len();
         let found = dest.len();
         if expected != found {
-            return Err(crate::mesh_error::MeshSieveError::DeltaLengthMismatch { expected, found });
+            return Err(MeshSieveError::DeltaLengthMismatch { expected, found });
         }
         match self {
             Orientation::Forward => {
@@ -69,9 +85,7 @@ mod tests {
     fn orientation_mismatch_errors() {
         let src = vec![1, 2, 3];
         let mut dst = vec![0; 2];
-        let err = Orientation::Forward
-            .apply(&src, &mut dst)
-            .unwrap_err();
+        let err = Orientation::Forward.apply(&src, &mut dst).unwrap_err();
         assert_eq!(
             err,
             crate::mesh_error::MeshSieveError::DeltaLengthMismatch {
