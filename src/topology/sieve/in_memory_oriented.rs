@@ -12,6 +12,7 @@ use crate::mesh_error::MeshSieveError;
 use crate::topology::cache::InvalidateCache;
 use crate::topology::orientation::Sign;
 use crate::topology::sieve::strata::{StrataCache, compute_strata};
+use crate::topology::_debug_invariants::debug_invariants;
 
 #[derive(Clone, Debug)]
 pub struct InMemoryOrientedSieve<P, T = (), O = Sign>
@@ -27,7 +28,7 @@ where
 impl<P, T, O> InMemoryOrientedSieve<P, Arc<T>, O>
 where
     P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    O: super::oriented::Orientation,
+    O: super::oriented::Orientation + PartialEq + std::fmt::Debug,
 {
     /// Insert by value; wraps once into `Arc<T>`.
     #[inline]
@@ -45,7 +46,7 @@ where
 impl<P, T, O> Default for InMemoryOrientedSieve<P, T, O>
 where
     P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    O: Orientation,
+    O: Orientation + PartialEq + std::fmt::Debug,
 {
     fn default() -> Self {
         Self {
@@ -60,7 +61,7 @@ impl<P, T, O> InMemoryOrientedSieve<P, T, O>
 where
     P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
     T: Clone,
-    O: Orientation,
+    O: Orientation + PartialEq + std::fmt::Debug,
 {
     pub fn new() -> Self {
         Self::default()
@@ -183,6 +184,59 @@ where
         }
     }
 
+    #[cfg(any(debug_assertions, feature = "strict-invariants"))]
+    pub(crate) fn debug_assert_invariants(&self)
+    where
+        O: super::oriented::Orientation + PartialEq + std::fmt::Debug,
+    {
+        use crate::topology::_debug_invariants as dbg;
+
+        let out_view: std::collections::HashMap<P, Vec<(P, ())>> = self
+            .adjacency_out
+            .iter()
+            .map(|(&src, v)| (src, v.iter().map(|(dst, _, _)| (*dst, ())).collect()))
+            .collect();
+        dbg::assert_no_dups_per_src(&out_view);
+
+        let out_pairs = dbg::count_pairs(self.adjacency_out.iter().flat_map(|(&src, vec)| {
+            vec.iter().map(move |(dst, _, _)| (src, *dst))
+        }));
+        let in_pairs = dbg::count_pairs(self.adjacency_in.iter().flat_map(|(&dst, vec)| {
+            vec.iter().map(move |(src, _, _)| (*src, dst))
+        }));
+        dbg::counts_equal(&out_pairs, &in_pairs, "adjacency_out", "adjacency_in");
+
+        fn check_orient<P, T, O>(s: &InMemoryOrientedSieve<P, T, O>)
+        where
+            P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+            O: super::oriented::Orientation + PartialEq + std::fmt::Debug,
+        {
+            use std::collections::HashMap;
+            let mut out_map: HashMap<(P, P), O> = HashMap::new();
+            for (&src, v) in &s.adjacency_out {
+                for (dst, _, o) in v {
+                    let prev = out_map.insert((src, *dst), *o);
+                    debug_assert!(prev.is_none(), "duplicate (src,dst) unexpectedly seen");
+                }
+            }
+            for (&dst, v) in &s.adjacency_in {
+                for (src, _, o_in) in v {
+                    let Some(o_out) = out_map.get(&(*src, dst)) else {
+                        debug_assert!(false, "in mirror without out entry: ({:?}->{:?})", src, dst);
+                        continue;
+                    };
+                    debug_assert_eq!(
+                        o_in, o_out,
+                        "orientation mismatch for ({:?}->{:?}): in={:?}, out={:?}",
+                        src, dst, o_in, o_out
+                    );
+                }
+            }
+        }
+
+        check_orient(self);
+    }
+
     /// Pre-size cone/support capacities from `(src, dst, count)` tuples.
     pub fn reserve_from_edge_counts(
         &mut self,
@@ -242,7 +296,7 @@ impl<P, T, O> Sieve for InMemoryOrientedSieve<P, T, O>
 where
     P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
     T: Clone,
-    O: Orientation,
+    O: Orientation + PartialEq + std::fmt::Debug,
 {
     type Point = P;
     type Payload = T;
@@ -295,8 +349,7 @@ where
             }
         }
         self.invalidate_cache();
-        #[cfg(debug_assertions)]
-        self.debug_assert_consistent();
+        debug_invariants!(self);
         removed
     }
 
@@ -361,7 +414,7 @@ impl<P, T, O> MutableSieve for InMemoryOrientedSieve<P, T, O>
 where
     P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
     T: Clone,
-    O: Orientation,
+    O: Orientation + PartialEq + std::fmt::Debug,
 {
     fn reserve_cone(&mut self, p: P, additional: usize) {
         self.adjacency_out.entry(p).or_default().reserve(additional);
@@ -375,8 +428,7 @@ where
         self.adjacency_out.entry(p).or_default();
         self.adjacency_in.entry(p).or_default();
         self.invalidate_cache();
-        #[cfg(debug_assertions)]
-        self.debug_assert_consistent();
+        debug_invariants!(self);
     }
 
     fn remove_point(&mut self, p: P) {
@@ -387,22 +439,19 @@ where
             self.scrub_incoming_only(p);
         }
         self.invalidate_cache();
-        #[cfg(debug_assertions)]
-        self.debug_assert_consistent();
+        debug_invariants!(self);
     }
 
     fn add_base_point(&mut self, p: P) {
         self.adjacency_out.entry(p).or_default();
         self.invalidate_cache();
-        #[cfg(debug_assertions)]
-        self.debug_assert_consistent();
+        debug_invariants!(self);
     }
 
     fn add_cap_point(&mut self, p: P) {
         self.adjacency_in.entry(p).or_default();
         self.invalidate_cache();
-        #[cfg(debug_assertions)]
-        self.debug_assert_consistent();
+        debug_invariants!(self);
     }
 
     fn remove_base_point(&mut self, p: P) {
@@ -411,8 +460,7 @@ where
             self.adjacency_out.remove(&p);
         }
         self.invalidate_cache();
-        #[cfg(debug_assertions)]
-        self.debug_assert_consistent();
+        debug_invariants!(self);
     }
 
     fn remove_cap_point(&mut self, p: P) {
@@ -421,8 +469,7 @@ where
             self.adjacency_in.remove(&p);
         }
         self.invalidate_cache();
-        #[cfg(debug_assertions)]
-        self.debug_assert_consistent();
+        debug_invariants!(self);
     }
 
     fn set_cone(&mut self, p: P, chain: impl IntoIterator<Item = (P, T)>) {
@@ -474,12 +521,7 @@ where
         }
 
         self.invalidate_cache();
-
-        #[cfg(debug_assertions)]
-        {
-            self.debug_assert_consistent();
-            self.debug_assert_no_parallel_edges_src(p);
-        }
+        debug_invariants!(self);
     }
 
     fn add_cone(&mut self, p: P, chain: impl IntoIterator<Item = (P, T)>) {
@@ -514,6 +556,7 @@ where
             }
         }
         self.invalidate_cache();
+        debug_invariants!(self);
     }
 
     fn set_support(&mut self, q: P, chain: impl IntoIterator<Item = (P, T)>) {
@@ -563,14 +606,8 @@ where
                 .or_default()
                 .push((q, pay, O::default()));
         }
-
         self.invalidate_cache();
-
-        #[cfg(debug_assertions)]
-        {
-            self.debug_assert_consistent();
-            self.debug_assert_no_parallel_edges_dst(q);
-        }
+        debug_invariants!(self);
     }
 
     fn add_support(&mut self, q: P, chain: impl IntoIterator<Item = (P, T)>) {
@@ -605,6 +642,7 @@ where
             }
         }
         self.invalidate_cache();
+        debug_invariants!(self);
     }
 }
 
@@ -612,7 +650,7 @@ impl<P, T, O> OrientedSieve for InMemoryOrientedSieve<P, T, O>
 where
     P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
     T: Clone,
-    O: Orientation,
+    O: Orientation + PartialEq + std::fmt::Debug,
 {
     type Orient = O;
     type ConeOIter<'a>
@@ -666,13 +704,7 @@ where
         }
 
         self.invalidate_cache();
-
-        #[cfg(debug_assertions)]
-        {
-            self.debug_assert_consistent();
-            self.debug_assert_no_parallel_edges_src(src);
-            self.debug_assert_no_parallel_edges_dst(dst);
-        }
+        debug_invariants!(self);
     }
 }
 
@@ -680,7 +712,7 @@ impl<P, T, O> InvalidateCache for InMemoryOrientedSieve<P, T, O>
 where
     P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
     T: Clone,
-    O: Orientation,
+    O: Orientation + PartialEq + std::fmt::Debug,
 {
     #[inline]
     fn invalidate_cache(&mut self) {

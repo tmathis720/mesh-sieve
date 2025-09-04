@@ -12,6 +12,7 @@ use crate::topology::sieve::strata::{compute_strata, StrataCache};
 use once_cell::sync::OnceCell;
 use std::collections::HashMap;
 use std::sync::Arc;
+use crate::topology::_debug_invariants::debug_invariants;
 
 /// An in-memory sieve implementation using hash maps for adjacency storage.
 ///
@@ -128,32 +129,35 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> InMemoryS
         }
     }
 
-    #[cfg(debug_assertions)]
-    pub fn debug_assert_consistent(&self) {
-        for (src, outs) in &self.adjacency_out {
-            for (dst, _) in outs {
-                let ok = self
-                    .adjacency_in
-                    .get(dst)
-                    .map_or(false, |ins| ins.iter().any(|(s, _)| s == src));
-                debug_assert!(
-                    ok,
-                    "Missing mirror in[{dst:?}] for out edge ({src:?} -> {dst:?})"
-                );
-            }
-        }
-        for (dst, ins) in &self.adjacency_in {
-            for (src, _) in ins {
-                let ok = self
-                    .adjacency_out
-                    .get(src)
-                    .map_or(false, |outs| outs.iter().any(|(d, _)| d == dst));
-                debug_assert!(
-                    ok,
-                    "Missing mirror out[{src:?}] for in edge ({src:?} -> {dst:?})"
-                );
-            }
-        }
+    #[cfg(any(debug_assertions, feature = "strict-invariants"))]
+    pub(crate) fn debug_assert_invariants(&self) {
+        use crate::topology::_debug_invariants as dbg;
+
+        let out_view: std::collections::HashMap<P, Vec<(P, ())>> = self
+            .adjacency_out
+            .iter()
+            .map(|(&src, v)| (src, v.iter().map(|(dst, _)| (*dst, ())).collect()))
+            .collect();
+        dbg::assert_no_dups_per_src(&out_view);
+
+        let out_total: usize = self.adjacency_out.values().map(|v| v.len()).sum();
+        let in_total: usize = self.adjacency_in.values().map(|v| v.len()).sum();
+        debug_assert_eq!(out_total, in_total, "total out != total in");
+
+        let out_pairs = dbg::count_pairs(self.adjacency_out.iter().flat_map(|(&src, vec)| {
+            vec.iter().map(move |(dst, _)| (src, *dst))
+        }));
+        let in_pairs = dbg::count_pairs(self.adjacency_in.iter().flat_map(|(&dst, vec)| {
+            vec.iter().map(move |(src, _)| (*src, dst))
+        }));
+        dbg::counts_equal(&out_pairs, &in_pairs, "adjacency_out", "adjacency_in");
+
+        // Optional self-loop check:
+        // for (&src, vec) in &self.adjacency_out {
+        //     for (dst, _) in vec {
+        //         debug_assert_ne!(src, *dst, "self-loop forbidden: {:?}", src);
+        //     }
+        // }
     }
 
     #[inline]
@@ -161,38 +165,6 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> InMemoryS
         self.adjacency_out
             .get(&src)
             .map_or(false, |v| v.iter().any(|(d, _)| *d == dst))
-    }
-
-    #[cfg(debug_assertions)]
-    pub fn debug_assert_no_parallel_edges_src(&self, src: P) {
-        if let Some(v) = self.adjacency_out.get(&src) {
-            use std::collections::HashSet;
-            let mut seen = HashSet::new();
-            for (dst, _) in v {
-                assert!(
-                    seen.insert(*dst),
-                    "duplicate edges out of {:?} to {:?}",
-                    src,
-                    dst
-                );
-            }
-        }
-    }
-
-    #[cfg(debug_assertions)]
-    pub fn debug_assert_no_parallel_edges_dst(&self, dst: P) {
-        if let Some(v) = self.adjacency_in.get(&dst) {
-            use std::collections::HashSet;
-            let mut seen = HashSet::new();
-            for (src, _) in v {
-                assert!(
-                    seen.insert(*src),
-                    "duplicate edges into {:?} from {:?}",
-                    dst,
-                    src
-                );
-            }
-        }
     }
 
     /// Pre-size cone/support capacities from `(src, dst, count)` tuples.
@@ -349,13 +321,7 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
         }
 
         self.invalidate_cache();
-
-        #[cfg(debug_assertions)]
-        {
-            self.debug_assert_consistent();
-            self.debug_assert_no_parallel_edges_src(src);
-            self.debug_assert_no_parallel_edges_dst(dst);
-        }
+        debug_invariants!(self);
     }
 
     /// Removes the arrow from `src` to `dst`, returning the associated payload if it existed.
@@ -385,8 +351,7 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
             }
         }
         self.invalidate_cache();
-        #[cfg(debug_assertions)]
-        self.debug_assert_consistent();
+        debug_invariants!(self);
         removed
     }
 
@@ -488,8 +453,7 @@ where
         self.adjacency_out.entry(p).or_default();
         self.adjacency_in.entry(p).or_default();
         self.invalidate_cache();
-        #[cfg(debug_assertions)]
-        self.debug_assert_consistent();
+        debug_invariants!(self);
     }
 
     fn remove_point(&mut self, p: P) {
@@ -500,22 +464,19 @@ where
             self.scrub_incoming_only(p);
         }
         self.invalidate_cache();
-        #[cfg(debug_assertions)]
-        self.debug_assert_consistent();
+        debug_invariants!(self);
     }
 
     fn add_base_point(&mut self, p: P) {
         self.adjacency_out.entry(p).or_default();
         self.invalidate_cache();
-        #[cfg(debug_assertions)]
-        self.debug_assert_consistent();
+        debug_invariants!(self);
     }
 
     fn add_cap_point(&mut self, p: P) {
         self.adjacency_in.entry(p).or_default();
         self.invalidate_cache();
-        #[cfg(debug_assertions)]
-        self.debug_assert_consistent();
+        debug_invariants!(self);
     }
 
     fn remove_base_point(&mut self, p: P) {
@@ -524,8 +485,7 @@ where
             self.adjacency_out.remove(&p);
         }
         self.invalidate_cache();
-        #[cfg(debug_assertions)]
-        self.debug_assert_consistent();
+        debug_invariants!(self);
     }
 
     fn remove_cap_point(&mut self, p: P) {
@@ -534,8 +494,7 @@ where
             self.adjacency_in.remove(&p);
         }
         self.invalidate_cache();
-        #[cfg(debug_assertions)]
-        self.debug_assert_consistent();
+        debug_invariants!(self);
     }
 
     fn set_cone(&mut self, p: P, chain: impl IntoIterator<Item = (P, T)>) {
@@ -587,12 +546,7 @@ where
         }
 
         self.invalidate_cache();
-
-        #[cfg(debug_assertions)]
-        {
-            self.debug_assert_consistent();
-            self.debug_assert_no_parallel_edges_src(p);
-        }
+        debug_invariants!(self);
     }
 
     fn add_cone(&mut self, p: P, chain: impl IntoIterator<Item = (P, T)>) {
@@ -626,6 +580,7 @@ where
             }
         }
         self.invalidate_cache();
+        debug_invariants!(self);
     }
 
     fn set_support(&mut self, q: P, chain: impl IntoIterator<Item = (P, T)>) {
@@ -677,12 +632,7 @@ where
         }
 
         self.invalidate_cache();
-
-        #[cfg(debug_assertions)]
-        {
-            self.debug_assert_consistent();
-            self.debug_assert_no_parallel_edges_dst(q);
-        }
+        debug_invariants!(self);
     }
 
     fn add_support(&mut self, q: P, chain: impl IntoIterator<Item = (P, T)>) {
@@ -716,6 +666,7 @@ where
             }
         }
         self.invalidate_cache();
+        debug_invariants!(self);
     }
 }
 

@@ -8,6 +8,12 @@
 //!
 //! Most users will interact with the `Sieve` trait and the `InMemorySieve` implementation for building and traversing mesh topologies.
 
+//! ## Edge uniqueness
+//! A topology stores a *set* of arrows: for any `(src, dst)` pair there is at most one edge.
+//! Insertion behaves as an upsert, replacing existing payloads (and orientations) in place.
+//! Duplicate edges are forbidden; debug builds assert that the outgoing and incoming maps
+//! remain perfect mirrors and contain no parallel edges.
+
 pub mod arrow;
 pub mod cache;
 pub mod orientation;
@@ -15,6 +21,7 @@ pub mod point;
 pub mod sieve;
 pub mod stack;
 pub mod utils;
+mod _debug_invariants;
 
 pub use cache::InvalidateCache;
 pub use orientation::*;

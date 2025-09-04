@@ -26,6 +26,12 @@ pub use crate::topology::cache::InvalidateCache;
 /// incoming (`support`) adjacencies in perfect mirror, removing or updating both sides
 /// of the structure.
 ///
+/// ## Edge uniqueness (no multi-edges)
+/// A Sieve stores at most one arrow for any `(src, dst)` pair. [`add_arrow`] behaves as
+/// an upsert: inserting when missing and replacing payload (and orientation) when present.
+/// Debug builds verify this invariant and panic if parallel edges or mirror mismatches
+/// are detected.
+///
 /// # Associated Types
 /// - `Point`: The type of points in the sieve (must be `Copy`, `Eq`, `Hash`, and `Ord`).
 /// - `Payload`: The type of payloads associated with arrows.
