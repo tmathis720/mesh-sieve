@@ -281,12 +281,12 @@ let got = recv.wait().unwrap();
 ### 9.2. Overlap
 
 An `Overlap` is a `Sieve<PointId, Remote>` describing sharing:
-`local_point ──(Remote{rank, remote_point})──▶ partition_point(rank)`
+`local_point ──(Remote{rank, remote_point: Option<PointId>})──▶ partition_point(rank)`
 
 ```rust
 use mesh_sieve::overlap::overlap::{Overlap, Remote};
 let mut ovlp = Overlap::default();
-ovlp.add_arrow(local_p, remote_partition_pt, Remote { rank: nbr, remote_point: remote_p });
+ovlp.add_arrow(local_p, remote_partition_pt, Remote { rank: nbr, remote_point: Some(remote_p) });
 ```
 
 ### 9.3. Completion Algorithms
@@ -295,7 +295,7 @@ ovlp.add_arrow(local_p, remote_partition_pt, Remote { rank: nbr, remote_point: r
 
   * `complete_sieve(&mut overlap, &overlap_clone, &comm, my_rank)`
   * `complete_sieve_until_converged(..)`
-  * Preserves `Remote { rank, remote_point }` exactly.
+  * Preserves `Remote { rank, remote_point: Some(id) }` exactly.
 
 * **Section completion (data):**
 

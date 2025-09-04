@@ -68,7 +68,7 @@ Other examples:
 
 ## Correctness Improvements
 
-* Preserve the **remote mesh point id** in overlap completion wires; reconstruct `Remote { rank, remote_point }` exactly on receive.
+* Preserve the **remote mesh point id** in overlap completion wires; reconstruct `Remote { rank, remote_point: Some(id) }` exactly on receive.
 * Tighten `Overlap::add_link` to respect closure-of-support and avoid duplicate links efficiently.
 * Enforce **minimality** in `meet`/`join` (return only minimal shared faces / minimal cofaces).
 
