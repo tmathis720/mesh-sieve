@@ -25,7 +25,7 @@ fn two_rank_tetra_completion() {
         f0,
         Remote {
             rank: 0,
-            remote_point: f0,
+            remote_point: Some(f0),
         },
     );
     sieve0.add_arrow(
@@ -33,7 +33,7 @@ fn two_rank_tetra_completion() {
         f1,
         Remote {
             rank: 0,
-            remote_point: f1,
+            remote_point: Some(f1),
         },
     );
     sieve0.add_arrow(
@@ -41,7 +41,7 @@ fn two_rank_tetra_completion() {
         f2,
         Remote {
             rank: 0,
-            remote_point: f2,
+            remote_point: Some(f2),
         },
     );
     // Rank 1 sieve
@@ -51,7 +51,7 @@ fn two_rank_tetra_completion() {
         f3,
         Remote {
             rank: 1,
-            remote_point: f3,
+            remote_point: Some(f3),
         },
     );
     sieve1.add_arrow(
@@ -59,7 +59,7 @@ fn two_rank_tetra_completion() {
         f4,
         Remote {
             rank: 1,
-            remote_point: f4,
+            remote_point: Some(f4),
         },
     );
     sieve1.add_arrow(
@@ -67,7 +67,7 @@ fn two_rank_tetra_completion() {
         f5,
         Remote {
             rank: 1,
-            remote_point: f5,
+            remote_point: Some(f5),
         },
     );
     // Overlap: shared face mapping
@@ -92,7 +92,7 @@ fn two_rank_tetra_completion() {
             remote,
             Remote {
                 rank: 1,
-                remote_point: remote,
+                remote_point: Some(remote),
             },
         );
         // Add to sieve1: cell1 -> local
@@ -101,7 +101,7 @@ fn two_rank_tetra_completion() {
             local,
             Remote {
                 rank: 0,
-                remote_point: local,
+                remote_point: Some(local),
             },
         );
     }

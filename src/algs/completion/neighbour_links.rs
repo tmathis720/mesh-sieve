@@ -7,7 +7,7 @@
 
 use crate::data::section::Section;
 use crate::mesh_error::MeshSieveError;
-use crate::overlap::overlap::{local, Overlap};
+use crate::overlap::overlap::{Overlap, local};
 use crate::topology::point::PointId;
 use crate::topology::sieve::sieve_trait::Sieve;
 use std::collections::HashMap;
@@ -43,7 +43,7 @@ where
             if rem.rank != my_rank {
                 out.entry(rem.rank)
                     .or_default()
-                    .push((p, rem.remote_point));
+                    .push((p, rem.remote_point.expect("overlap unresolved")));
             }
         }
     }
@@ -57,9 +57,7 @@ where
                 continue;
             }
             for (local_pt, remote_pt) in ovlp.links_to(nbr) {
-                out.entry(nbr)
-                    .or_default()
-                    .push((remote_pt, local_pt));
+                out.entry(nbr).or_default().push((remote_pt, local_pt));
             }
         }
     }
@@ -79,7 +77,6 @@ where
     Ok(out)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,11 +88,15 @@ mod tests {
     fn make_section(points: &[u64]) -> Section<i32> {
         let mut atlas = Atlas::default();
         for &p in points {
-            atlas.try_insert(PointId::new(p).unwrap(), 1).expect("Failed to insert point into atlas");
+            atlas
+                .try_insert(PointId::new(p).unwrap(), 1)
+                .expect("Failed to insert point into atlas");
         }
         let mut section = Section::new(atlas);
         for &p in points {
-            section.try_set(PointId::new(p).unwrap(), &[p as i32]).expect("Failed to set section value");
+            section
+                .try_set(PointId::new(p).unwrap(), &[p as i32])
+                .expect("Failed to set section value");
         }
         section
     }
@@ -103,7 +104,11 @@ mod tests {
     fn make_overlap(_owner: usize, ghost: usize, owned: &[u64], ghosted: &[u64]) -> Overlap {
         let mut ovlp = Overlap::new();
         for (&src, &dst) in owned.iter().zip(ghosted.iter()) {
-            ovlp.add_link(PointId::new(src).unwrap(), ghost, PointId::new(dst).unwrap());
+            ovlp.add_link(
+                PointId::new(src).unwrap(),
+                ghost,
+                PointId::new(dst).unwrap(),
+            );
         }
         ovlp
     }
@@ -115,7 +120,10 @@ mod tests {
         let mut ovlp = make_overlap(0, 1, &[1], &[101]);
         let links = neighbour_links(&section, &mut ovlp, 0).unwrap();
         assert_eq!(links.len(), 1);
-        assert_eq!(links[&1], vec![(PointId::new(1).unwrap(), PointId::new(101).unwrap())]);
+        assert_eq!(
+            links[&1],
+            vec![(PointId::new(1).unwrap(), PointId::new(101).unwrap())]
+        );
     }
 
     #[test]
@@ -124,7 +132,10 @@ mod tests {
         let section = make_section(&[]); // ghost owns nothing
         let mut ovlp = make_overlap(0, 1, &[1], &[101]);
         let links = neighbour_links(&section, &mut ovlp, 1);
-        assert!(matches!(links, Err(MeshSieveError::MissingOverlap { .. })), "Expected MissingOverlap error for ghost rank with no inbound links");
+        assert!(
+            matches!(links, Err(MeshSieveError::MissingOverlap { .. })),
+            "Expected MissingOverlap error for ghost rank with no inbound links"
+        );
     }
 
     #[test]
@@ -145,7 +156,13 @@ mod tests {
         ovlp.add_link(PointId::new(2).unwrap(), 2, PointId::new(201).unwrap());
         let links = neighbour_links(&section, &mut ovlp, 0).unwrap();
         assert_eq!(links.len(), 2);
-        assert_eq!(links[&1], vec![(PointId::new(1).unwrap(), PointId::new(101).unwrap())]);
-        assert_eq!(links[&2], vec![(PointId::new(2).unwrap(), PointId::new(201).unwrap())]);
+        assert_eq!(
+            links[&1],
+            vec![(PointId::new(1).unwrap(), PointId::new(101).unwrap())]
+        );
+        assert_eq!(
+            links[&2],
+            vec![(PointId::new(2).unwrap(), PointId::new(201).unwrap())]
+        );
     }
 }

@@ -10,12 +10,12 @@ use bytemuck::Zeroable;
 
 use crate::algs::communicator::Wait;
 use crate::mesh_error::MeshSieveError;
-use crate::overlap::overlap::{local, OvlId, Remote};
+use crate::overlap::overlap::{OvlId, Remote, local};
 use crate::prelude::{Communicator, Overlap};
-use crate::topology::point::PointId;
-use crate::topology::sieve::sieve_trait::Sieve;
-use crate::topology::sieve::InMemorySieve;
 use crate::topology::cache::InvalidateCache;
+use crate::topology::point::PointId;
+use crate::topology::sieve::InMemorySieve;
+use crate::topology::sieve::sieve_trait::Sieve;
 
 /// Packed arrow for network transport.
 #[repr(C)]
@@ -54,7 +54,7 @@ pub fn complete_sieve<C: Communicator>(
                     nb_links
                         .entry(rem.rank)
                         .or_default()
-                        .push((p, rem.remote_point));
+                        .push((p, rem.remote_point.expect("overlap unresolved")));
                 }
             }
         }
@@ -67,7 +67,7 @@ pub fn complete_sieve<C: Communicator>(
                     nb_links
                         .entry(rem.rank)
                         .or_default()
-                        .push((rem.remote_point, src_pt));
+                        .push((rem.remote_point.expect("overlap unresolved"), src_pt));
                 }
             }
         }
@@ -146,7 +146,7 @@ pub fn complete_sieve<C: Communicator>(
                         triples.push(WireTriple {
                             src: src.get(),
                             dst: d.get(),
-                            remote_point: payload.remote_point.get(),
+                            remote_point: payload.remote_point.expect("overlap unresolved").get(),
                             rank: payload.rank,
                         });
                     }
@@ -180,7 +180,7 @@ pub fn complete_sieve<C: Communicator>(
                         (Ok(src_pt), Ok(dst_pt), Ok(rem_pt)) => {
                             let payload = Remote {
                                 rank,
-                                remote_point: rem_pt,
+                                remote_point: Some(rem_pt),
                             };
                             if inserted.insert((src_pt, dst_pt)) {
                                 sieve

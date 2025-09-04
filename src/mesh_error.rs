@@ -133,6 +133,22 @@ pub enum MeshSieveError {
         expected: usize,
         got: usize,
     },
+
+    #[error("Overlap link not found for (local={0}, rank={1})")]
+    OverlapLinkMissing(crate::topology::point::PointId, usize),
+
+    #[error("Overlap invariant: payload.rank ({found}) != rank node ({expected})")]
+    OverlapRankMismatch { expected: usize, found: usize },
+
+    #[error(
+        "Overlap resolution conflict for (local={local}, rank={rank}): existing={existing:?}, new={new:?}"
+    )]
+    OverlapResolutionConflict {
+        local: crate::topology::point::PointId,
+        rank: usize,
+        existing: Option<crate::topology::point::PointId>,
+        new: crate::topology::point::PointId,
+    },
 }
 
 impl PartialEq for MeshSieveError {
@@ -251,6 +267,31 @@ impl PartialEq for MeshSieveError {
                 },
             ) => n1 == n2 && e1 == e2 && g1 == g2,
             (Communication(a), Communication(b)) => a == b,
+            (OverlapLinkMissing(a1, b1), OverlapLinkMissing(a2, b2)) => a1 == a2 && b1 == b2,
+            (
+                OverlapRankMismatch {
+                    expected: e1,
+                    found: f1,
+                },
+                OverlapRankMismatch {
+                    expected: e2,
+                    found: f2,
+                },
+            ) => e1 == e2 && f1 == f2,
+            (
+                OverlapResolutionConflict {
+                    local: l1,
+                    rank: r1,
+                    existing: ex1,
+                    new: n1,
+                },
+                OverlapResolutionConflict {
+                    local: l2,
+                    rank: r2,
+                    existing: ex2,
+                    new: n2,
+                },
+            ) => l1 == l2 && r1 == r2 && ex1 == ex2 && n1 == n2,
             _ => false,
         }
     }
