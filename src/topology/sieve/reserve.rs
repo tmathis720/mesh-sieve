@@ -29,7 +29,7 @@ impl<P, T, O> SieveReserveExt<P> for InMemoryOrientedSieve<P, T, O>
 where
     P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
     T: Clone,
-    O: super::oriented::Orientation,
+    O: super::oriented::Orientation + PartialEq + std::fmt::Debug,
 {
     fn reserve_from_edge_counts(&mut self, counts: impl IntoIterator<Item = (P, P, usize)>) {
         InMemoryOrientedSieve::reserve_from_edge_counts(self, counts);

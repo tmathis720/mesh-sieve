@@ -9,6 +9,11 @@
 //! path (left-accumulating). `inverse(a)` is the orientation used when the
 //! same arrow is traversed in reverse.
 //!
+//! ## Mirror rule
+//! The orientation stored on `src → dst` must match the orientation found in the
+//! mirror entry within `support(dst)`. Debug builds verify this when the orientation
+//! type implements `PartialEq`.
+//!
 //! ## Choosing an orientation type
 //!
 //! | Use case                    | Type |

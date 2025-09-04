@@ -10,6 +10,7 @@ use crate::mesh_error::MeshSieveError;
 use crate::topology::cache::InvalidateCache;
 use std::collections::HashMap;
 use std::sync::Arc;
+use crate::topology::_debug_invariants::debug_invariants;
 
 /// A `Stack` links a *base* Sieve to a *cap* Sieve via vertical arrows.
 /// Each arrow carries a payload (e.g., orientation or permutation).
@@ -225,13 +226,7 @@ where
 
         InvalidateCache::invalidate_cache(&mut self.base);
         InvalidateCache::invalidate_cache(&mut self.cap);
-
-        #[cfg(debug_assertions)]
-        {
-            self.debug_assert_no_parallel_edges_base(base);
-            self.debug_assert_no_parallel_edges_cap(cap);
-        }
-
+        debug_invariants!(self);
         Ok(())
     }
 
@@ -268,6 +263,7 @@ where
         }
         InvalidateCache::invalidate_cache(&mut self.base);
         InvalidateCache::invalidate_cache(&mut self.cap);
+        debug_invariants!(self);
         Ok(removed)
     }
 
@@ -316,25 +312,37 @@ where
     pub fn cap_points(&self) -> impl Iterator<Item = C> + '_ {
         self.down.keys().copied()
     }
+    #[cfg(any(debug_assertions, feature = "strict-invariants"))]
+    pub(crate) fn debug_assert_invariants(&self) {
+        use std::collections::HashSet;
 
-    #[cfg(debug_assertions)]
-    fn debug_assert_no_parallel_edges_base(&self, b: B) {
-        if let Some(v) = self.up.get(&b) {
-            use std::collections::HashSet;
+        for (b, v) in &self.up {
             let mut seen = HashSet::new();
             for (c, _) in v {
-                assert!(seen.insert(*c), "duplicate base→cap ({:?}→{:?})", b, c);
+                debug_assert!(seen.insert(*c), "duplicate vertical arrow base={:?} cap={:?}", b, c);
             }
         }
-    }
-
-    #[cfg(debug_assertions)]
-    fn debug_assert_no_parallel_edges_cap(&self, c: C) {
-        if let Some(v) = self.down.get(&c) {
-            use std::collections::HashSet;
+        for (c, v) in &self.down {
             let mut seen = HashSet::new();
             for (b, _) in v {
-                assert!(seen.insert(*b), "duplicate cap→base ({:?}→{:?})", c, b);
+                debug_assert!(seen.insert(*b), "duplicate vertical arrow cap={:?} base={:?}", c, b);
+            }
+        }
+
+        let out_total: usize = self.up.values().map(|v| v.len()).sum();
+        let in_total: usize = self.down.values().map(|v| v.len()).sum();
+        debug_assert_eq!(out_total, in_total, "stack up/down totals differ");
+
+        for (b, ups) in &self.up {
+            for (c, _) in ups {
+                let has = self.down.get(c).map_or(false, |v| v.iter().any(|(bb, _)| *bb == *b));
+                debug_assert!(has, "stack mirror missing: up {:?}->{:?} has no down", b, c);
+            }
+        }
+        for (c, downs) in &self.down {
+            for (b, _) in downs {
+                let has = self.up.get(b).map_or(false, |v| v.iter().any(|(cc, _)| *cc == *c));
+                debug_assert!(has, "stack mirror missing: down {:?}->{:?} has no up", b, c);
             }
         }
     }
