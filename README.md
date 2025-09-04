@@ -63,6 +63,7 @@ Other examples:
 * Add **point-only adapters** (`cone_points`, `support_points`) to eliminate payload clones during traversal.
 * Provide **deterministic traversal order** via a height-major **chart** (index ↔ point) and **bitset** visited sets.
 * Make `InMemorySieve` mutators **degree-local** and **prealloc-aware**: `reserve_cone`, `reserve_support`, and incremental mirror updates for `set_cone`/`set_support` (no global rebuilds).
+* Extend the same reserve hints to `InMemoryOrientedSieve` and `InMemoryStack`; add bulk helpers (`reserve_from_edges`, `reserve_from_edge_counts`) and `shrink_to_fit` to reclaim memory.
 
 ## Correctness Improvements
 

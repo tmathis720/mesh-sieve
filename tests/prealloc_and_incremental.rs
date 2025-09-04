@@ -25,6 +25,14 @@ fn reserve_cone_and_support_do_not_change_topology() {
     s2_after.sort_unstable();
     assert_eq!(c1, c1_after);
     assert_eq!(s2, s2_after);
+
+    // Cache is untouched by reserve
+    let d1 = s.diameter().unwrap();
+    let ptr_before = s.strata.get().unwrap() as *const _;
+    let d2 = s.diameter().unwrap();
+    let ptr_after = s.strata.get().unwrap() as *const _;
+    assert_eq!(d1, d2);
+    assert_eq!(ptr_before, ptr_after);
 }
 
 #[test]

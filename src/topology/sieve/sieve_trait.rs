@@ -652,6 +652,16 @@ where
     }
 
     /// Hint to preallocate additional space in the cone (outgoing) adjacency of `p`.
+    ///
+    /// # Contract
+    /// - Pure performance hint; **must not** change topology or payloads.
+    /// - **Must not** invalidate derived caches; it has no logical effect on the mesh.
+    /// - Implementations may over-allocate but must not shrink.
+    /// - Safe to call redundantly.
+    ///
+    /// Use this before bulk [`add_arrow`](Sieve::add_arrow) / [`add_cone`](Sieve::add_cone)
+    /// when the number of outgoing arrows to be appended for `p` is known or can be
+    /// estimated (e.g. during mesh construction).
     fn reserve_cone(&mut self, p: Self::Point, additional: usize)
     where
         Self: super::mutable::MutableSieve,
@@ -660,6 +670,9 @@ where
     }
 
     /// Hint to preallocate additional space in the support (incoming) adjacency of `q`.
+    ///
+    /// Mirrors [`reserve_cone`](Sieve::reserve_cone); use when you know/estimate how many
+    /// incoming arrows will end at `q`.
     fn reserve_support(&mut self, q: Self::Point, additional: usize)
     where
         Self: super::mutable::MutableSieve,
