@@ -48,6 +48,7 @@ pub mod prelude {
     pub use crate::topology::sieve::{
         Sieve, MutableSieve, OrientedSieve, Orientation, InMemoryOrientedSieve,
         InMemoryOrientedSieveArc, InMemorySieve, InMemorySieveArc, InMemoryStackArc,
+        SieveQueryExt, SieveBuildExt, InMemorySieveDeterministic,
     };
     pub use crate::topology::stack::{InMemoryStack, Stack};
     pub use crate::topology::point::PointId;

@@ -12,6 +12,7 @@ pub mod metis_partition;
 pub mod partition;
 pub mod traversal;
 pub mod traversal_ref;
+pub mod reduction;
 pub mod rcm;
 
 pub use completion::complete_section;

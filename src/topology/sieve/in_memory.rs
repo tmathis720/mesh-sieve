@@ -17,6 +17,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use crate::topology::_debug_invariants::debug_invariants;
 use crate::topology::bounds::{PointLike, PayloadLike};
+use super::query_ext::SieveQueryExt;
+use super::build_ext::SieveBuildExt;
 
 /// An in-memory sieve implementation using hash maps for adjacency storage.
 ///
@@ -445,6 +447,107 @@ impl<P: PointLike, T: PayloadLike> Sieve for InMemorySieve<P, T>
 
     fn chart_points(&mut self) -> Result<Vec<P>, MeshSieveError> {
         Ok(self.strata_cache()?.chart_points.clone())
+    }
+}
+
+impl<P: PointLike, T: PayloadLike> SieveQueryExt for InMemorySieve<P, T> {
+    #[inline]
+    fn out_degree(&self, p: P) -> usize {
+        self.adjacency_out.get(&p).map_or(0, |v| v.len())
+    }
+    #[inline]
+    fn in_degree(&self, p: P) -> usize {
+        self.adjacency_in.get(&p).map_or(0, |v| v.len())
+    }
+}
+
+impl<P: PointLike, T: PayloadLike> SieveBuildExt for InMemorySieve<P, T>
+where
+    T: Clone,
+{
+    fn add_arrows_from<I>(&mut self, edges: I)
+    where
+        I: IntoIterator<Item = (P, P, T)>,
+    {
+        use std::collections::HashMap;
+        let mut by_src: HashMap<P, HashMap<P, T>> = HashMap::new();
+        let mut by_dst: HashMap<P, usize> = HashMap::new();
+        for (s, d, pay) in edges {
+            by_src.entry(s).or_default().insert(d, pay);
+        }
+        for (_s, m) in &by_src {
+            for (&d, _) in m {
+                *by_dst.entry(d).or_default() += 1;
+            }
+        }
+        for (s, m) in &by_src {
+            MutableSieve::reserve_cone(self, *s, m.len());
+        }
+        for (d, k) in by_dst {
+            MutableSieve::reserve_support(self, d, k);
+        }
+        for (s, m) in by_src {
+            let out = self.adjacency_out.entry(s).or_default();
+            for (d, pay) in m {
+                if let Some(pos) = out.iter().position(|(dd, _)| *dd == d) {
+                    out[pos].1 = pay.clone();
+                    if let Some(ins) = self.adjacency_in.get_mut(&d) {
+                        if let Some(pos2) = ins.iter().position(|(ss, _)| *ss == s) {
+                            ins[pos2].1 = pay;
+                        }
+                    }
+                } else {
+                    out.push((d, pay.clone()));
+                    self.adjacency_in.entry(d).or_default().push((s, pay));
+                }
+            }
+        }
+        self.invalidate_cache();
+        #[cfg(debug_assertions)]
+        self.debug_assert_invariants();
+    }
+
+    fn add_arrows_dedup_from<I>(&mut self, edges: I)
+    where
+        I: IntoIterator<Item = (P, P, T)>,
+    {
+        use std::collections::{HashMap, HashSet};
+        let mut by_src: HashMap<P, HashMap<P, T>> = HashMap::new();
+        let mut by_dst: HashMap<P, usize> = HashMap::new();
+        let mut seen: HashSet<(P, P)> = HashSet::new();
+        for (s, d, pay) in edges {
+            if seen.insert((s, d)) {
+                by_src.entry(s).or_default().insert(d, pay);
+                *by_dst.entry(d).or_default() += 1;
+            } else {
+                by_src.get_mut(&s).unwrap().insert(d, pay);
+            }
+        }
+        for (s, m) in &by_src {
+            MutableSieve::reserve_cone(self, *s, m.len());
+        }
+        for (d, k) in by_dst {
+            MutableSieve::reserve_support(self, d, k);
+        }
+        for (s, m) in by_src {
+            let out = self.adjacency_out.entry(s).or_default();
+            for (d, pay) in m {
+                if let Some(pos) = out.iter().position(|(dd, _)| *dd == d) {
+                    out[pos].1 = pay.clone();
+                    if let Some(ins) = self.adjacency_in.get_mut(&d) {
+                        if let Some(pos2) = ins.iter().position(|(ss, _)| *ss == s) {
+                            ins[pos2].1 = pay;
+                        }
+                    }
+                } else {
+                    out.push((d, pay.clone()));
+                    self.adjacency_in.entry(d).or_default().push((s, pay));
+                }
+            }
+        }
+        self.invalidate_cache();
+        #[cfg(debug_assertions)]
+        self.debug_assert_invariants();
     }
 }
 

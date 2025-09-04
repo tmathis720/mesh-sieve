@@ -14,6 +14,8 @@ use crate::topology::orientation::Sign;
 use crate::topology::sieve::strata::{StrataCache, compute_strata};
 use crate::topology::_debug_invariants::debug_invariants;
 use crate::topology::bounds::{PointLike, PayloadLike};
+use super::query_ext::SieveQueryExt;
+use super::build_ext::SieveBuildExt;
 
 #[derive(Clone, Debug)]
 pub struct InMemoryOrientedSieve<P, T = (), O = Sign>
@@ -718,5 +720,51 @@ where
     #[inline]
     fn invalidate_cache(&mut self) {
         self.strata.take();
+    }
+}
+
+impl<P, T, O> SieveQueryExt for InMemoryOrientedSieve<P, T, O>
+where
+    P: PointLike,
+    T: PayloadLike,
+    O: Orientation + PartialEq + std::fmt::Debug,
+{
+    #[inline]
+    fn out_degree(&self, p: P) -> usize {
+        self.adjacency_out.get(&p).map_or(0, |v| v.len())
+    }
+    #[inline]
+    fn in_degree(&self, p: P) -> usize {
+        self.adjacency_in.get(&p).map_or(0, |v| v.len())
+    }
+}
+
+impl<P, T, O> SieveBuildExt for InMemoryOrientedSieve<P, T, O>
+where
+    P: PointLike,
+    T: PayloadLike + Clone,
+    O: Orientation + PartialEq + std::fmt::Debug + Copy,
+{
+    fn add_arrows_from<I>(&mut self, edges: I)
+    where
+        I: IntoIterator<Item = (P, P, T)>,
+    {
+        for (s, d, pay) in edges {
+            self.add_arrow(s, d, pay);
+        }
+    }
+
+    fn add_arrows_dedup_from<I>(&mut self, edges: I)
+    where
+        I: IntoIterator<Item = (P, P, T)>,
+    {
+        use std::collections::HashMap;
+        let mut last: HashMap<(P, P), T> = HashMap::new();
+        for (s, d, pay) in edges {
+            last.insert((s, d), pay);
+        }
+        for ((s, d), pay) in last {
+            self.add_arrow(s, d, pay);
+        }
     }
 }

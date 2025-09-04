@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use super::sieve_ref::SieveRef;
 use super::sieve_trait::Sieve;
+use super::query_ext::SieveQueryExt;
 use crate::topology::cache::InvalidateCache;
 use crate::topology::bounds::{PointLike, PayloadLike};
 
@@ -371,5 +372,22 @@ where
             pos: lo,
             end: hi,
         }
+    }
+}
+
+impl<P, T> SieveQueryExt for FrozenSieveCsr<P, T>
+where
+    P: PointLike,
+    T: PayloadLike,
+{
+    #[inline]
+    fn out_degree(&self, p: P) -> usize {
+        let i = *self.index_of.get(&p).expect("unknown point") as usize;
+        (self.out_offsets[i + 1] - self.out_offsets[i]) as usize
+    }
+    #[inline]
+    fn in_degree(&self, p: P) -> usize {
+        let i = *self.index_of.get(&p).expect("unknown point") as usize;
+        (self.in_offsets[i + 1] - self.in_offsets[i]) as usize
     }
 }
