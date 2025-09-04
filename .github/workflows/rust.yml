@@ -67,6 +67,18 @@ jobs:
     # Note: MPI-specific examples are executed in the separate `mpi-tests` job
     # below which installs MPI and runs a curated, smaller set to avoid timeouts.
 
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+    - name: Build docs
+      run: cargo doc --no-deps
+
   # Separate job for benchmarks and integration tests
   benchmarks:
     runs-on: ubuntu-latest

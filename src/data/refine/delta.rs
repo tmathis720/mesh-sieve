@@ -21,7 +21,7 @@ use crate::topology::arrow::Orientation;
 /// Trait for applying a transformation (delta) from a source slice to a destination slice.
 ///
 /// Implementors define how to map or permute values from `src` to `dest`.
-pub trait SliceDelta<V: Clone + Default>: Sync {
+pub trait SliceDelta<V: Clone>: Sync {
     /// Apply the transformation from `src` to `dest`.
     ///
     /// Returns an error if lengths differ.
@@ -31,7 +31,7 @@ pub trait SliceDelta<V: Clone + Default>: Sync {
 /// Backward-compatible re-export: external code can still name this trait `Delta`.
 pub use SliceDelta as Delta;
 
-impl<V: Clone + Default> SliceDelta<V> for Orientation {
+impl<V: Clone> SliceDelta<V> for Orientation {
     fn apply(&self, src: &[V], dest: &mut [V]) -> Result<(), MeshSieveError> {
         let expected = src.len();
         let found = dest.len();
