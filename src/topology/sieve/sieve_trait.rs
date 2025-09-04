@@ -1,8 +1,9 @@
 //! Core trait for sieve data structures in mesh topology.
 //!
-//! This module defines the [`Sieve`] trait, which provides a bidirectional incidence API
-//! for representing and manipulating mesh topologies. The trait supports generic point and payload types,
-//! and includes methods for traversing, mutating, and querying the structure.
+//! This module defines the [`Sieve`] trait, the core read/write incidence API
+//! for mesh topologies. The trait supports generic point and payload types and
+//! includes methods for traversing, querying, and **arrow-level** mutation. For
+//! point/role mutators, see [`MutableSieve`](super::mutable::MutableSieve).
 
 use crate::mesh_error::MeshSieveError;
 use crate::topology::sieve::strata::compute_strata;
@@ -388,111 +389,111 @@ where
     /// Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     /// Insert a brand-new point `p` into the domain (no arrows yet).
-    fn add_point(&mut self, _p: Self::Point)
+    fn add_point(&mut self, p: Self::Point)
     where
-        Self: InvalidateCache,
+        Self: super::mutable::MutableSieve,
     {
+        <Self as super::mutable::MutableSieve>::add_point(self, p)
     }
     /// Remove point `p` and all its arrows.
-    fn remove_point(&mut self, _p: Self::Point)
+    fn remove_point(&mut self, p: Self::Point)
     where
-        Self: InvalidateCache,
+        Self: super::mutable::MutableSieve,
     {
+        <Self as super::mutable::MutableSieve>::remove_point(self, p)
     }
     /// Ensure `p` appears in the base (outgoing) point set, even if no arrows yet.
-    fn add_base_point(&mut self, _p: Self::Point)
+    fn add_base_point(&mut self, p: Self::Point)
     where
-        Self: InvalidateCache,
+        Self: super::mutable::MutableSieve,
     {
+        <Self as super::mutable::MutableSieve>::add_base_point(self, p)
     }
-    /// Ensure `p` appears in the cap   (incoming) point set.
-    fn add_cap_point(&mut self, _p: Self::Point)
+    /// Ensure `p` appears in the cap (incoming) point set.
+    fn add_cap_point(&mut self, p: Self::Point)
     where
-        Self: InvalidateCache,
+        Self: super::mutable::MutableSieve,
     {
+        <Self as super::mutable::MutableSieve>::add_cap_point(self, p)
     }
     /// Remove `p` from base_points (dropping its outgoing arrows).
-    fn remove_base_point(&mut self, _p: Self::Point)
+    fn remove_base_point(&mut self, p: Self::Point)
     where
-        Self: InvalidateCache,
+        Self: super::mutable::MutableSieve,
     {
+        <Self as super::mutable::MutableSieve>::remove_base_point(self, p)
     }
-    /// Remove `p` from cap_points  (dropping its incoming arrows).
-    fn remove_cap_point(&mut self, _p: Self::Point)
+    /// Remove `p` from cap_points (dropping its incoming arrows).
+    fn remove_cap_point(&mut self, p: Self::Point)
     where
-        Self: InvalidateCache,
+        Self: super::mutable::MutableSieve,
     {
+        <Self as super::mutable::MutableSieve>::remove_cap_point(self, p)
     }
     /// Replace `p`’s entire cone with the given chain (dst↦payload).
     fn set_cone(
         &mut self,
         p: Self::Point,
         chain: impl IntoIterator<Item = (Self::Point, Self::Payload)>,
-    ) where
-        Self: InvalidateCache,
+    )
+    where
+        Self: super::mutable::MutableSieve,
+        Self::Payload: Clone,
     {
-        let dsts: Vec<_> = self.cone(p).map(|(dst, _)| dst).collect();
-        for dst in dsts {
-            let _ = self.remove_arrow(p, dst);
-        }
-        for (dst, pay) in chain {
-            self.add_arrow(p, dst, pay);
-        }
-        InvalidateCache::invalidate_cache(self);
+        <Self as super::mutable::MutableSieve>::set_cone(self, p, chain)
     }
     /// Append the given chain to `p`’s cone.
     fn add_cone(
         &mut self,
         p: Self::Point,
         chain: impl IntoIterator<Item = (Self::Point, Self::Payload)>,
-    ) where
-        Self: InvalidateCache,
+    )
+    where
+        Self: super::mutable::MutableSieve,
+        Self::Payload: Clone,
     {
-        for (dst, pay) in chain {
-            self.add_arrow(p, dst, pay);
-        }
-        InvalidateCache::invalidate_cache(self);
+        <Self as super::mutable::MutableSieve>::add_cone(self, p, chain)
     }
     /// Replace `q`’s entire support with the given chain (src↦payload).
     fn set_support(
         &mut self,
         q: Self::Point,
         chain: impl IntoIterator<Item = (Self::Point, Self::Payload)>,
-    ) where
-        Self: InvalidateCache,
+    )
+    where
+        Self: super::mutable::MutableSieve,
+        Self::Payload: Clone,
     {
-        let srcs: Vec<_> = self.support(q).map(|(src, _)| src).collect();
-        for src in srcs {
-            let _ = self.remove_arrow(src, q);
-        }
-        for (src, pay) in chain {
-            self.add_arrow(src, q, pay);
-        }
-        InvalidateCache::invalidate_cache(self);
+        <Self as super::mutable::MutableSieve>::set_support(self, q, chain)
     }
     /// Append the given chain to `q`’s support.
     fn add_support(
         &mut self,
         q: Self::Point,
         chain: impl IntoIterator<Item = (Self::Point, Self::Payload)>,
-    ) where
-        Self: InvalidateCache,
+    )
+    where
+        Self: super::mutable::MutableSieve,
+        Self::Payload: Clone,
     {
-        for (src, pay) in chain {
-            self.add_arrow(src, q, pay);
-        }
-        InvalidateCache::invalidate_cache(self);
+        <Self as super::mutable::MutableSieve>::add_support(self, q, chain)
     }
 
     /// Hint to preallocate additional space in the cone (outgoing) adjacency of `p`.
-    ///
-    /// Implementations may ignore this. It must not change the topology or invalidate caches.
-    fn reserve_cone(&mut self, _p: Self::Point, _additional: usize) {}
+    fn reserve_cone(&mut self, p: Self::Point, additional: usize)
+    where
+        Self: super::mutable::MutableSieve,
+    {
+        <Self as super::mutable::MutableSieve>::reserve_cone(self, p, additional)
+    }
 
     /// Hint to preallocate additional space in the support (incoming) adjacency of `q`.
-    ///
-    /// Implementations may ignore this. It must not change the topology or invalidate caches.
-    fn reserve_support(&mut self, _q: Self::Point, _additional: usize) {}
+    fn reserve_support(&mut self, q: Self::Point, additional: usize)
+    where
+        Self: super::mutable::MutableSieve,
+    {
+        <Self as super::mutable::MutableSieve>::reserve_support(self, q, additional)
+    }
 
     /// Produce a new Sieve containing only the base points in `chain` (and their arrows).
     fn restrict_base(&self, chain: impl IntoIterator<Item = Self::Point>) -> Self

@@ -5,6 +5,8 @@
 
 /// Core trait for sieve data structures.
 pub mod sieve_trait;
+/// Trait for sieves that support full topology mutation.
+pub mod mutable;
 /// Orientation-aware extensions to [`Sieve`].
 pub mod oriented;
 /// In-memory implementation of the [`Sieve`] trait.
@@ -22,6 +24,7 @@ pub mod traversal_iter;
 
 // Re-export the core trait and in‐memory impl at top level
 pub use sieve_trait::Sieve;
+pub use mutable::MutableSieve;
 pub use oriented::{Orientation, OrientedSieve};
 pub use in_memory::InMemorySieve;
 pub use in_memory_oriented::InMemoryOrientedSieve;

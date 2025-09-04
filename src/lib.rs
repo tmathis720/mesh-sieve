@@ -38,7 +38,7 @@ pub mod partitioning;
 
 /// A convenient prelude to import the most-used traits & types:
 pub mod prelude {
-    pub use crate::topology::sieve::{Sieve, OrientedSieve, Orientation};
+    pub use crate::topology::sieve::{Sieve, MutableSieve, OrientedSieve, Orientation};
     pub use crate::topology::sieve::{InMemorySieve, InMemoryOrientedSieve};
     pub use crate::topology::stack::{Stack, InMemoryStack};
     pub use crate::topology::point::PointId;
