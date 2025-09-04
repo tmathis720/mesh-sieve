@@ -56,7 +56,7 @@ where
             if nbr == my_rank {
                 continue;
             }
-            for (local_pt, remote_pt) in ovlp.links_to(nbr) {
+            for (local_pt, remote_pt) in ovlp.links_to_resolved(nbr) {
                 out.entry(nbr).or_default().push((remote_pt, local_pt));
             }
         }

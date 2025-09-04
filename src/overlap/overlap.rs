@@ -31,6 +31,17 @@
 //! only (no fabricated remote IDs). Mappings can be filled later via
 //! [`Overlap::resolve_remote_point`].
 
+//! ## Neighbor and link queries
+//! - [`neighbor_ranks`](Overlap::neighbor_ranks) returns a **sorted** set of
+//!   partition nodes present in this overlap.
+//! - [`links_to`](Overlap::links_to) yields `(local, Option<remote>)` for all
+//!   local entities shared with rank `r`. The `remote` is `None` until resolved
+//!   via [`resolve_remote_point`](Overlap::resolve_remote_point).
+//! - Use [`links_to_resolved`](Overlap::links_to_resolved) or the `_sorted`
+//!   variants when constructing on-wire layouts.
+//! - No `my_rank` parameter is needed; neighbors are explicitly modeled as
+//!   `Part(r)` vertices in the graph.
+
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cache::InvalidateCache;
 use crate::topology::point::PointId;
@@ -265,10 +276,7 @@ impl Overlap {
     }
 
     /// Pairs to neighbor `r` (`local`, `Option<remote>`). Includes unresolved links.
-    pub fn links_to_maybe(
-        &self,
-        r: usize,
-    ) -> impl Iterator<Item = (PointId, Option<PointId>)> + '_ {
+    pub fn links_to(&self, r: usize) -> impl Iterator<Item = (PointId, Option<PointId>)> + '_ {
         self.support(part(r))
             .filter_map(move |(src, rem)| match src {
                 OvlId::Local(p) if rem.rank == r => Some((p, rem.remote_point)),
@@ -278,32 +286,65 @@ impl Overlap {
 
     /// Only resolved links (local, remote).
     pub fn links_to_resolved(&self, r: usize) -> impl Iterator<Item = (PointId, PointId)> + '_ {
-        self.links_to_maybe(r)
+        self.links_to(r)
             .filter_map(|(p, opt)| opt.map(|rp| (p, rp)))
     }
 
-    /// Backward-compatible helper returning only resolved links.
-    pub fn links_to(&self, r: usize) -> impl Iterator<Item = (PointId, PointId)> + '_ {
-        self.links_to_resolved(r)
+    /// Deterministic (sorted by local `PointId`) list of links to `r` (may be unresolved).
+    pub fn links_to_sorted(&self, r: usize) -> Vec<(PointId, Option<PointId>)> {
+        let mut v: Vec<_> = self.links_to(r).collect();
+        v.sort_unstable_by_key(|(p, _)| *p);
+        v
+    }
+
+    /// Deterministic (sorted) list of resolved links to `r`.
+    pub fn links_to_resolved_sorted(&self, r: usize) -> Vec<(PointId, PointId)> {
+        let mut v: Vec<_> = self.links_to_resolved(r).collect();
+        v.sort_unstable_by_key(|(p, _)| *p);
+        v
     }
 
     /// Count edges whose remote_point is still unresolved.
     pub fn unresolved_count(&self) -> usize {
-        self.cap_points()
-            .filter_map(|q| match q {
-                OvlId::Part(r) => Some(r),
-                _ => None,
-            })
-            .map(move |r| self.support(part(r)))
-            .flatten()
-            .filter(|(_, rem)| rem.remote_point.is_none())
-            .count()
+        self.neighbor_ranks()
+            .map(|r| self.unresolved_count_to(r))
+            .sum()
+    }
+
+    /// Count unresolved links to a specific rank `r`.
+    pub fn unresolved_count_to(&self, r: usize) -> usize {
+        self.links_to(r).filter(|(_, rp)| rp.is_none()).count()
     }
 
     /// Returns true if all links have resolved remote IDs.
     #[inline]
     pub fn is_fully_resolved(&self) -> bool {
         self.unresolved_count() == 0
+    }
+
+    /// Legacy name for [`links_to`].
+    #[deprecated(note = "renamed to links_to")]
+    pub fn links_to_maybe(
+        &self,
+        r: usize,
+    ) -> impl Iterator<Item = (PointId, Option<PointId>)> + '_ {
+        self.links_to(r)
+    }
+
+    /// Legacy wrapper that accepted a `my_rank` parameter.
+    #[deprecated(note = "my_rank parameter is unused; call neighbor_ranks()")]
+    pub fn neighbor_ranks_legacy(&self, _my_rank: usize) -> impl Iterator<Item = usize> + '_ {
+        self.neighbor_ranks()
+    }
+
+    /// Legacy wrapper that accepted a `my_rank` parameter.
+    #[deprecated(note = "my_rank parameter is unused; call links_to(r)")]
+    pub fn links_to_legacy(
+        &self,
+        nbr: usize,
+        _my_rank: usize,
+    ) -> impl Iterator<Item = (PointId, Option<PointId>)> + '_ {
+        self.links_to(nbr)
     }
 }
 
@@ -478,13 +519,15 @@ mod tests {
     #[test]
     fn neighbor_ranks_and_links_to() {
         let mut ov = Overlap::new();
-        ov.add_link(PointId::new(1).unwrap(), 1, PointId::new(101).unwrap());
-        ov.add_link(PointId::new(2).unwrap(), 2, PointId::new(201).unwrap());
-        let ranks: std::collections::BTreeSet<_> = ov.neighbor_ranks().collect();
-        assert_eq!(ranks, [1usize, 2usize].into_iter().collect());
+        ov.add_link(PointId::new(1).unwrap(), 2, PointId::new(201).unwrap());
+        ov.add_link(PointId::new(2).unwrap(), 1, PointId::new(101).unwrap());
+        let ranks: Vec<_> = ov.neighbor_ranks().collect();
+        assert_eq!(ranks, vec![1usize, 2usize]);
 
-        let pairs: Vec<_> = ov.links_to(1).collect();
-        assert!(pairs.contains(&(PointId::new(1).unwrap(), PointId::new(101).unwrap())));
+        let pairs: Vec<_> = ov.links_to_resolved(1).collect();
+        assert!(
+            pairs.contains(&(PointId::new(2).unwrap(), PointId::new(101).unwrap()))
+        );
     }
 
     #[test]
@@ -492,7 +535,7 @@ mod tests {
         let mut ov = Overlap::new();
         let p = PointId::new(1).unwrap();
         ov.add_link_structural(p, 1);
-        let v_unresolved: Vec<_> = ov.links_to_maybe(1).collect();
+        let v_unresolved: Vec<_> = ov.links_to(1).collect();
         assert_eq!(v_unresolved, vec![(p, None)]);
         assert!(ov.links_to_resolved(1).next().is_none());
 
@@ -554,7 +597,7 @@ mod tests {
         ov.add_link_structural(cell, 7);
         ensure_closure_of_support(&mut ov, &mesh);
 
-        let links: Vec<_> = ov.links_to_maybe(7).collect();
+        let links: Vec<_> = ov.links_to(7).collect();
         assert_eq!(links.len(), 7);
         for p in [cell, f0, f1, v0, v1, v2, v3] {
             assert!(links.contains(&(p, None)));
@@ -568,9 +611,9 @@ mod tests {
         let mut ov = Overlap::new();
         ov.add_link_structural(PointId::new(1).unwrap(), 7);
         ensure_closure_of_support(&mut ov, &mesh);
-        let count = ov.links_to_maybe(7).count();
+        let count = ov.links_to(7).count();
         ensure_closure_of_support(&mut ov, &mesh);
-        assert_eq!(ov.links_to_maybe(7).count(), count);
+        assert_eq!(ov.links_to(7).count(), count);
     }
 
     #[test]
@@ -582,8 +625,8 @@ mod tests {
         ov.add_link_structural(PointId::new(1).unwrap(), 2);
         ensure_closure_of_support(&mut ov, &mesh);
 
-        let set1: std::collections::HashSet<_> = ov.links_to_maybe(1).collect();
-        let set2: std::collections::HashSet<_> = ov.links_to_maybe(2).collect();
+        let set1: std::collections::HashSet<_> = ov.links_to(1).collect();
+        let set2: std::collections::HashSet<_> = ov.links_to(2).collect();
         let expected: std::collections::HashSet<_> =
             [PointId::new(1).unwrap(), PointId::new(2).unwrap()]
                 .into_iter()
@@ -602,7 +645,7 @@ mod tests {
         let r = 5usize;
         ov.add_link(p, r, PointId::new(101).unwrap());
         ensure_closure_of_support(&mut ov, &mesh);
-        let links: Vec<_> = ov.links_to_maybe(r).collect();
+        let links: Vec<_> = ov.links_to(r).collect();
         assert!(links.contains(&(p, Some(PointId::new(101).unwrap()))));
         assert!(links.contains(&(PointId::new(2).unwrap(), None)));
     }
@@ -620,14 +663,47 @@ mod tests {
         ov.add_link_structural(PointId::new(3).unwrap(), r);
 
         ensure_closure_of_support_from_seeds(&mut ov, &mesh, [(PointId::new(1).unwrap(), r)]);
-        let links: std::collections::HashSet<_> = ov.links_to_maybe(r).collect();
+        let links: std::collections::HashSet<_> = ov.links_to(r).collect();
         assert!(links.contains(&(PointId::new(1).unwrap(), None)));
         assert!(links.contains(&(PointId::new(2).unwrap(), None)));
         assert!(links.contains(&(PointId::new(3).unwrap(), None)));
         assert!(!links.contains(&(PointId::new(4).unwrap(), None)));
 
         ensure_closure_of_support_from_seeds(&mut ov, &mesh, [(PointId::new(3).unwrap(), r)]);
-        let links2: std::collections::HashSet<_> = ov.links_to_maybe(r).collect();
+        let links2: std::collections::HashSet<_> = ov.links_to(r).collect();
         assert!(links2.contains(&(PointId::new(4).unwrap(), None)));
+    }
+
+    #[test]
+    fn links_sorted_deterministic() {
+        let mut ov = Overlap::new();
+        // insert out of order
+        ov.add_link(PointId::new(3).unwrap(), 1, PointId::new(103).unwrap());
+        ov.add_link(PointId::new(1).unwrap(), 1, PointId::new(101).unwrap());
+        ov.add_link(PointId::new(2).unwrap(), 1, PointId::new(102).unwrap());
+
+        let sorted = ov.links_to_sorted(1);
+        let order: Vec<_> = sorted.iter().map(|(p, _)| *p).collect();
+        assert_eq!(order, vec![
+            PointId::new(1).unwrap(),
+            PointId::new(2).unwrap(),
+            PointId::new(3).unwrap(),
+        ]);
+
+        let sorted_res = ov.links_to_resolved_sorted(1);
+        let order_res: Vec<_> = sorted_res.iter().map(|(p, _)| *p).collect();
+        assert_eq!(order_res, order);
+    }
+
+    #[test]
+    fn invariant_guard_rejects_illegal_edge() {
+        let mut ov = Overlap::new();
+        // Force an illegal Part->Local edge
+        ov.inner.add_arrow(
+            part(1),
+            local(PointId::new(1).unwrap()),
+            Remote { rank: 1, remote_point: None },
+        );
+        assert!(ov.validate_invariants().is_err());
     }
 }
