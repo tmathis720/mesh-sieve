@@ -130,6 +130,28 @@ where
             down: HashMap::new(),
         }
     }
+
+    /// Hint: preallocate additional upward slots for `base`.
+    #[inline]
+    pub fn reserve_lift(&mut self, base: B, additional: usize) {
+        self.up.entry(base).or_default().reserve(additional);
+    }
+
+    /// Hint: preallocate additional downward slots for `cap`.
+    #[inline]
+    pub fn reserve_drop(&mut self, cap: C, additional: usize) {
+        self.down.entry(cap).or_default().reserve(additional);
+    }
+
+    /// Optionally release excess capacity after bulk construction.
+    pub fn shrink_to_fit(&mut self) {
+        for v in self.up.values_mut() {
+            v.shrink_to_fit();
+        }
+        for v in self.down.values_mut() {
+            v.shrink_to_fit();
+        }
+    }
 }
 
 /// Provides a default implementation for `InMemoryStack`.

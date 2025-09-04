@@ -23,6 +23,8 @@ pub mod sieve_ref;
 pub mod sieve_trait;
 /// Strata sieve implementation.
 pub mod strata;
+/// Bulk preallocation helpers.
+pub mod reserve;
 /// Concrete traversal iterators without dynamic dispatch.
 pub mod traversal_iter;
 /// Frozen CSR representation for deterministic, cache-friendly traversal.
@@ -35,6 +37,7 @@ pub use mutable::MutableSieve;
 pub use oriented::{Orientation, OrientedSieve};
 pub use sieve_ref::SieveRef;
 pub use sieve_trait::Sieve;
+pub use reserve::SieveReserveExt;
 pub use traversal_iter::{
     ClosureBothIter, ClosureBothIterRef, ClosureIter, ClosureIterRef, StarIter, StarIterRef,
 };
