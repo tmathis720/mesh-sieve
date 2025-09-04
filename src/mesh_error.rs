@@ -46,9 +46,7 @@ pub enum MeshSieveError {
     SievedArrayPointNotInAtlas(crate::topology::point::PointId),
 
     /// Mismatch between expected and provided slice length for a point.
-    #[error(
-        "Section error: slice length mismatch for {point:?}: expected {expected}, got {found}"
-    )]
+    #[error("Section error: slice length mismatch for {point:?}: expected {expected}, got {found}")]
     SliceLengthMismatch {
         point: crate::topology::point::PointId,
         expected: usize,
@@ -62,6 +60,12 @@ pub enum MeshSieveError {
         point: crate::topology::point::PointId,
         expected: usize,
         found: usize,
+    },
+
+    /// Refinement attempted to map multiple coarse points into the same fine point.
+    #[error("Refinement maps more than one coarse point into the same fine point {fine:?}")]
+    DuplicateRefinementTarget {
+        fine: crate::topology::point::PointId,
     },
 
     /// Attempt to add a point to the section failed at atlas insertion.
@@ -169,6 +173,9 @@ impl PartialEq for MeshSieveError {
                     found: f2,
                 },
             ) => p1 == p2 && e1 == e2 && f1 == f2,
+            (DuplicateRefinementTarget { fine: f1 }, DuplicateRefinementTarget { fine: f2 }) => {
+                f1 == f2
+            }
             (AtlasInsertionFailed(p1, _), AtlasInsertionFailed(p2, _)) => p1 == p2,
             (MissingSectionPoint(a), MissingSectionPoint(b)) => a == b,
             (

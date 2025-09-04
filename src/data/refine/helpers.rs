@@ -127,7 +127,7 @@ where
     let pts: Vec<_> = sieve.closure(seeds).collect();
     pts.par_iter()
         .map(|&p| map.try_get(p).map(|sl| (p, sl)))
-        .collect()
+        .collect::<Result<Vec<_>, MeshSieveError>>()
 }
 
 #[cfg(feature = "rayon")]
@@ -143,7 +143,7 @@ where
     let pts: Vec<_> = sieve.star(seeds).collect();
     pts.par_iter()
         .map(|&p| map.try_get(p).map(|sl| (p, sl)))
-        .collect()
+        .collect::<Result<Vec<_>, MeshSieveError>>()
 }
 
 /// Read-only wrapper for a section.
