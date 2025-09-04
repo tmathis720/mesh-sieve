@@ -5,10 +5,10 @@
 //! methods for inserting, accessing, and iterating per-point data slices.
 
 use crate::data::atlas::Atlas;
-use crate::mesh_error::MeshSieveError;
-use crate::topology::point::PointId;
-use crate::topology::cache::InvalidateCache;
 use crate::data::refine::delta::SliceDelta;
+use crate::mesh_error::MeshSieveError;
+use crate::topology::cache::InvalidateCache;
+use crate::topology::point::PointId;
 
 /// Storage for per-point field data, backed by an `Atlas`.
 #[derive(Clone, Debug)]
@@ -17,6 +17,55 @@ pub struct Section<V> {
     atlas: Atlas,
     /// Contiguous storage of values for all points.
     data: Vec<V>,
+}
+
+impl<V> Section<V> {
+    /// Read-only view of the data slice for a given point `p`.
+    ///
+    /// # Errors
+    /// Returns `Err(PointNotInAtlas(p))` if the point is not registered in the atlas,
+    /// or `Err(MissingSectionPoint(p))` if the data buffer is inconsistent.
+    pub fn try_restrict(&self, p: PointId) -> Result<&[V], MeshSieveError> {
+        let (offset, len) = self
+            .atlas
+            .get(p)
+            .ok_or(MeshSieveError::PointNotInAtlas(p))?;
+        self.data
+            .get(offset..offset + len)
+            .ok_or(MeshSieveError::MissingSectionPoint(p))
+    }
+
+    #[deprecated(note = "Use try_restrict which returns Result instead of panicking")]
+    pub fn restrict(&self, p: PointId) -> &[V] {
+        self.try_restrict(p).unwrap()
+    }
+
+    /// Mutable view of the data slice for a given point `p`.
+    ///
+    /// # Errors
+    /// Returns `Err(PointNotInAtlas(p))` if the point is not registered in the atlas,
+    /// or `Err(MissingSectionPoint(p))` if the data buffer is inconsistent.
+    pub fn try_restrict_mut(&mut self, p: PointId) -> Result<&mut [V], MeshSieveError> {
+        let (offset, len) = self
+            .atlas
+            .get(p)
+            .ok_or(MeshSieveError::PointNotInAtlas(p))?;
+        self.data
+            .get_mut(offset..offset + len)
+            .ok_or(MeshSieveError::MissingSectionPoint(p))
+    }
+
+    #[deprecated(note = "Use try_restrict_mut which returns Result instead of panicking")]
+    pub fn restrict_mut(&mut self, p: PointId) -> &mut [V] {
+        self.try_restrict_mut(p).unwrap()
+    }
+
+    /// Iterate over `(PointId, &[V])` for all points in atlas order.
+    pub fn iter(&self) -> impl Iterator<Item = (PointId, &[V])> + '_ {
+        self.atlas
+            .points()
+            .filter_map(move |pid| self.try_restrict(pid).ok().map(|sl| (pid, sl)))
+    }
 }
 
 impl<V: Clone + Default> Section<V> {
@@ -29,34 +78,6 @@ impl<V: Clone + Default> Section<V> {
         Section { atlas, data }
     }
 
-    /// Read-only view of the data slice for a given point `p`.
-    ///
-    /// # Errors
-    /// Returns `Err(PointNotInAtlas(p))` if the point is not registered in the atlas,
-    /// or `Err(MissingSectionPoint(p))` if the data buffer is inconsistent.
-    pub fn try_restrict(&self, p: PointId) -> Result<&[V], MeshSieveError> {
-        let (offset, len) = self.atlas.get(p).ok_or(MeshSieveError::PointNotInAtlas(p))?;
-        self.data.get(offset..offset+len).ok_or(MeshSieveError::MissingSectionPoint(p))
-    }
-    #[deprecated(note = "Use try_restrict which returns Result instead of panicking")]
-    pub fn restrict(&self, p: PointId) -> &[V] {
-        self.try_restrict(p).unwrap()
-    }
-
-    /// Mutable view of the data slice for a given point `p`.
-    ///
-    /// # Errors
-    /// Returns `Err(PointNotInAtlas(p))` if the point is not registered in the atlas,
-    /// or `Err(MissingSectionPoint(p))` if the data buffer is inconsistent.
-    pub fn try_restrict_mut(&mut self, p: PointId) -> Result<&mut [V], MeshSieveError> {
-        let (offset, len) = self.atlas.get(p).ok_or(MeshSieveError::PointNotInAtlas(p))?;
-        self.data.get_mut(offset..offset+len).ok_or(MeshSieveError::MissingSectionPoint(p))
-    }
-    #[deprecated(note = "Use try_restrict_mut which returns Result instead of panicking")]
-    pub fn restrict_mut(&mut self, p: PointId) -> &mut [V] {
-        self.try_restrict_mut(p).unwrap()
-    }
-
     /// Overwrite the data slice at point `p` with the values in `val`.
     ///
     /// # Errors
@@ -67,20 +88,20 @@ impl<V: Clone + Default> Section<V> {
         let expected = target.len();
         let found = val.len();
         if expected != found {
-            return Err(MeshSieveError::SliceLengthMismatch { point: p, expected, found });
+            return Err(MeshSieveError::SliceLengthMismatch {
+                point: p,
+                expected,
+                found,
+            });
         }
         target.clone_from_slice(val);
         crate::topology::cache::InvalidateCache::invalidate_cache(self);
         Ok(())
     }
+
     #[deprecated(note = "Use try_set which returns Result instead of panicking")]
     pub fn set(&mut self, p: PointId, val: &[V]) {
         self.try_set(p, val).unwrap()
-    }
-
-    /// Iterate over `(PointId, &[V])` for all points in atlas order.
-    pub fn iter(&self) -> impl Iterator<Item = (PointId, &[V])> + '_ {
-        self.atlas.points().filter_map(move |pid| self.try_restrict(pid).ok().map(|sl| (pid, sl)))
     }
 
     /// Add a new point to the section, resizing data as needed.
@@ -88,7 +109,9 @@ impl<V: Clone + Default> Section<V> {
     /// # Errors
     /// Returns `Err(AtlasInsertionFailed)` if the atlas insertion fails.
     pub fn try_add_point(&mut self, p: PointId, len: usize) -> Result<(), MeshSieveError> {
-        self.atlas.try_insert(p, len).map_err(|e| MeshSieveError::AtlasInsertionFailed(p, Box::new(e)))?;
+        self.atlas
+            .try_insert(p, len)
+            .map_err(|e| MeshSieveError::AtlasInsertionFailed(p, Box::new(e)))?;
         self.data.resize(self.atlas.total_len(), V::default());
         crate::topology::cache::InvalidateCache::invalidate_cache(self);
         Ok(())
@@ -103,8 +126,13 @@ impl<V: Clone + Default> Section<V> {
         self.atlas.remove_point(p)?;
         let mut new_data = Vec::with_capacity(self.atlas.total_len());
         for pid in self.atlas.points() {
-            let (old_offset, old_len) = old_atlas.get(pid).ok_or(MeshSieveError::MissingSectionPoint(pid))?;
-            let old_slice = self.data.get(old_offset..old_offset+old_len).ok_or(MeshSieveError::MissingSectionPoint(pid))?;
+            let (old_offset, old_len) = old_atlas
+                .get(pid)
+                .ok_or(MeshSieveError::MissingSectionPoint(pid))?;
+            let old_slice = self
+                .data
+                .get(old_offset..old_offset + old_len)
+                .ok_or(MeshSieveError::MissingSectionPoint(pid))?;
             new_data.extend_from_slice(old_slice);
         }
         self.data = new_data;
@@ -183,17 +211,29 @@ impl<V: Clone + Send> Section<V> {
     /// # Errors
     /// Returns `Err(ScatterLengthMismatch)` if the input length does not match expected,
     /// or `Err(ScatterChunkMismatch)` if a chunk is out of bounds.
-    pub fn try_scatter_from(&mut self, other: &[V], atlas_map: &[(usize, usize)]) -> Result<(), MeshSieveError> {
+    pub fn try_scatter_from(
+        &mut self,
+        other: &[V],
+        atlas_map: &[(usize, usize)],
+    ) -> Result<(), MeshSieveError> {
         let total_expected: usize = atlas_map.iter().map(|&(_, l)| l).sum();
         let found = other.len();
         if total_expected != found {
-            return Err(MeshSieveError::ScatterLengthMismatch { expected: total_expected, found });
+            return Err(MeshSieveError::ScatterLengthMismatch {
+                expected: total_expected,
+                found,
+            });
         }
         let mut start = 0;
         for &(offset, len) in atlas_map {
             let end = start + len;
-            let chunk = other.get(start..end).ok_or(MeshSieveError::ScatterChunkMismatch { offset: start, len })?;
-            let dest = self.data.get_mut(offset..offset+len).ok_or(MeshSieveError::ScatterChunkMismatch { offset, len })?;
+            let chunk = other
+                .get(start..end)
+                .ok_or(MeshSieveError::ScatterChunkMismatch { offset: start, len })?;
+            let dest = self
+                .data
+                .get_mut(offset..offset + len)
+                .ok_or(MeshSieveError::ScatterChunkMismatch { offset, len })?;
             dest.clone_from_slice(chunk);
             start = end;
         }
@@ -202,9 +242,33 @@ impl<V: Clone + Send> Section<V> {
     }
 }
 
-/// A **zero‐cost view** of per‐point data, supporting both read‐only and write mappings.
-/// Commonly implemented by `Section<V>` or user‐supplied read‐only wrappers.
-pub trait Map<V: Clone + Default> {
+/// Fallible read/write access to per-point slices.
+pub trait FallibleMap<V> {
+    /// Immutable access to `p`'s slice.
+    fn try_get(&self, p: PointId) -> Result<&[V], MeshSieveError>;
+    /// Mutable access to `p`'s slice.
+    fn try_get_mut(&mut self, p: PointId) -> Result<&mut [V], MeshSieveError>;
+}
+
+/// Implement `FallibleMap` for `Section<V>`.
+impl<V> FallibleMap<V> for Section<V> {
+    #[inline]
+    fn try_get(&self, p: PointId) -> Result<&[V], MeshSieveError> {
+        self.try_restrict(p)
+    }
+
+    #[inline]
+    fn try_get_mut(&mut self, p: PointId) -> Result<&mut [V], MeshSieveError> {
+        self.try_restrict_mut(p)
+    }
+}
+
+/// Infallible adapter for read/write access; intended for legacy code.
+/// Prefer [`FallibleMap`] in new code.
+///
+/// # Panics
+/// Implementations may panic if `p` is unknown.
+pub trait Map<V> {
     /// Immutable access to the data slice for `p`.
     fn get(&self, p: PointId) -> &[V];
 
@@ -216,16 +280,20 @@ pub trait Map<V: Clone + Default> {
     }
 }
 
-/// Implement `Map` for `Section<V>`, allowing it to be used in data refinement.
-impl<V: Clone + Default> Map<V> for Section<V> {
+/// Implement `Map` for `Section<V>`.
+impl<V> Map<V> for Section<V> {
+    #[inline]
     fn get(&self, p: PointId) -> &[V] {
-        // Use the restrict method to get an immutable slice.
-        self.try_restrict(p).unwrap_or_else(|e| panic!("Section::get: {:?}", e))
+        self.try_restrict(p)
+            .unwrap_or_else(|e| panic!("Map::get({p:?}) failed: {e}"))
     }
 
+    #[inline]
     fn get_mut(&mut self, p: PointId) -> Option<&mut [V]> {
-        // Use the try_restrict_mut method to get a mutable slice, wrapped in Some.
-        Some(self.try_restrict_mut(p).unwrap_or_else(|e| panic!("Section::get_mut: {:?}", e)))
+        Some(
+            self.try_restrict_mut(p)
+                .unwrap_or_else(|e| panic!("Map::get_mut({p:?}) failed: {e}")),
+        )
     }
 }
 
@@ -265,7 +333,10 @@ mod tests {
         s.try_set(PointId::new(1).unwrap(), &[1.0, 2.0]).unwrap();
         s.try_set(PointId::new(2).unwrap(), &[3.5]).unwrap();
 
-        assert_eq!(s.try_restrict(PointId::new(1).unwrap()).unwrap(), &[1.0, 2.0]);
+        assert_eq!(
+            s.try_restrict(PointId::new(1).unwrap()).unwrap(),
+            &[1.0, 2.0]
+        );
         assert_eq!(s.try_restrict(PointId::new(2).unwrap()).unwrap(), &[3.5]);
     }
 
@@ -277,6 +348,27 @@ mod tests {
 
         let collected: Vec<_> = s.iter().map(|(_, sl)| sl[0]).collect();
         assert_eq!(collected, vec![9.0, 7.0]); // atlas order
+    }
+
+    #[test]
+    fn fallible_map_on_section() {
+        use super::FallibleMap;
+        let mut s = make_section();
+        s.try_set(PointId::new(1).unwrap(), &[1.0, 2.0]).unwrap();
+        // successful access
+        assert_eq!(
+            <Section<f64> as FallibleMap<f64>>::try_get(&s, PointId::new(1).unwrap()).unwrap(),
+            &[1.0, 2.0]
+        );
+        // missing point yields error
+        assert!(
+            <Section<f64> as FallibleMap<f64>>::try_get(&s, PointId::new(99).unwrap()).is_err()
+        );
+        // mutable access works
+        assert!(
+            <Section<f64> as FallibleMap<f64>>::try_get_mut(&mut s, PointId::new(1).unwrap())
+                .is_ok()
+        );
     }
 
     #[test]
@@ -316,12 +408,19 @@ mod tests {
         // set and restrict
         s.try_set(PointId::new(1).unwrap(), &[1.1, 2.2]).unwrap();
         s.try_set(PointId::new(2).unwrap(), &[3.3]).unwrap();
-        assert_eq!(s.try_restrict(PointId::new(1).unwrap()).unwrap(), &[1.1, 2.2]);
+        assert_eq!(
+            s.try_restrict(PointId::new(1).unwrap()).unwrap(),
+            &[1.1, 2.2]
+        );
         assert_eq!(s.try_restrict(PointId::new(2).unwrap()).unwrap(), &[3.3]);
         // scatter_from
         let mut s2 = Section::<f64>::new(atlas);
-        s2.try_scatter_from(&[1.1, 2.2, 3.3], &[(0, 2), (2, 1)]).unwrap();
-        assert_eq!(s2.try_restrict(PointId::new(1).unwrap()).unwrap(), &[1.1, 2.2]);
+        s2.try_scatter_from(&[1.1, 2.2, 3.3], &[(0, 2), (2, 1)])
+            .unwrap();
+        assert_eq!(
+            s2.try_restrict(PointId::new(1).unwrap()).unwrap(),
+            &[1.1, 2.2]
+        );
         assert_eq!(s2.try_restrict(PointId::new(2).unwrap()).unwrap(), &[3.3]);
     }
 
@@ -333,7 +432,10 @@ mod tests {
         let mut s = Section::<i32>::new(atlas);
         s.try_set(PointId::new(1).unwrap(), &[42]).unwrap();
         // Map trait get
-        assert_eq!(<Section<i32> as Map<i32>>::get(&s, PointId::new(1).unwrap()), &[42]);
+        assert_eq!(
+            <Section<i32> as Map<i32>>::get(&s, PointId::new(1).unwrap()),
+            &[42]
+        );
         // Map trait get_mut
         assert!(<Section<i32> as Map<i32>>::get_mut(&mut s, PointId::new(1).unwrap()).is_some());
     }
@@ -350,12 +452,21 @@ mod tests {
         // now iter() yields 2 points
         let mut pts: Vec<_> = s.iter().map(|(p, _)| p).collect();
         pts.sort_unstable();
-        assert_eq!(pts, vec![PointId::new(1).unwrap(), PointId::new(2).unwrap()]);
+        assert_eq!(
+            pts,
+            vec![PointId::new(1).unwrap(), PointId::new(2).unwrap()]
+        );
         // its slice is all default (0)
-        assert_eq!(s.try_restrict(PointId::new(2).unwrap()).unwrap(), &[0, 0, 0]);
+        assert_eq!(
+            s.try_restrict(PointId::new(2).unwrap()).unwrap(),
+            &[0, 0, 0]
+        );
         // setting and reading works
-        s.try_set(PointId::new(2).unwrap(), &[7,8,9]).unwrap();
-        assert_eq!(s.try_restrict(PointId::new(2).unwrap()).unwrap(), &[7,8,9]);
+        s.try_set(PointId::new(2).unwrap(), &[7, 8, 9]).unwrap();
+        assert_eq!(
+            s.try_restrict(PointId::new(2).unwrap()).unwrap(),
+            &[7, 8, 9]
+        );
     }
 
     #[test]
@@ -367,19 +478,25 @@ mod tests {
         atlas.try_insert(PointId::new(3).unwrap(), 2).unwrap();
         let mut s = Section::<i32>::new(atlas);
         // set some dummy values
-        s.try_set(PointId::new(1).unwrap(), &[10,11]).unwrap();
+        s.try_set(PointId::new(1).unwrap(), &[10, 11]).unwrap();
         s.try_set(PointId::new(2).unwrap(), &[22]).unwrap();
-        s.try_set(PointId::new(3).unwrap(), &[33,34]).unwrap();
+        s.try_set(PointId::new(3).unwrap(), &[33, 34]).unwrap();
         // remove the middle point
         let _ = s.try_remove_point(PointId::new(2).unwrap());
         // now only 1 and 3 remain, in order
         let pts: Vec<_> = s.iter().map(|(p, _)| p).collect();
-        assert_eq!(pts, vec![PointId::new(1).unwrap(), PointId::new(3).unwrap()]);
+        assert_eq!(
+            pts,
+            vec![PointId::new(1).unwrap(), PointId::new(3).unwrap()]
+        );
         // data buffer should be [10,11,33,34]
         let all: Vec<_> = s.data.iter().copied().collect();
-        assert_eq!(all, vec![10,11,33,34]);
+        assert_eq!(all, vec![10, 11, 33, 34]);
         // restricting the removed point panics
-        std::panic::catch_unwind(|| { let _ = s.try_restrict(PointId::new(2).unwrap()).unwrap(); }).expect_err("should panic");
+        std::panic::catch_unwind(|| {
+            let _ = s.try_restrict(PointId::new(2).unwrap()).unwrap();
+        })
+        .expect_err("should panic");
     }
 
     #[test]
@@ -393,11 +510,14 @@ mod tests {
     fn set_wrong_length_returns_err() {
         let mut s = make_section();
         let err = s.try_set(PointId::new(1).unwrap(), &[1.0]).unwrap_err();
-        assert_eq!(err, MeshSieveError::SliceLengthMismatch {
-            point: PointId::new(1).unwrap(),
-            expected: 2,
-            found: 1
-        });
+        assert_eq!(
+            err,
+            MeshSieveError::SliceLengthMismatch {
+                point: PointId::new(1).unwrap(),
+                expected: 2,
+                found: 1
+            }
+        );
     }
 
     #[test]
