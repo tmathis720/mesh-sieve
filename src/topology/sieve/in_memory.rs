@@ -3,9 +3,9 @@
 //! This module provides [`InMemorySieve`], a simple and efficient in-memory representation
 //! of a sieve using hash maps for adjacency storage. It supports generic point and payload types.
 
+use super::mutable::MutableSieve;
 use super::sieve_ref::SieveRef;
 use super::sieve_trait::Sieve;
-use super::mutable::MutableSieve;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cache::InvalidateCache;
 use crate::topology::sieve::strata::{compute_strata, StrataCache};
@@ -93,6 +93,17 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> InMemoryS
             if let Some(outs) = self.adjacency_out.get_mut(&src) {
                 outs.retain(|(d, _)| *d != dst);
             }
+        }
+    }
+
+    /// Sort adjacency lists in-place for deterministic neighbor order.
+    /// Mirrors remain consistent as edges are untouched.
+    pub fn sort_adjacency(&mut self) {
+        for outs in self.adjacency_out.values_mut() {
+            outs.sort_unstable_by_key(|(dst, _)| *dst);
+        }
+        for ins in self.adjacency_in.values_mut() {
+            ins.sort_unstable_by_key(|(src, _)| *src);
         }
     }
 

@@ -111,6 +111,29 @@ where
         Box::new(set.into_iter())
     }
 
+    /// Deterministic set of all points in total order (`Ord`).
+    #[inline]
+    fn points_sorted(&self) -> Vec<Self::Point>
+    where
+        Self: Sized,
+    {
+        let mut v: Vec<_> = self.points().collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// Deterministic whole-graph order guided by strata (height-major then `Ord`).
+    /// Uses the cached chart when available; computes strata otherwise.
+    ///
+    /// Returns an error if the topology is cyclic.
+    #[inline]
+    fn points_chart_order(&mut self) -> Result<Vec<Self::Point>, MeshSieveError>
+    where
+        Self: Sized,
+    {
+        self.chart_points()
+    }
+
     // --- graph traversals ---
     /// Concrete iterator over the transitive closure (downward) from `seeds`.
     /// Prefer this over [`closure`] for zero-alloc traversal.
@@ -157,6 +180,60 @@ where
         I: IntoIterator<Item = Self::Point>,
     {
         Box::new(self.closure_both_iter(seeds))
+    }
+
+    /// Deterministic closure iterator: seeds sorted by `Ord`.
+    #[inline]
+    fn closure_iter_sorted<'s, I>(&'s self, seeds: I) -> ClosureIter<'s, Self>
+    where
+        I: IntoIterator<Item = Self::Point>,
+        Self: Sized,
+    {
+        ClosureIter::new_sorted(self, seeds)
+    }
+
+    /// Deterministic star iterator: seeds sorted by `Ord`.
+    #[inline]
+    fn star_iter_sorted<'s, I>(&'s self, seeds: I) -> StarIter<'s, Self>
+    where
+        I: IntoIterator<Item = Self::Point>,
+        Self: Sized,
+    {
+        StarIter::new_sorted(self, seeds)
+    }
+
+    /// Deterministic bi-directional closure iterator: seeds sorted by `Ord`.
+    #[inline]
+    fn closure_both_iter_sorted<'s, I>(&'s self, seeds: I) -> ClosureBothIter<'s, Self>
+    where
+        I: IntoIterator<Item = Self::Point>,
+        Self: Sized,
+    {
+        ClosureBothIter::new_sorted(self, seeds)
+    }
+
+    /// Boxed deterministic closure iterator.
+    fn closure_sorted<'s, I>(&'s self, seeds: I) -> Box<dyn Iterator<Item = Self::Point> + 's>
+    where
+        I: IntoIterator<Item = Self::Point>,
+    {
+        Box::new(self.closure_iter_sorted(seeds))
+    }
+
+    /// Boxed deterministic star iterator.
+    fn star_sorted<'s, I>(&'s self, seeds: I) -> Box<dyn Iterator<Item = Self::Point> + 's>
+    where
+        I: IntoIterator<Item = Self::Point>,
+    {
+        Box::new(self.star_iter_sorted(seeds))
+    }
+
+    /// Boxed deterministic bi-directional closure iterator.
+    fn closure_both_sorted<'s, I>(&'s self, seeds: I) -> Box<dyn Iterator<Item = Self::Point> + 's>
+    where
+        I: IntoIterator<Item = Self::Point>,
+    {
+        Box::new(self.closure_both_iter_sorted(seeds))
     }
 
     // --- lattice ops ---
@@ -435,8 +512,7 @@ where
         &mut self,
         p: Self::Point,
         chain: impl IntoIterator<Item = (Self::Point, Self::Payload)>,
-    )
-    where
+    ) where
         Self: super::mutable::MutableSieve,
         Self::Payload: Clone,
     {
@@ -447,8 +523,7 @@ where
         &mut self,
         p: Self::Point,
         chain: impl IntoIterator<Item = (Self::Point, Self::Payload)>,
-    )
-    where
+    ) where
         Self: super::mutable::MutableSieve,
         Self::Payload: Clone,
     {
@@ -459,8 +534,7 @@ where
         &mut self,
         q: Self::Point,
         chain: impl IntoIterator<Item = (Self::Point, Self::Payload)>,
-    )
-    where
+    ) where
         Self: super::mutable::MutableSieve,
         Self::Payload: Clone,
     {
@@ -471,8 +545,7 @@ where
         &mut self,
         q: Self::Point,
         chain: impl IntoIterator<Item = (Self::Point, Self::Payload)>,
-    )
-    where
+    ) where
         Self: super::mutable::MutableSieve,
         Self::Payload: Clone,
     {
