@@ -9,11 +9,14 @@
 //! Most users will interact with the `Sieve` trait and the `InMemorySieve` implementation for building and traversing mesh topologies.
 
 pub mod arrow;
+pub mod cache;
 pub mod point;
 pub mod sieve;
 pub mod stack;
-pub mod cache;
 pub mod utils;
 
-pub use sieve::*;
 pub use cache::InvalidateCache;
+pub use sieve::*;
+
+#[cfg(test)]
+mod tests;
