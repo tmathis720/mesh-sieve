@@ -9,6 +9,7 @@ use crate::data::refine::delta::SliceDelta;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cache::InvalidateCache;
 use crate::topology::point::PointId;
+use crate::data::DebugInvariants;
 
 /// Precomputed plan for scattering data into a section.
 #[derive(Clone, Debug)]
@@ -18,6 +19,14 @@ pub struct ScatterPlan {
 }
 
 /// Storage for per-point field data, backed by an `Atlas`.
+///
+/// # Invariants
+/// - `data.len()` equals the atlas' [`total_len`](Atlas::total_len).
+/// - Every `(offset,len)` in the atlas falls within `data`.
+///
+/// These checks run after mutations in debug builds and when the
+/// `check-invariants` feature is enabled. They can also be verified manually via
+/// [`validate_invariants`](Self::validate_invariants).
 #[derive(Clone, Debug)]
 pub struct Section<V> {
     /// Atlas mapping each `PointId` to (offset, length) in `data`.
@@ -89,7 +98,7 @@ impl<V> Section<V> {
             f(pid, &mut self.data[off..off + len]);
         }
         crate::topology::cache::InvalidateCache::invalidate_cache(self);
-        #[cfg(debug_assertions)]
+        #[cfg(any(debug_assertions, feature = "check-invariants"))]
         self.debug_assert_invariants();
     }
 
@@ -140,6 +149,8 @@ impl<V: Clone + Default> Section<V> {
         }
         target.clone_from_slice(val);
         crate::topology::cache::InvalidateCache::invalidate_cache(self);
+        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        self.debug_assert_invariants();
         Ok(())
     }
 
@@ -158,6 +169,8 @@ impl<V: Clone + Default> Section<V> {
             .map_err(|e| MeshSieveError::AtlasInsertionFailed(p, Box::new(e)))?;
         self.data.resize(self.atlas.total_len(), V::default());
         crate::topology::cache::InvalidateCache::invalidate_cache(self);
+        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        self.debug_assert_invariants();
         Ok(())
     }
 
@@ -181,6 +194,8 @@ impl<V: Clone + Default> Section<V> {
         }
         self.data = new_data;
         crate::topology::cache::InvalidateCache::invalidate_cache(self);
+        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        self.debug_assert_invariants();
         Ok(())
     }
 
@@ -243,7 +258,7 @@ impl<V: Clone + Default> Section<V> {
         }
 
         crate::topology::cache::InvalidateCache::invalidate_cache(self);
-        #[cfg(debug_assertions)]
+        #[cfg(any(debug_assertions, feature = "check-invariants"))]
         self.debug_assert_invariants();
         Ok(())
     }
@@ -290,7 +305,7 @@ impl<V: Clone + Send> Section<V> {
             start = end;
         }
         crate::topology::cache::InvalidateCache::invalidate_cache(self);
-        #[cfg(debug_assertions)]
+        #[cfg(any(debug_assertions, feature = "check-invariants"))]
         self.debug_assert_invariants();
         Ok(())
     }
@@ -373,22 +388,41 @@ impl<V> Map<V> for Section<V> {
     }
 }
 
+impl<V> DebugInvariants for Section<V> {
+    fn debug_assert_invariants(&self) {
+        crate::data_debug_assert_ok!(self.validate_invariants(), "Section invalid");
+    }
+
+    fn validate_invariants(&self) -> Result<(), MeshSieveError> {
+        // Validate atlas first
+        self.atlas.validate_invariants()?;
+
+        if self.data.len() != self.atlas.total_len() {
+            return Err(MeshSieveError::ScatterLengthMismatch {
+                expected: self.atlas.total_len(),
+                found: self.data.len(),
+            });
+        }
+
+        for (pid, (off, len)) in self.atlas.iter_entries() {
+            let end = off
+                .checked_add(len)
+                .ok_or_else(|| MeshSieveError::ScatterChunkMismatch { offset: off, len })?;
+            if end > self.data.len() {
+                return Err(MeshSieveError::MissingSectionPoint(pid));
+            }
+        }
+
+        Ok(())
+    }
+}
+
 impl<V> InvalidateCache for Section<V> {
     fn invalidate_cache(&mut self) {
         // If you ever cache anything derived from atlas/data, clear it here.
     }
 }
 
-#[cfg(any(debug_assertions, feature = "strict-invariants"))]
-impl<V> Section<V> {
-    pub(crate) fn debug_assert_invariants(&self) {
-        debug_assert_eq!(
-            self.atlas.total_len(),
-            self.data.len(),
-            "section data length does not match atlas total"
-        );
-    }
-}
 
 #[cfg(test)]
 mod tests {
