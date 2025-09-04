@@ -7,7 +7,7 @@ use super::sieve_ref::SieveRef;
 use super::sieve_trait::Sieve;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cache::InvalidateCache;
-use crate::topology::sieve::strata::{StrataCache, compute_strata};
+use crate::topology::sieve::strata::{compute_strata, StrataCache};
 use once_cell::sync::OnceCell;
 use std::collections::HashMap;
 
@@ -73,6 +73,54 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> InMemoryS
     #[inline]
     pub fn invalidate_strata(&mut self) {
         self.strata.take();
+    }
+
+    #[inline]
+    fn scrub_outgoing_only(&mut self, src: P) {
+        let old: Vec<(P, T)> = std::mem::take(self.adjacency_out.entry(src).or_default());
+        for (dst, _) in old {
+            if let Some(ins) = self.adjacency_in.get_mut(&dst) {
+                ins.retain(|(s, _)| *s != src);
+            }
+        }
+    }
+
+    #[inline]
+    fn scrub_incoming_only(&mut self, dst: P) {
+        let old: Vec<(P, T)> = std::mem::take(self.adjacency_in.entry(dst).or_default());
+        for (src, _) in old {
+            if let Some(outs) = self.adjacency_out.get_mut(&src) {
+                outs.retain(|(d, _)| *d != dst);
+            }
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn debug_assert_consistent(&self) {
+        for (src, outs) in &self.adjacency_out {
+            for (dst, _) in outs {
+                let ok = self
+                    .adjacency_in
+                    .get(dst)
+                    .map_or(false, |ins| ins.iter().any(|(s, _)| s == src));
+                debug_assert!(
+                    ok,
+                    "Missing mirror in[{dst:?}] for out edge ({src:?} -> {dst:?})"
+                );
+            }
+        }
+        for (dst, ins) in &self.adjacency_in {
+            for (src, _) in ins {
+                let ok = self
+                    .adjacency_out
+                    .get(src)
+                    .map_or(false, |outs| outs.iter().any(|(d, _)| d == dst));
+                debug_assert!(
+                    ok,
+                    "Missing mirror out[{src:?}] for in edge ({src:?} -> {dst:?})"
+                );
+            }
+        }
     }
 }
 
@@ -176,6 +224,8 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
             .or_default()
             .push((src, payload));
         self.invalidate_cache();
+        #[cfg(debug_assertions)]
+        self.debug_assert_consistent();
     }
 
     /// Removes the arrow from `src` to `dst`, returning the associated payload if it existed.
@@ -205,6 +255,8 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
             }
         }
         self.invalidate_cache();
+        #[cfg(debug_assertions)]
+        self.debug_assert_consistent();
         removed
     }
 
@@ -231,23 +283,34 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
         self.adjacency_out.entry(p).or_default();
         self.adjacency_in.entry(p).or_default();
         self.invalidate_cache();
+        #[cfg(debug_assertions)]
+        self.debug_assert_consistent();
     }
-    /// Removes a point and its associated arrows from the sieve.
+    /// Removes all arrows incident to `p` from both sides.
+    ///
+    /// If `p` existed in the maps, its entries remain but are emptied.
     ///
     /// # Example
     /// ```rust
     /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
     /// use mesh_sieve::topology::sieve::Sieve;
     /// let mut s = InMemorySieve::<u32, ()>::new();
+    /// s.add_point(1);
     /// s.add_arrow(1, 2, ());
     /// s.remove_point(1);
-    /// assert!(!s.adjacency_out.contains_key(&1));
-    /// assert!(!s.adjacency_in.contains_key(&1));
+    /// assert!(s.adjacency_out.get(&1).unwrap().is_empty());
+    /// assert!(s.adjacency_in.get(&1).unwrap().is_empty());
     /// ```
     fn remove_point(&mut self, p: P) {
-        self.adjacency_out.remove(&p);
-        self.adjacency_in.remove(&p);
+        if self.adjacency_out.contains_key(&p) {
+            self.scrub_outgoing_only(p);
+        }
+        if self.adjacency_in.contains_key(&p) {
+            self.scrub_incoming_only(p);
+        }
         self.invalidate_cache();
+        #[cfg(debug_assertions)]
+        self.debug_assert_consistent();
     }
     /// Adds a base point to the sieve, creating an empty outgoing adjacency for it.
     ///
@@ -262,6 +325,8 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
     fn add_base_point(&mut self, p: P) {
         self.adjacency_out.entry(p).or_default();
         self.invalidate_cache();
+        #[cfg(debug_assertions)]
+        self.debug_assert_consistent();
     }
     /// Adds a cap point to the sieve, creating an empty incoming adjacency for it.
     ///
@@ -276,6 +341,8 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
     fn add_cap_point(&mut self, p: P) {
         self.adjacency_in.entry(p).or_default();
         self.invalidate_cache();
+        #[cfg(debug_assertions)]
+        self.debug_assert_consistent();
     }
     /// Removes a base point and its outgoing arrows from the sieve.
     ///
@@ -289,8 +356,13 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
     /// assert!(!s.adjacency_out.contains_key(&1));
     /// ```
     fn remove_base_point(&mut self, p: P) {
-        self.adjacency_out.remove(&p);
+        if self.adjacency_out.contains_key(&p) {
+            self.scrub_outgoing_only(p);
+            self.adjacency_out.remove(&p);
+        }
         self.invalidate_cache();
+        #[cfg(debug_assertions)]
+        self.debug_assert_consistent();
     }
     /// Removes a cap point and its incoming arrows from the sieve.
     ///
@@ -304,8 +376,13 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
     /// assert!(!s.adjacency_in.contains_key(&2));
     /// ```
     fn remove_cap_point(&mut self, p: P) {
-        self.adjacency_in.remove(&p);
+        if self.adjacency_in.contains_key(&p) {
+            self.scrub_incoming_only(p);
+            self.adjacency_in.remove(&p);
+        }
         self.invalidate_cache();
+        #[cfg(debug_assertions)]
+        self.debug_assert_consistent();
     }
     /// Sets the cone for a point, replacing any existing cone.
     ///
@@ -683,7 +760,9 @@ mod covering_api_tests {
         s.add_point(1);
         assert!(s.points().any(|p| p == 1));
         s.remove_point(1);
-        assert!(!s.points().any(|p| p == 1));
+        assert!(s.points().any(|p| p == 1));
+        assert!(s.cone(1).next().is_none());
+        assert!(s.support(1).next().is_none());
     }
 
     #[test]
