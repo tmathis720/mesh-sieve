@@ -624,16 +624,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d750af042f7ef4f724306de029d18836c26c1765a54a6a3f094cbd23a7267ffa"
 
 [[package]]
-name = "libffi"
-version = "3.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce826c243048e3d5cec441799724de52e2d42f820468431fc3fceee2341871e2"
-dependencies = [
- "libc",
- "libffi-sys",
-]
-
-[[package]]
 name = "libffi-sys"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -760,7 +750,6 @@ checksum = "677762a4bde2c81158fc566a69b97d11b0c3358694e64f4f922ac5189be311cc"
 dependencies = [
  "build-probe-mpi",
  "conv",
- "libffi",
  "memoffset",
  "mpi-derive",
  "mpi-sys",

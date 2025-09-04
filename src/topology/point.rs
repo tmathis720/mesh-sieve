@@ -14,6 +14,9 @@
 
 use crate::mesh_error::MeshSieveError;
 use std::{convert::TryFrom, fmt, num::NonZeroU64};
+
+#[cfg(all(feature = "mpi-support", feature = "mpi-derive"))]
+use mpi::datatype::Equivalence;
 ///
 /// # PETSc SF semantics
 /// In the context of parallel mesh distribution (see Knepley & Karpeev 2009),
@@ -25,6 +28,10 @@ use std::{convert::TryFrom, fmt, num::NonZeroU64};
 /// exactly like a `u64`.
 #[derive(
     Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[cfg_attr(
+    all(feature = "mpi-support", feature = "mpi-derive"),
+    derive(Equivalence)
 )]
 #[repr(transparent)]
 pub struct PointId(NonZeroU64);
@@ -84,6 +91,57 @@ impl TryFrom<usize> for PointId {
 }
 
 // -----------------------------------------------------------------------------
+// Infallible conversions
+// -----------------------------------------------------------------------------
+
+/// Convert to raw `u64`.
+///
+/// ```rust
+/// # use mesh_sieve::topology::point::PointId;
+/// let p = PointId::new(42).unwrap();
+/// let raw: u64 = p.into();
+/// assert_eq!(raw, 42);
+/// ```
+impl From<PointId> for u64 {
+    #[inline]
+    fn from(p: PointId) -> Self {
+        p.get()
+    }
+}
+
+/// Convert to the inner `NonZeroU64`.
+///
+/// ```rust
+/// # use mesh_sieve::topology::point::PointId;
+/// # use std::num::NonZeroU64;
+/// let p = PointId::new(7).unwrap();
+/// let nz: NonZeroU64 = p.into();
+/// assert_eq!(nz.get(), 7);
+/// ```
+impl From<PointId> for NonZeroU64 {
+    #[inline]
+    fn from(p: PointId) -> Self {
+        p.0
+    }
+}
+
+/// Wrap an existing `NonZeroU64` without checks.
+///
+/// ```rust
+/// # use mesh_sieve::topology::point::PointId;
+/// # use std::num::NonZeroU64;
+/// let nz = NonZeroU64::new(9).unwrap();
+/// let p: PointId = nz.into();
+/// assert_eq!(p.get(), 9);
+/// ```
+impl From<NonZeroU64> for PointId {
+    #[inline]
+    fn from(nz: NonZeroU64) -> Self {
+        PointId(nz)
+    }
+}
+
+// -----------------------------------------------------------------------------
 // Formatting traits
 // -----------------------------------------------------------------------------
 
@@ -112,7 +170,7 @@ impl fmt::Display for PointId {
 ///
 /// We declare that `PointId` has the same MPI datatype as `u64`, ensuring
 /// zero-cost, layout-safe interop.
-#[cfg(feature = "mpi-support")]
+#[cfg(all(feature = "mpi-support", not(feature = "mpi-derive")))]
 unsafe impl mpi::datatype::Equivalence for PointId {
     type Out = <u64 as mpi::datatype::Equivalence>::Out;
 
@@ -203,6 +261,22 @@ mod tests {
         set.insert(b);
         assert_eq!(set.len(), 2);
     }
+
+    #[test]
+    fn roundtrip_conversions() {
+        use std::num::NonZeroU64;
+
+        let p = PointId::new(1).unwrap();
+        let raw: u64 = p.into();
+        assert_eq!(raw, 1);
+
+        let nz = NonZeroU64::new(123).unwrap();
+        let p2: PointId = nz.into();
+        assert_eq!(u64::from(p2), 123);
+
+        let nz2: NonZeroU64 = p2.into();
+        assert_eq!(nz2.get(), 123);
+    }
 }
 
 #[cfg(test)]
@@ -237,6 +311,18 @@ mod abi_tests {
     #[test]
     fn size_matches_u64() {
         assert_eq_size!(PointId, u64);
+    }
+}
+
+#[cfg(all(test, feature = "mpi-support"))]
+mod mpi_tests {
+    use super::*;
+    use mpi::datatype::Equivalence;
+
+    #[test]
+    fn pointid_mpi_equivalence_type_is_u64() {
+        fn _assert_equiv<T: Equivalence>() {}
+        _assert_equiv::<PointId>();
     }
 }
 
