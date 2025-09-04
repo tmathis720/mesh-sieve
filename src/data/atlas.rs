@@ -109,6 +109,48 @@ impl Atlas {
         self.map.get(&p).copied()
     }
 
+    /// Returns true iff `p` is registered in the atlas.
+    ///
+    /// # Complexity
+    /// **O(1)**.
+    ///
+    /// # Determinism
+    /// No side effects.
+    #[inline]
+    pub fn contains(&self, p: PointId) -> bool {
+        self.map.contains_key(&p)
+    }
+
+    /// Number of registered points.
+    ///
+    /// # Notes
+    /// `len()` counts points, not total DOFs; the total DOF count is
+    /// [`total_len`](Self::total_len).
+    ///
+    /// # Complexity
+    /// **O(1)**.
+    ///
+    /// # Determinism
+    /// No side effects.
+    #[inline]
+    pub fn len(&self) -> usize {
+        debug_assert_eq!(self.order.len(), self.map.len());
+        self.order.len()
+    }
+
+    /// Whether the atlas has zero points.
+    ///
+    /// # Complexity
+    /// **O(1)**.
+    ///
+    /// # Determinism
+    /// No side effects.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        debug_assert_eq!(self.order.is_empty(), self.map.is_empty());
+        self.order.is_empty()
+    }
+
     /// Total length of all registered slices.
     ///
     /// This is equal to the sum of lengths of each point’s slice,
