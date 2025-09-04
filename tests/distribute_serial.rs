@@ -17,8 +17,8 @@ fn distribute_mesh_serial() {
     assert_eq!(local.cone(PointId::new(2).unwrap()).count(), 0);
     assert_eq!(local.cone(PointId::new(3).unwrap()).count(), 0);
     // Overlap should contain remote links for ghost points
-    let ghosts: Vec<_> = overlap.support(PointId::new(2).unwrap()).collect();
-    println!("ghosts for PointId(2): {:?}", ghosts);
-    // In this partition, point 3 is a ghost for rank 1, so overlap should contain (3, rank 1)
-    assert!(ghosts.iter().any(|&(src, ref rem)| src == PointId::new(3).unwrap() && rem.rank == 1), "Expected ghost link (3, rank 1) in overlap");
+    let ghosts: Vec<_> = overlap.links_to(1).collect();
+    println!("ghosts for rank 1: {:?}", ghosts);
+    // In this partition, point 3 is a ghost for rank 1, so overlap should contain (3, 3)
+    assert!(ghosts.contains(&(PointId::new(3).unwrap(), PointId::new(3).unwrap())));
 }

@@ -48,7 +48,7 @@ where
     all_neighbors.extend(links.keys().copied());
     
     // incoming neighbors (from whom we want data)
-    all_neighbors.extend(overlap.neighbour_ranks(my_rank));
+    all_neighbors.extend(overlap.neighbor_ranks());
 
     // 3) exchange the item counts
     let counts = exchange_sizes_symmetric(&links, comm, BASE_TAG, &all_neighbors)
