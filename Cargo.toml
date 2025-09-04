@@ -23,7 +23,7 @@ serde = { version = "1.0.219", features = ["derive"] }
 static_assertions = "1.1.0"
 bytemuck = { version = "1", features = ["derive"] }
 # MPI optional: enabled only when the mpi-support feature is requested
-mpi = { version = "0.8", optional = true, features = ["derive", "user-operations"] }
+mpi = { version = "0.8", optional = true, default-features = false, features = [] }
 # libffi/metis optional to avoid requiring system libs in CI unless explicitly enabled
 libffi-sys = { version = "2.3", default-features = false, features = ["system"], optional = true }
 metis = { version = "0.2", optional = true }
@@ -46,6 +46,7 @@ criterion = "0.4"
 [features]
 default = []            # keep core lean
 mpi-support = ["mpi", "rayon", "rand", "ahash"]
+mpi-derive = ["mpi/derive"]
 metis-support = ["metis", "metis-sys", "libffi-sys","bindgen","pkg-config"]
 sieve_ref_fast_dag = []
 strict-invariants = []
