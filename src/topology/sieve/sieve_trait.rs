@@ -683,13 +683,52 @@ where
     /// Produce a new Sieve containing only the base points in `chain` (and their arrows).
     fn restrict_base(&self, chain: impl IntoIterator<Item = Self::Point>) -> Self
     where
-        Self: Sized + Default,
+        Self: Sized + Default + super::mutable::MutableSieve,
         Self::Payload: Clone,
     {
-        let mut out = Self::default();
+        use std::collections::HashMap;
+
+        // First pass: count how many outgoing (and mirrored incoming) edges we will insert.
+        // We also gather the seeds so we don't iterate them again.
+        let mut seeds: Vec<Self::Point> = Vec::new();
+        let mut out_counts: HashMap<Self::Point, usize> = HashMap::new();
+        let mut in_counts: HashMap<Self::Point, usize> = HashMap::new();
+
         for p in chain {
-            for (dst, pay) in self.cone(p) {
-                out.add_arrow(p, dst, pay.clone());
+            seeds.push(p);
+            let mut deg = 0usize;
+            for (q, _) in self.cone(p) {
+                deg += 1;
+                *in_counts.entry(q).or_default() += 1;
+            }
+            if deg > 0 {
+                out_counts.insert(p, deg);
+            }
+        }
+
+        // Second pass: build the restricted sieve, pre-reserving where possible.
+        let mut out = Self::default();
+
+        // Ensure base/cap point presence for seeds & targets before reserve.
+        for &p in &seeds {
+            Sieve::add_base_point(&mut out, p);
+        }
+        for (&q, _) in &in_counts {
+            Sieve::add_cap_point(&mut out, q);
+        }
+
+        // Reserve based on counts (hint-only if backend ignores it).
+        for (&p, &k) in &out_counts {
+            Sieve::reserve_cone(&mut out, p, k);
+        }
+        for (&q, &k) in &in_counts {
+            Sieve::reserve_support(&mut out, q, k);
+        }
+
+        // Final insertion
+        for p in seeds {
+            for (q, pay) in self.cone(p) {
+                out.add_arrow(p, q, pay.clone());
             }
         }
         out
@@ -697,13 +736,46 @@ where
     /// Produce a new Sieve containing only the cap points in `chain` (and their arrows).
     fn restrict_cap(&self, chain: impl IntoIterator<Item = Self::Point>) -> Self
     where
-        Self: Sized + Default,
+        Self: Sized + Default + super::mutable::MutableSieve,
         Self::Payload: Clone,
     {
-        let mut out = Self::default();
+        use std::collections::HashMap;
+
+        let mut seeds: Vec<Self::Point> = Vec::new();
+        let mut in_counts: HashMap<Self::Point, usize> = HashMap::new();
+        let mut out_counts: HashMap<Self::Point, usize> = HashMap::new();
+
         for q in chain {
-            for (src, pay) in self.support(q) {
-                out.add_arrow(src, q, pay.clone());
+            seeds.push(q);
+            let mut deg = 0usize;
+            for (p, _) in self.support(q) {
+                deg += 1;
+                *out_counts.entry(p).or_default() += 1;
+            }
+            if deg > 0 {
+                in_counts.insert(q, deg);
+            }
+        }
+
+        let mut out = Self::default();
+
+        for &q in &seeds {
+            Sieve::add_cap_point(&mut out, q);
+        }
+        for (&p, _) in &out_counts {
+            Sieve::add_base_point(&mut out, p);
+        }
+
+        for (&q, &k) in &in_counts {
+            Sieve::reserve_support(&mut out, q, k);
+        }
+        for (&p, &k) in &out_counts {
+            Sieve::reserve_cone(&mut out, p, k);
+        }
+
+        for q in seeds {
+            for (p, pay) in self.support(q) {
+                out.add_arrow(p, q, pay.clone());
             }
         }
         out
