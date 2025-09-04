@@ -29,9 +29,15 @@ pub trait Stack {
     /// Per-arrow payload type.
     type Payload: Clone;
     /// The underlying base Sieve type.
-    type BaseSieve: crate::topology::sieve::sieve_trait::Sieve<Point=Self::Point, Payload=Self::Payload>;
+    type BaseSieve: crate::topology::sieve::sieve_trait::Sieve<
+        Point = Self::Point,
+        Payload = Self::Payload,
+    >;
     /// The underlying cap Sieve type.
-    type CapSieve: crate::topology::sieve::sieve_trait::Sieve<Point=Self::CapPt, Payload=Self::Payload>;
+    type CapSieve: crate::topology::sieve::sieve_trait::Sieve<
+        Point = Self::CapPt,
+        Payload = Self::Payload,
+    >;
 
     // === Topology queries ===
     /// Returns an iterator over all upward arrows from base point `p` to cap points.
@@ -94,7 +100,11 @@ pub trait Stack {
 ///
 /// Also embeds two `InMemorySieve`s to represent the base and cap topologies themselves.
 #[derive(Clone, Debug)]
-pub struct InMemoryStack<B: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, C: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, P = ()> {
+pub struct InMemoryStack<
+    B: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    C: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    P = (),
+> {
     /// Underlying base sieve (e.g., mesh connectivity).
     pub base: InMemorySieve<B, P>,
     /// Underlying cap sieve (e.g., DOF connectivity).
@@ -174,10 +184,31 @@ where
     ///
     /// After mutating arrows, this method invalidates any derived caches on both the base and cap sieves.
     fn add_arrow(&mut self, base: B, cap: C, pay: P) -> Result<(), MeshSieveError> {
-        self.up.entry(base).or_default().push((cap, pay.clone()));
-        self.down.entry(cap).or_default().push((base, pay.clone()));
+        // Upsert in upward map
+        let ups = self.up.entry(base).or_default();
+        if let Some(slot) = ups.iter_mut().find(|(c, _)| *c == cap) {
+            slot.1 = pay.clone();
+        } else {
+            ups.push((cap, pay.clone()));
+        }
+
+        // Upsert in downward map
+        let downs = self.down.entry(cap).or_default();
+        if let Some(slot) = downs.iter_mut().find(|(b, _)| *b == base) {
+            slot.1 = pay.clone();
+        } else {
+            downs.push((base, pay.clone()));
+        }
+
         InvalidateCache::invalidate_cache(&mut self.base);
         InvalidateCache::invalidate_cache(&mut self.cap);
+
+        #[cfg(debug_assertions)]
+        {
+            self.debug_assert_no_parallel_edges_base(base);
+            self.debug_assert_no_parallel_edges_cap(cap);
+        }
+
         Ok(())
     }
 
@@ -250,6 +281,28 @@ where
     pub fn cap_points(&self) -> impl Iterator<Item = C> + '_ {
         self.down.keys().copied()
     }
+
+    #[cfg(debug_assertions)]
+    fn debug_assert_no_parallel_edges_base(&self, b: B) {
+        if let Some(v) = self.up.get(&b) {
+            use std::collections::HashSet;
+            let mut seen = HashSet::new();
+            for (c, _) in v {
+                assert!(seen.insert(*c), "duplicate base→cap ({:?}→{:?})", b, c);
+            }
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    fn debug_assert_no_parallel_edges_cap(&self, c: C) {
+        if let Some(v) = self.down.get(&c) {
+            use std::collections::HashSet;
+            let mut seen = HashSet::new();
+            for (b, _) in v {
+                assert!(seen.insert(*b), "duplicate cap→base ({:?}→{:?})", c, b);
+            }
+        }
+    }
 }
 
 /// A stack composed of two existing stacks: `lower: base -> mid` and `upper: mid -> cap`.
@@ -274,7 +327,11 @@ where
     F: Fn(&S1::Payload, &S2::Payload) -> S1::Payload,
 {
     pub fn new(lower: &'a S1, upper: &'a S2, compose_payload: F) -> Self {
-        Self { lower, upper, compose_payload }
+        Self {
+            lower,
+            upper,
+            compose_payload,
+        }
     }
 }
 
@@ -290,28 +347,22 @@ where
     type BaseSieve = S1::BaseSieve;
     type CapSieve = S2::CapSieve;
 
-    fn lift<'b>(
-        &'b self,
-        p: S1::Point,
-    ) -> Box<dyn Iterator<Item = (S2::CapPt, S1::Payload)> + 'b> {
+    fn lift<'b>(&'b self, p: S1::Point) -> Box<dyn Iterator<Item = (S2::CapPt, S1::Payload)> + 'b> {
         let lower = self.lower.lift(p);
         let iter = lower.flat_map(move |(mid, pay1)| {
-            self.upper.lift(mid).map(move |(cap, pay2)| {
-                (cap, (self.compose_payload)(&pay1, &pay2))
-            })
+            self.upper
+                .lift(mid)
+                .map(move |(cap, pay2)| (cap, (self.compose_payload)(&pay1, &pay2)))
         });
         Box::new(iter)
     }
 
-    fn drop<'b>(
-        &'b self,
-        q: S2::CapPt,
-    ) -> Box<dyn Iterator<Item = (S1::Point, S1::Payload)> + 'b> {
+    fn drop<'b>(&'b self, q: S2::CapPt) -> Box<dyn Iterator<Item = (S1::Point, S1::Payload)> + 'b> {
         let upper = self.upper.drop(q);
         let iter = upper.flat_map(move |(mid, pay2)| {
-            self.lower.drop(mid).map(move |(base, pay1)| {
-                (base, (self.compose_payload)(&pay1, &pay2))
-            })
+            self.lower
+                .drop(mid)
+                .map(move |(base, pay1)| (base, (self.compose_payload)(&pay1, &pay2)))
         });
         Box::new(iter)
     }
@@ -322,20 +373,28 @@ where
         _cap: S2::CapPt,
         _pay: S1::Payload,
     ) -> Result<(), MeshSieveError> {
-        Err(MeshSieveError::UnsupportedStackOperation("add_arrow on ComposedStack"))
+        Err(MeshSieveError::UnsupportedStackOperation(
+            "add_arrow on ComposedStack",
+        ))
     }
     fn remove_arrow(
         &mut self,
         _base: S1::Point,
         _cap: S2::CapPt,
     ) -> Result<Option<S1::Payload>, MeshSieveError> {
-        Err(MeshSieveError::UnsupportedStackOperation("remove_arrow on ComposedStack"))
+        Err(MeshSieveError::UnsupportedStackOperation(
+            "remove_arrow on ComposedStack",
+        ))
     }
     fn base_mut(&mut self) -> Result<&mut Self::BaseSieve, MeshSieveError> {
-        Err(MeshSieveError::UnsupportedStackOperation("base_mut on ComposedStack"))
+        Err(MeshSieveError::UnsupportedStackOperation(
+            "base_mut on ComposedStack",
+        ))
     }
     fn cap_mut(&mut self) -> Result<&mut Self::CapSieve, MeshSieveError> {
-        Err(MeshSieveError::UnsupportedStackOperation("cap_mut on ComposedStack"))
+        Err(MeshSieveError::UnsupportedStackOperation(
+            "cap_mut on ComposedStack",
+        ))
     }
     /// Returns the base sieve of the composed stack.
     ///
@@ -440,68 +499,80 @@ mod tests {
 
     #[test]
     fn base_and_cap_points_reflect_maps() {
-        let mut s = InMemoryStack::<u32,u32,()>::new();
+        let mut s = InMemoryStack::<u32, u32, ()>::new();
         // empty
         assert!(s.base_points().next().is_none());
         assert!(s.cap_points().next().is_none());
         // add arrow 1→10
-        let _ = s.add_arrow(1,10,());
+        let _ = s.add_arrow(1, 10, ());
         let bases: Vec<_> = s.base_points().collect();
-        let caps:  Vec<_> = s.cap_points().collect();
+        let caps: Vec<_> = s.cap_points().collect();
         assert_eq!(bases, vec![1]);
-        assert_eq!(caps,  vec![10]);
+        assert_eq!(caps, vec![10]);
     }
 
     #[test]
     fn new_and_default_empty() {
-        let s1 = InMemoryStack::<u8,u8,u8>::new();
-        let s2: InMemoryStack<u8,u8,u8> = Default::default();
+        let s1 = InMemoryStack::<u8, u8, u8>::new();
+        let s2: InMemoryStack<u8, u8, u8> = Default::default();
         assert_eq!(s1.base_points().count(), 0);
-        assert_eq!(s2.cap_points().count(),  0);
+        assert_eq!(s2.cap_points().count(), 0);
     }
 
     #[test]
     fn composed_stack_add_arrow_error() {
-        let s1 = InMemoryStack::<u8,u8,u8>::new();
-        let s2 = InMemoryStack::<u8,u8,u8>::new();
-        let mut cs = ComposedStack::new(&s1, &s2, |a,_b|*a);
-        let err = cs.add_arrow(0,0,0).unwrap_err();
-        assert_eq!(err.to_string(), MeshSieveError::UnsupportedStackOperation("add_arrow on ComposedStack").to_string());
+        let s1 = InMemoryStack::<u8, u8, u8>::new();
+        let s2 = InMemoryStack::<u8, u8, u8>::new();
+        let mut cs = ComposedStack::new(&s1, &s2, |a, _b| *a);
+        let err = cs.add_arrow(0, 0, 0).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            MeshSieveError::UnsupportedStackOperation("add_arrow on ComposedStack").to_string()
+        );
     }
     #[test]
     fn composed_stack_remove_arrow_error() {
-        let s1 = InMemoryStack::<u8,u8,u8>::new();
-        let s2 = InMemoryStack::<u8,u8,u8>::new();
-        let mut cs = ComposedStack::new(&s1, &s2, |a,_b|*a);
-        let err = cs.remove_arrow(0,0).unwrap_err();
-        assert_eq!(err.to_string(), MeshSieveError::UnsupportedStackOperation("remove_arrow on ComposedStack").to_string());
+        let s1 = InMemoryStack::<u8, u8, u8>::new();
+        let s2 = InMemoryStack::<u8, u8, u8>::new();
+        let mut cs = ComposedStack::new(&s1, &s2, |a, _b| *a);
+        let err = cs.remove_arrow(0, 0).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            MeshSieveError::UnsupportedStackOperation("remove_arrow on ComposedStack").to_string()
+        );
     }
     #[test]
     fn composed_stack_base_mut_error() {
-        let s1 = InMemoryStack::<u8,u8,u8>::new();
-        let s2 = InMemoryStack::<u8,u8,u8>::new();
-        let mut cs = ComposedStack::new(&s1, &s2, |a,_b|*a);
+        let s1 = InMemoryStack::<u8, u8, u8>::new();
+        let s2 = InMemoryStack::<u8, u8, u8>::new();
+        let mut cs = ComposedStack::new(&s1, &s2, |a, _b| *a);
         let err = cs.base_mut().unwrap_err();
-        assert_eq!(err.to_string(), MeshSieveError::UnsupportedStackOperation("base_mut on ComposedStack").to_string());
+        assert_eq!(
+            err.to_string(),
+            MeshSieveError::UnsupportedStackOperation("base_mut on ComposedStack").to_string()
+        );
     }
     #[test]
     fn composed_stack_cap_mut_error() {
-        let s1 = InMemoryStack::<u8,u8,u8>::new();
-        let s2 = InMemoryStack::<u8,u8,u8>::new();
-        let mut cs = ComposedStack::new(&s1, &s2, |a,_b|*a);
+        let s1 = InMemoryStack::<u8, u8, u8>::new();
+        let s2 = InMemoryStack::<u8, u8, u8>::new();
+        let mut cs = ComposedStack::new(&s1, &s2, |a, _b| *a);
         let err = cs.cap_mut().unwrap_err();
-        assert_eq!(err.to_string(), MeshSieveError::UnsupportedStackOperation("cap_mut on ComposedStack").to_string());
+        assert_eq!(
+            err.to_string(),
+            MeshSieveError::UnsupportedStackOperation("cap_mut on ComposedStack").to_string()
+        );
     }
 
     #[test]
     fn remove_nonexistent_returns_none() {
-        let mut s = InMemoryStack::<u32,u32,()>::new();
-        assert_eq!(s.remove_arrow(5,50).unwrap(), None);
+        let mut s = InMemoryStack::<u32, u32, ()>::new();
+        assert_eq!(s.remove_arrow(5, 50).unwrap(), None);
     }
 
     #[test]
     fn remove_arrow_cleans_empty_maps() {
-        let mut s = InMemoryStack::<u32,u32,()>::new();
+        let mut s = InMemoryStack::<u32, u32, ()>::new();
         let _ = s.add_arrow(1, 10, ());
         // Remove the only arrow and ensure maps no longer report the points
         assert_eq!(s.remove_arrow(1, 10).unwrap(), Some(()));
@@ -511,7 +582,7 @@ mod tests {
 
     #[test]
     fn invalidate_cache_clears_embedded() {
-        let mut s = InMemoryStack::<u32,u32,i32>::new();
+        let mut s = InMemoryStack::<u32, u32, i32>::new();
         // manually prime strata cache
         let _ = s.base_mut().unwrap().diameter();
         let _ = s.cap_mut().unwrap().diameter();
@@ -523,7 +594,7 @@ mod tests {
 
     #[test]
     fn lift_drop_empty_iter() {
-        let s = InMemoryStack::<u8,u8,()>::new();
+        let s = InMemoryStack::<u8, u8, ()>::new();
         assert!(s.lift(0).next().is_none());
         assert!(s.drop(0).next().is_none());
     }
@@ -547,7 +618,7 @@ mod tests {
 
     #[test]
     fn stack_vertical_arrows_are_correct() {
-        let mut s = InMemoryStack::<u32,u32,i32>::new();
+        let mut s = InMemoryStack::<u32, u32, i32>::new();
         let _ = s.add_arrow(2, 20, 5);
         // The stack's lift and drop reflect the vertical arrows
         let lifted: Vec<_> = s.lift(2).collect();

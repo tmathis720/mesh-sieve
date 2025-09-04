@@ -122,6 +122,45 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> InMemoryS
             }
         }
     }
+
+    #[inline]
+    pub fn has_arrow(&self, src: P, dst: P) -> bool {
+        self.adjacency_out
+            .get(&src)
+            .map_or(false, |v| v.iter().any(|(d, _)| *d == dst))
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn debug_assert_no_parallel_edges_src(&self, src: P) {
+        if let Some(v) = self.adjacency_out.get(&src) {
+            use std::collections::HashSet;
+            let mut seen = HashSet::new();
+            for (dst, _) in v {
+                assert!(
+                    seen.insert(*dst),
+                    "duplicate edges out of {:?} to {:?}",
+                    src,
+                    dst
+                );
+            }
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn debug_assert_no_parallel_edges_dst(&self, dst: P) {
+        if let Some(v) = self.adjacency_in.get(&dst) {
+            use std::collections::HashSet;
+            let mut seen = HashSet::new();
+            for (src, _) in v {
+                assert!(
+                    seen.insert(*src),
+                    "duplicate edges into {:?} from {:?}",
+                    dst,
+                    src
+                );
+            }
+        }
+    }
 }
 
 impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> InvalidateCache
@@ -215,17 +254,30 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
     /// assert_eq!(s.cone(1).count(), 1);
     /// ```
     fn add_arrow(&mut self, src: P, dst: P, payload: T) {
-        self.adjacency_out
-            .entry(src)
-            .or_default()
-            .push((dst, payload.clone()));
-        self.adjacency_in
-            .entry(dst)
-            .or_default()
-            .push((src, payload));
+        // Upsert outgoing
+        let outs = self.adjacency_out.entry(src).or_default();
+        if let Some(slot) = outs.iter_mut().find(|(d, _)| *d == dst) {
+            slot.1 = payload.clone();
+        } else {
+            outs.push((dst, payload.clone()));
+        }
+
+        // Upsert incoming mirror
+        let ins = self.adjacency_in.entry(dst).or_default();
+        if let Some(slot) = ins.iter_mut().find(|(s, _)| *s == src) {
+            slot.1 = payload;
+        } else {
+            ins.push((src, payload));
+        }
+
         self.invalidate_cache();
+
         #[cfg(debug_assertions)]
-        self.debug_assert_consistent();
+        {
+            self.debug_assert_consistent();
+            self.debug_assert_no_parallel_edges_src(src);
+            self.debug_assert_no_parallel_edges_dst(dst);
+        }
     }
 
     /// Removes the arrow from `src` to `dst`, returning the associated payload if it existed.
@@ -400,28 +452,48 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
     /// assert_eq!(cone, vec![(2, ()), (3, ())]);
     /// ```
     fn set_cone(&mut self, p: P, chain: impl IntoIterator<Item = (P, T)>) {
-        // New cone (vector) for p
-        let new_cone: Vec<(P, T)> = chain.into_iter().collect();
+        let mut new_cone: Vec<(P, T)> = chain.into_iter().collect();
 
-        // Take the old outgoing adjacency of p, leaving an empty vec in the map.
+        // Dedup by destination, last wins
+        {
+            use std::collections::HashSet;
+            let mut seen = HashSet::new();
+            let mut dedup = Vec::with_capacity(new_cone.len());
+            for (dst, pay) in new_cone.into_iter().rev() {
+                if seen.insert(dst) {
+                    dedup.push((dst, pay));
+                }
+            }
+            dedup.reverse();
+            new_cone = dedup;
+        }
+
+        // Remove mirrors of old cone
         let old_cone: Vec<(P, T)> = std::mem::take(self.adjacency_out.entry(p).or_default());
-
-        // 1) Remove mirror entries in adjacency_in for all old (p -> dst) edges
         for (dst, _) in &old_cone {
             if let Some(ins) = self.adjacency_in.get_mut(dst) {
                 ins.retain(|(src, _)| *src != p);
             }
         }
 
-        // 2) Install new outgoing list for p
+        // Install new cone and mirrors
         self.adjacency_out.insert(p, new_cone.clone());
-
-        // 3) Add mirror entries in adjacency_in for all new (p -> dst) edges
         for (dst, pay) in new_cone {
-            self.adjacency_in.entry(dst).or_default().push((p, pay));
+            let ins = self.adjacency_in.entry(dst).or_default();
+            if let Some(slot) = ins.iter_mut().find(|(s, _)| *s == p) {
+                slot.1 = pay;
+            } else {
+                ins.push((p, pay));
+            }
         }
 
         self.invalidate_cache();
+
+        #[cfg(debug_assertions)]
+        {
+            self.debug_assert_consistent();
+            self.debug_assert_no_parallel_edges_src(p);
+        }
     }
     /// Adds to the cone of a point, appending to any existing cone.
     ///
@@ -439,12 +511,9 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
     /// assert_eq!(cone, vec![(2, ()), (3, ())]);
     /// ```
     fn add_cone(&mut self, p: P, chain: impl IntoIterator<Item = (P, T)>) {
-        let out = self.adjacency_out.entry(p).or_default();
         for (dst, pay) in chain {
-            out.push((dst, pay.clone()));
-            self.adjacency_in.entry(dst).or_default().push((p, pay));
+            self.add_arrow(p, dst, pay);
         }
-        self.invalidate_cache();
     }
     /// Sets the support for a point, replacing any existing support.
     ///
@@ -462,28 +531,48 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
     /// assert_eq!(support, vec![(1, ()), (2, ())]);
     /// ```
     fn set_support(&mut self, q: P, chain: impl IntoIterator<Item = (P, T)>) {
-        // New support (vector) for q
-        let new_sup: Vec<(P, T)> = chain.into_iter().collect();
+        let mut new_sup: Vec<(P, T)> = chain.into_iter().collect();
 
-        // Take the old incoming adjacency of q, leaving an empty vec in the map.
+        // Dedup by source, last wins
+        {
+            use std::collections::HashSet;
+            let mut seen = HashSet::new();
+            let mut dedup = Vec::with_capacity(new_sup.len());
+            for (src, pay) in new_sup.into_iter().rev() {
+                if seen.insert(src) {
+                    dedup.push((src, pay));
+                }
+            }
+            dedup.reverse();
+            new_sup = dedup;
+        }
+
+        // Remove mirrors of old support
         let old_sup: Vec<(P, T)> = std::mem::take(self.adjacency_in.entry(q).or_default());
-
-        // 1) Remove mirror entries in adjacency_out for all old (src -> q) edges
         for (src, _) in &old_sup {
             if let Some(outs) = self.adjacency_out.get_mut(src) {
                 outs.retain(|(dst, _)| *dst != q);
             }
         }
 
-        // 2) Install new incoming list for q
+        // Install new support and mirrors
         self.adjacency_in.insert(q, new_sup.clone());
-
-        // 3) Add mirror entries in adjacency_out for all new (src -> q) edges
         for (src, pay) in new_sup {
-            self.adjacency_out.entry(src).or_default().push((q, pay));
+            let outs = self.adjacency_out.entry(src).or_default();
+            if let Some(slot) = outs.iter_mut().find(|(d, _)| *d == q) {
+                slot.1 = pay;
+            } else {
+                outs.push((q, pay));
+            }
         }
 
         self.invalidate_cache();
+
+        #[cfg(debug_assertions)]
+        {
+            self.debug_assert_consistent();
+            self.debug_assert_no_parallel_edges_dst(q);
+        }
     }
     /// Adds to the support of a point, appending to any existing support.
     ///
@@ -502,13 +591,8 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
     /// ```
     fn add_support(&mut self, q: P, chain: impl IntoIterator<Item = (P, T)>) {
         for (src, pay) in chain {
-            self.adjacency_in
-                .entry(q)
-                .or_default()
-                .push((src, pay.clone()));
-            self.adjacency_out.entry(src).or_default().push((q, pay));
+            self.add_arrow(src, q, pay);
         }
-        self.invalidate_cache();
     }
     /// Restricts the sieve to only include arrows originating from the given chain of base points.
     ///
