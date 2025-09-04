@@ -8,13 +8,13 @@
 //! This abstraction supports push (refine) and pull (assemble) of data
 //! across mesh hierarchy levels, as described in Knepley & Karpeev (2009).
 
+#[allow(unused_imports)]
+use crate::data::refine::delta::SliceDelta;
 use crate::data::section::Section;
 use crate::overlap::delta::CopyDelta;
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
 use crate::topology::stack::{InMemoryStack, Stack};
-#[allow(unused_imports)]
-use crate::data::refine::delta::SliceDelta;
 
 /// `Bundle<V, D>` packages a mesh‐to‐DOF stack, a data section, and a `Delta`-type.
 ///
@@ -39,7 +39,7 @@ pub struct Bundle<V, D = CopyDelta> {
 
 impl<V, D> Bundle<V, D>
 where
-    V: Clone + Default,
+    V: Clone,
     D: crate::overlap::delta::Delta<V, Part = V>,
 {
     /// **Refine**: push data *down* the stack (base → cap) using per-arrow orientation.
@@ -50,9 +50,13 @@ where
     /// are temporarily buffered for safety.
     ///
     /// # Complexity
-    /// - Time: \(\sum_{b \in \text{closure(bases)}} \sum_{(b \to c)} O(k)\), where `k` is the
-    ///   slice length.
-    /// - Space: `O(1)` extra for disjoint copies; `O(k)` when slices overlap.
+    /// **O(Σ deg(base) · k)**, where `deg(base)` is the number of cap points per base
+    /// and `k` is the per-point slice length. One pass; no intermediate allocations.
+    ///
+    /// # Determinism
+    /// Deterministic **per cap point slice**, independent of traversal order, provided
+    /// the vertical mapping `base -> {caps}` has no duplicates. Orientation handling
+    /// is local to each write.
     ///
     /// # Errors
     /// Propagates errors from [`Section::try_apply_delta_between_points`].
@@ -74,6 +78,12 @@ where
     }
 
     /// **Assemble**: pull data *up* the stack (cap → base) using `delta`.
+    ///
+    /// # Complexity
+    /// **O(Σ deg(base) · k)**; one pass.
+    ///
+    /// # Determinism
+    /// Deterministic if `delta` is deterministic. Each cap contributes at most once.
     ///
     /// # Errors
     /// Returns an error if any point is missing in the underlying Section.

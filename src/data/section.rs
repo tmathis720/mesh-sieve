@@ -6,10 +6,10 @@
 
 use crate::data::atlas::Atlas;
 use crate::data::refine::delta::SliceDelta;
+use crate::data::DebugInvariants;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cache::InvalidateCache;
 use crate::topology::point::PointId;
-use crate::data::DebugInvariants;
 
 /// Precomputed plan for scattering data into a section.
 #[derive(Clone, Debug)]
@@ -119,17 +119,6 @@ impl<V: Clone> Section<V> {
     pub fn gather_in_order(&self) -> Vec<V> {
         self.data.clone()
     }
-}
-
-impl<V: Clone + Default> Section<V> {
-    /// Construct a new `Section` given an existing `Atlas`.
-    ///
-    /// Initializes the data buffer with `V::default()` repeated for each
-    /// degree of freedom in the atlas.
-    pub fn new(atlas: Atlas) -> Self {
-        let data = vec![V::default(); atlas.total_len()];
-        Section { atlas, data }
-    }
 
     /// Overwrite the data slice at point `p` with the values in `val`.
     ///
@@ -159,25 +148,16 @@ impl<V: Clone + Default> Section<V> {
         self.try_set(p, val).unwrap()
     }
 
-    /// Add a new point to the section, resizing data as needed.
-    ///
-    /// # Errors
-    /// Returns `Err(AtlasInsertionFailed)` if the atlas insertion fails.
-    pub fn try_add_point(&mut self, p: PointId, len: usize) -> Result<(), MeshSieveError> {
-        self.atlas
-            .try_insert(p, len)
-            .map_err(|e| MeshSieveError::AtlasInsertionFailed(p, Box::new(e)))?;
-        self.data.resize(self.atlas.total_len(), V::default());
-        crate::topology::cache::InvalidateCache::invalidate_cache(self);
-        #[cfg(any(debug_assertions, feature = "check-invariants"))]
-        self.debug_assert_invariants();
-        Ok(())
-    }
-
     /// Remove a point from the section, rebuilding data to keep slices contiguous.
     ///
     /// # Errors
     /// Returns `Err(MissingSectionPoint)` if a point is missing from the old atlas or data.
+    ///
+    /// # Complexity
+    /// **O(n)** atlas reindex + **O(total_len_new)** data rebuild.
+    ///
+    /// # Determinism
+    /// Deterministic rebuild in insertion order with no gaps.
     pub fn try_remove_point(&mut self, p: PointId) -> Result<(), MeshSieveError> {
         let old_atlas = self.atlas.clone();
         self.atlas.remove_point(p)?;
@@ -262,14 +242,18 @@ impl<V: Clone + Default> Section<V> {
         self.debug_assert_invariants();
         Ok(())
     }
-}
 
-impl<V: Clone + Send> Section<V> {
     /// Scatter values from an external buffer `other` into this section.
     ///
     /// # Errors
     /// Returns `Err(ScatterLengthMismatch)` if the input length does not match expected,
     /// or `Err(ScatterChunkMismatch)` if a chunk is out of bounds.
+    ///
+    /// # Complexity
+    /// **O(total_len)** to copy slices; validates bounds in **O(n)** where `n` is points.
+    ///
+    /// # Determinism
+    /// Deterministic copy; `*_with_plan` additionally validates the plan version for safety.
     pub fn try_scatter_from(
         &mut self,
         other: &[V],
@@ -310,13 +294,13 @@ impl<V: Clone + Send> Section<V> {
         Ok(())
     }
 
-    /// Scatter a flat buffer into the section in atlas insertion order.
-    pub fn try_scatter_in_order(&mut self, buf: &[V]) -> Result<(), MeshSieveError> {
-        let spans = self.atlas.atlas_map();
-        self.try_scatter_from(buf, &spans)
-    }
-
     /// Scatter using a precomputed plan; fails if the atlas has changed.
+    ///
+    /// # Complexity
+    /// **O(total_len)** to copy slices; validates bounds in **O(n)** where `n` is points.
+    ///
+    /// # Determinism
+    /// Deterministic copy; `*_with_plan` additionally validates the plan version for safety.
     pub fn try_scatter_with_plan(
         &mut self,
         buf: &[V],
@@ -330,6 +314,56 @@ impl<V: Clone + Send> Section<V> {
             });
         }
         self.try_scatter_from(buf, &plan.spans)
+    }
+}
+
+impl<V: Clone + Default> Section<V> {
+    /// Construct a new `Section` given an existing `Atlas`.
+    ///
+    /// Initializes the data buffer with `V::default()` repeated for each
+    /// degree of freedom in the atlas.
+    ///
+    /// # Complexity
+    /// **O(total_len)** to fill with `V::default()`.
+    ///
+    /// # Determinism
+    /// Initial layout matches the atlas’ insertion order deterministically.
+    pub fn new(atlas: Atlas) -> Self {
+        let data = vec![V::default(); atlas.total_len()];
+        Section { atlas, data }
+    }
+
+    /// Add a new point to the section, resizing data as needed.
+    ///
+    /// # Errors
+    /// Returns `Err(AtlasInsertionFailed)` if the atlas insertion fails.
+    ///
+    /// # Complexity
+    /// **O(n)** atlas insertion (reindex) + **O(total_len_new)** data resize.
+    ///
+    /// # Determinism
+    /// Data remains contiguous in **insertion order**; the new point is appended.
+    pub fn try_add_point(&mut self, p: PointId, len: usize) -> Result<(), MeshSieveError> {
+        self.atlas
+            .try_insert(p, len)
+            .map_err(|e| MeshSieveError::AtlasInsertionFailed(p, Box::new(e)))?;
+        self.data.resize(self.atlas.total_len(), V::default());
+        crate::topology::cache::InvalidateCache::invalidate_cache(self);
+        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        self.debug_assert_invariants();
+        Ok(())
+    }
+
+    /// Scatter a flat buffer into the section in atlas insertion order.
+    ///
+    /// # Complexity
+    /// **O(total_len)** to copy slices; validates bounds in **O(n)** where `n` is points.
+    ///
+    /// # Determinism
+    /// Deterministic copy; `*_with_plan` additionally validates the plan version for safety.
+    pub fn try_scatter_in_order(&mut self, buf: &[V]) -> Result<(), MeshSieveError> {
+        let spans = self.atlas.atlas_map();
+        self.try_scatter_from(buf, &spans)
     }
 }
 
@@ -422,7 +456,6 @@ impl<V> InvalidateCache for Section<V> {
         // If you ever cache anything derived from atlas/data, clear it here.
     }
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -5,10 +5,10 @@
 //! for packing degrees‐of‐freedom (DOFs) or other per‐point data into a
 //! single contiguous `Vec` for efficient storage and communication.
 
+use crate::data::DebugInvariants;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cache::InvalidateCache;
 use crate::topology::point::PointId;
-use crate::data::DebugInvariants;
 use std::collections::HashMap;
 
 /// `Atlas` maintains:
@@ -69,6 +69,14 @@ impl Atlas {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Complexity
+    /// Amortized **O(1)** for insertion; subsequent `get` is **O(1)**.
+    /// Preserves **insertion order** (`order`), and `total_len` increases monotonically.
+    ///
+    /// # Determinism
+    /// Insertion order is stable; offsets are contiguous by insertion order.
+    /// See [`Atlas::remove_point`] for reindexing behavior.
     pub fn try_insert(&mut self, p: PointId, len: usize) -> Result<usize, MeshSieveError> {
         if len == 0 {
             return Err(MeshSieveError::ZeroLengthSlice);
@@ -155,6 +163,13 @@ impl Atlas {
     }
 
     /// Remove a point and its slice from the atlas, recomputing all offsets.
+    ///
+    /// # Complexity
+    /// **O(n)** to rebuild offsets; **O(n)** temporary space for the new offsets.
+    /// Preserves relative order of the remaining points.
+    ///
+    /// # Determinism
+    /// Deterministic: the resulting offsets are contiguous in the same insertion order.
     pub fn remove_point(&mut self, p: PointId) -> Result<(), MeshSieveError> {
         let _ = self.map.remove(&p);
         self.order.retain(|&x| x != p);
@@ -236,10 +251,16 @@ impl DebugInvariants for Atlas {
             expected_off = off + len;
             sum = sum
                 .checked_add(len)
-                .ok_or_else(|| MeshSieveError::ScatterLengthMismatch { expected: usize::MAX, found: 0 })?;
+                .ok_or_else(|| MeshSieveError::ScatterLengthMismatch {
+                    expected: usize::MAX,
+                    found: 0,
+                })?;
         }
         if sum != self.total_len {
-            return Err(MeshSieveError::ScatterLengthMismatch { expected: sum, found: self.total_len });
+            return Err(MeshSieveError::ScatterLengthMismatch {
+                expected: sum,
+                found: self.total_len,
+            });
         }
 
         Ok(())

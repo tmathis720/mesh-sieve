@@ -21,19 +21,10 @@ pub struct SievedArray<P, V> {
     _phantom: std::marker::PhantomData<P>,
 }
 
-impl<P, V: Clone + Default> SievedArray<P, V>
+impl<P, V> SievedArray<P, V>
 where
     P: Into<PointId> + Copy + Eq,
 {
-    /// Create a new `SievedArray` with the given atlas.
-    pub fn new(atlas: Atlas) -> Self {
-        let data = vec![V::default(); atlas.total_len()];
-        Self {
-            atlas,
-            data,
-            _phantom: std::marker::PhantomData,
-        }
-    }
     /// Get a read-only slice for the given point, or an error if not present.
     pub fn try_get(&self, p: PointId) -> Result<&[V], crate::mesh_error::MeshSieveError> {
         let (off, len) = self
@@ -53,6 +44,30 @@ where
             .ok_or(crate::mesh_error::MeshSieveError::SievedArrayPointNotInAtlas(p))?;
         Ok(&mut self.data[off..off + len])
     }
+    /// Iterate over all points and their associated slices, returning Results.
+    pub fn try_iter<'s>(
+        &'s self,
+    ) -> impl Iterator<Item = Result<(PointId, &'s [V]), crate::mesh_error::MeshSieveError>> + 's
+    {
+        self.atlas
+            .points()
+            .map(move |p| self.try_get(p).map(|slice| (p, slice)))
+    }
+    /// Backwards-compatible panicking versions (deprecated)
+    #[deprecated(note = "Use try_get instead")]
+    pub fn get(&self, p: PointId) -> &[V] {
+        self.try_get(p).unwrap()
+    }
+    #[deprecated(note = "Use try_get_mut instead")]
+    pub fn get_mut(&mut self, p: PointId) -> &mut [V] {
+        self.try_get_mut(p).unwrap()
+    }
+}
+
+impl<P, V: Clone> SievedArray<P, V>
+where
+    P: Into<PointId> + Copy + Eq,
+{
     /// Set the values for the given point from a slice, or return an error if lengths mismatch or point not found.
     pub fn try_set(
         &mut self,
@@ -72,20 +87,39 @@ where
         tgt.clone_from_slice(val);
         Ok(())
     }
-    /// Iterate over all points and their associated slices, returning Results.
-    pub fn try_iter<'s>(
-        &'s self,
-    ) -> impl Iterator<Item = Result<(PointId, &'s [V]), crate::mesh_error::MeshSieveError>> + 's
-    {
-        self.atlas
-            .points()
-            .map(move |p| self.try_get(p).map(|slice| (p, slice)))
+    #[deprecated(note = "Use try_set instead")]
+    pub fn set(&mut self, p: PointId, val: &[V]) {
+        self.try_set(p, val).unwrap()
     }
+}
+
+impl<P, V: Clone + Default> SievedArray<P, V>
+where
+    P: Into<PointId> + Copy + Eq,
+{
+    /// Create a new `SievedArray` with the given atlas.
+    pub fn new(atlas: Atlas) -> Self {
+        let data = vec![V::default(); atlas.total_len()];
+        Self {
+            atlas,
+            data,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
     /// Refine this array from a coarse array using a sifter (with orientations).
     ///
     /// The `refinement` mapping must be a partial function from fine points to
     /// coarse points; any fine point appearing more than once results in
     /// [`MeshSieveError::DuplicateRefinementTarget`].
+    ///
+    /// # Complexity
+    /// **O(m · k)**, where `m` is the number of fine targets and `k` is slice length.
+    ///
+    /// # Determinism
+    /// Serial: deterministic. Parallel: deterministic final state if refinement
+    /// has **no duplicate fine targets** (duplicates are rejected). Writes occur
+    /// after a read-only computation phase.
     pub fn try_refine_with_sifter(
         &mut self,
         coarse: &SievedArray<P, V>,
@@ -132,7 +166,16 @@ where
         }
         Ok(())
     }
+
     /// Refine this array from a coarse array using a simple mapping (all forward), propagating errors.
+    ///
+    /// # Complexity
+    /// **O(m · k)**, where `m` is the number of fine targets and `k` is slice length.
+    ///
+    /// # Determinism
+    /// Serial: deterministic. Parallel: deterministic final state if refinement
+    /// has **no duplicate fine targets** (duplicates are rejected). Writes occur
+    /// after a read-only computation phase.
     pub fn try_refine(
         &mut self,
         coarse: &SievedArray<P, V>,
@@ -144,19 +187,42 @@ where
             .collect();
         self.try_refine_with_sifter(coarse, &sifter)
     }
+
+    #[deprecated(note = "Use try_refine_with_sifter instead")]
+    pub fn refine_with_sifter(
+        &mut self,
+        coarse: &SievedArray<P, V>,
+        refinement: &[(P, Vec<(P, Orientation)>)],
+    ) {
+        self.try_refine_with_sifter(coarse, refinement).unwrap()
+    }
+    #[deprecated(note = "Use try_refine instead")]
+    pub fn refine(&mut self, coarse: &SievedArray<P, V>, refinement: &[(P, Vec<P>)]) {
+        self.try_refine(coarse, refinement).unwrap()
+    }
+}
+
+impl<P, V> SievedArray<P, V>
+where
+    P: Into<PointId> + Copy + Eq,
+    V: num_traits::FromPrimitive
+        + std::ops::AddAssign
+        + std::ops::Div<Output = V>
+        + Clone
+        + Default,
+{
     /// Assemble fine data into coarse by averaging over refinement, propagating errors.
+    ///
+    /// # Complexity
+    /// **O(m · k)**; performs element-wise reduction per coarse point.
+    ///
+    /// # Determinism
+    /// Determined by the reduction order, which is fixed by the refinement input order.
     pub fn try_assemble(
         &self,
         coarse: &mut SievedArray<P, V>,
         refinement: &[(P, Vec<P>)],
-    ) -> Result<(), crate::mesh_error::MeshSieveError>
-    where
-        V: num_traits::FromPrimitive
-            + std::ops::AddAssign
-            + std::ops::Div<Output = V>
-            + Clone
-            + Default,
-    {
+    ) -> Result<(), crate::mesh_error::MeshSieveError> {
         for (coarse_pt, fine_pts) in refinement.iter() {
             let mut accum = {
                 let coarse_slice = coarse.try_get((*coarse_pt).into())?;
@@ -191,40 +257,9 @@ where
         }
         Ok(())
     }
-    /// Backwards-compatible panicking versions (deprecated)
-    #[deprecated(note = "Use try_get instead")]
-    pub fn get(&self, p: PointId) -> &[V] {
-        self.try_get(p).unwrap()
-    }
-    #[deprecated(note = "Use try_get_mut instead")]
-    pub fn get_mut(&mut self, p: PointId) -> &mut [V] {
-        self.try_get_mut(p).unwrap()
-    }
-    #[deprecated(note = "Use try_set instead")]
-    pub fn set(&mut self, p: PointId, val: &[V]) {
-        self.try_set(p, val).unwrap()
-    }
-    #[deprecated(note = "Use try_refine_with_sifter instead")]
-    pub fn refine_with_sifter(
-        &mut self,
-        coarse: &SievedArray<P, V>,
-        refinement: &[(P, Vec<(P, Orientation)>)],
-    ) {
-        self.try_refine_with_sifter(coarse, refinement).unwrap()
-    }
-    #[deprecated(note = "Use try_refine instead")]
-    pub fn refine(&mut self, coarse: &SievedArray<P, V>, refinement: &[(P, Vec<P>)]) {
-        self.try_refine(coarse, refinement).unwrap()
-    }
+
     #[deprecated(note = "Use try_assemble instead")]
-    pub fn assemble(&self, coarse: &mut SievedArray<P, V>, refinement: &[(P, Vec<P>)])
-    where
-        V: num_traits::FromPrimitive
-            + std::ops::AddAssign
-            + std::ops::Div<Output = V>
-            + Clone
-            + Default,
-    {
+    pub fn assemble(&self, coarse: &mut SievedArray<P, V>, refinement: &[(P, Vec<P>)]) {
         self.try_assemble(coarse, refinement).unwrap()
     }
 }
@@ -240,6 +275,15 @@ where
     ///
     /// Computes slice updates in parallel, short-circuiting on the first error
     /// and rejecting duplicate fine targets deterministically.
+    ///
+    /// # Complexity
+    /// **O(m · k)**, where `m` is the number of fine targets and `k` is slice length.
+    /// Parallel variant short-circuits on first error.
+    ///
+    /// # Determinism
+    /// Serial: deterministic. Parallel: deterministic final state if refinement
+    /// has **no duplicate fine targets** (duplicates are rejected). Writes occur
+    /// after a read-only computation phase.
     #[cfg(feature = "rayon")]
     pub fn try_refine_with_sifter_parallel(
         &mut self,
