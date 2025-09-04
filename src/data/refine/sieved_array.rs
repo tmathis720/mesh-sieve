@@ -81,27 +81,54 @@ where
             .points()
             .map(move |p| self.try_get(p).map(|slice| (p, slice)))
     }
-    /// Refine this array from a coarse array using a sifter (with orientations), propagating errors.
+    /// Refine this array from a coarse array using a sifter (with orientations).
+    ///
+    /// The `refinement` mapping must be a partial function from fine points to
+    /// coarse points; any fine point appearing more than once results in
+    /// [`MeshSieveError::DuplicateRefinementTarget`].
     pub fn try_refine_with_sifter(
         &mut self,
         coarse: &SievedArray<P, V>,
         refinement: &[(P, Vec<(P, Orientation)>)],
     ) -> Result<(), crate::mesh_error::MeshSieveError> {
+        use crate::mesh_error::MeshSieveError;
+
+        let mut updates = Vec::<(P, Vec<V>)>::new();
         for (coarse_pt, fine_pts) in refinement.iter() {
-            let coarse_slice = coarse.try_get((*coarse_pt).into())?;
+            let cpid = (*coarse_pt).into();
+            let coarse_slice = coarse.try_get(cpid)?;
             for (fine_pt, orient) in fine_pts.iter() {
-                let fine_slice = self.try_get_mut((*fine_pt).into())?;
-                if coarse_slice.len() != fine_slice.len() {
-                    return Err(
-                        crate::mesh_error::MeshSieveError::SievedArraySliceLengthMismatch {
-                            point: (*fine_pt).into(),
-                            expected: coarse_slice.len(),
-                            found: fine_slice.len(),
-                        },
-                    );
+                let fpid = (*fine_pt).into();
+                let (_off, len) = self
+                    .atlas
+                    .get(fpid)
+                    .ok_or(MeshSieveError::SievedArrayPointNotInAtlas(fpid))?;
+                if coarse_slice.len() != len {
+                    return Err(MeshSieveError::SievedArraySliceLengthMismatch {
+                        point: fpid,
+                        expected: coarse_slice.len(),
+                        found: len,
+                    });
                 }
-                orient.apply(coarse_slice, fine_slice)?;
+                let mut data = vec![V::default(); len];
+                orient.apply(coarse_slice, &mut data)?;
+                updates.push((*fine_pt, data));
             }
+        }
+
+        updates.sort_unstable_by_key(|(f, _)| (*f).into());
+        for w in updates.windows(2) {
+            let f0: PointId = (w[0].0).into();
+            let f1: PointId = (w[1].0).into();
+            if f0 == f1 {
+                return Err(MeshSieveError::DuplicateRefinementTarget { fine: f0 });
+            }
+        }
+
+        for (fine_pt, data) in updates {
+            let dst = self.try_get_mut(fine_pt.into())?;
+            debug_assert_eq!(dst.len(), data.len());
+            dst.clone_from_slice(&data);
         }
         Ok(())
     }
@@ -210,60 +237,72 @@ where
     P: Into<PointId> + Copy + Eq + Send + Sync,
 {
     /// Parallel refinement using a sifter, enabled with the `rayon` feature.
+    ///
+    /// Computes slice updates in parallel, short-circuiting on the first error
+    /// and rejecting duplicate fine targets deterministically.
     #[cfg(feature = "rayon")]
     pub fn try_refine_with_sifter_parallel(
         &mut self,
         coarse: &Self,
         refinement: &[(P, Vec<(P, Orientation)>)],
     ) -> Result<(), crate::mesh_error::MeshSieveError> {
-        use std::sync::Mutex;
-        let error: Mutex<Option<crate::mesh_error::MeshSieveError>> = Mutex::new(None);
-        let updates: Vec<(P, Vec<V>)> = refinement.par_iter().flat_map(|(c, fine_pts)| {
-            let coarse_slice = match coarse.try_get((*c).into()) {
-                Ok(s) => s,
-                Err(e) => {
-                    *error.lock().unwrap() = Some(e);
-                    return Vec::new(); // FIX: return Vec, not par_iter
-                }
-            };
-            fine_pts.par_iter().filter_map(|(f, o)| {
-                match self.atlas.get((*f).into()) {
-                    Some((_off, len)) => {
+        use crate::mesh_error::MeshSieveError;
+        use std::collections::HashMap;
+
+        let fine_spans: HashMap<PointId, (usize, usize)> = self
+            .atlas
+            .iter_entries()
+            .map(|(pid, span)| (pid, span))
+            .collect();
+
+        let updates: Vec<(P, Vec<V>)> = refinement
+            .par_iter()
+            .try_fold(
+                || Vec::<(P, Vec<V>)>::new(),
+                |mut local, (coarse_pt, fine_pts)| -> Result<_, MeshSieveError> {
+                    let cpid = (*coarse_pt).into();
+                    let coarse_slice = coarse.try_get(cpid)?;
+                    for (fine_pt, orient) in fine_pts {
+                        let fpid = (*fine_pt).into();
+                        let (_off, len) = fine_spans
+                            .get(&fpid)
+                            .copied()
+                            .ok_or(MeshSieveError::SievedArrayPointNotInAtlas(fpid))?;
                         if coarse_slice.len() != len {
-                            *error.lock().unwrap() = Some(crate::mesh_error::MeshSieveError::SievedArraySliceLengthMismatch {
-                                point: (*f).into(),
+                            return Err(MeshSieveError::SievedArraySliceLengthMismatch {
+                                point: fpid,
                                 expected: coarse_slice.len(),
                                 found: len,
                             });
-                            None
-                        } else {
-                            let mut data = vec![V::default(); len];
-                            o.apply(coarse_slice, &mut data).ok()?;
-                            Some(((*f), data))
                         }
-                    },
-                    None => {
-                        *error.lock().unwrap() = Some(crate::mesh_error::MeshSieveError::SievedArrayPointNotInAtlas((*f).into()));
-                        None
+                        let mut data = vec![V::default(); len];
+                        orient.apply(coarse_slice, &mut data)?;
+                        local.push((*fine_pt, data));
                     }
-                }
-            }).collect::<Vec<_>>()
-        }).collect();
-        if let Some(e) = error.into_inner().unwrap() {
-            return Err(e);
-        }
-        // Apply updates sequentially
-        for (f, data) in updates {
-            let dst = self.try_get_mut(f.into())?;
-            if dst.len() != data.len() {
-                return Err(
-                    crate::mesh_error::MeshSieveError::SievedArraySliceLengthMismatch {
-                        point: f.into(),
-                        expected: dst.len(),
-                        found: data.len(),
-                    },
-                );
+                    Ok(local)
+                },
+            )
+            .try_reduce(
+                || Vec::<(P, Vec<V>)>::new(),
+                |mut a, mut b| -> Result<_, MeshSieveError> {
+                    a.append(&mut b);
+                    Ok(a)
+                },
+            )?;
+
+        let mut updates = updates;
+        updates.sort_unstable_by_key(|(f, _)| (*f).into());
+        for w in updates.windows(2) {
+            let f0: PointId = (w[0].0).into();
+            let f1: PointId = (w[1].0).into();
+            if f0 == f1 {
+                return Err(MeshSieveError::DuplicateRefinementTarget { fine: f0 });
             }
+        }
+
+        for (fine_pt, data) in updates {
+            let dst = self.try_get_mut(fine_pt.into())?;
+            debug_assert_eq!(dst.len(), data.len());
             dst.clone_from_slice(&data);
         }
         Ok(())
