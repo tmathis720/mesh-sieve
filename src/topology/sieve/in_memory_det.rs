@@ -47,6 +47,28 @@ impl<P: PointLike, T: PayloadLike> InMemorySieveDeterministic<P, T> {
     }
 
     #[inline]
+    fn scrub_outgoing_only(&mut self, src: P) {
+        if let Some(outs) = self.adjacency_out.remove(&src) {
+            for (dst, _) in outs {
+                if let Some(ins) = self.adjacency_in.get_mut(&dst) {
+                    let _ = Self::remove(ins, src);
+                }
+            }
+        }
+    }
+
+    #[inline]
+    fn scrub_incoming_only(&mut self, dst: P) {
+        if let Some(ins) = self.adjacency_in.remove(&dst) {
+            for (src, _) in ins {
+                if let Some(outs) = self.adjacency_out.get_mut(&src) {
+                    let _ = Self::remove(outs, dst);
+                }
+            }
+        }
+    }
+
+    #[inline]
     fn strata_cache(&self) -> Result<&StrataCache<P>, MeshSieveError> {
         self.strata.get_or_try_init(|| compute_strata(self))
     }
@@ -132,14 +154,28 @@ impl<P: PointLike, T: PayloadLike> MutableSieve for InMemorySieveDeterministic<P
         self.invalidate_cache();
     }
     fn remove_point(&mut self, p: P) {
-        self.adjacency_out.remove(&p);
-        self.adjacency_in.remove(&p);
+        if self.adjacency_out.contains_key(&p) {
+            self.scrub_outgoing_only(p);
+        }
+        if self.adjacency_in.contains_key(&p) {
+            self.scrub_incoming_only(p);
+        }
         self.invalidate_cache();
     }
     fn add_base_point(&mut self, p: P) { self.adjacency_out.entry(p).or_default(); self.invalidate_cache(); }
     fn add_cap_point(&mut self, p: P) { self.adjacency_in.entry(p).or_default(); self.invalidate_cache(); }
-    fn remove_base_point(&mut self, p: P) { self.adjacency_out.remove(&p); self.invalidate_cache(); }
-    fn remove_cap_point(&mut self, p: P) { self.adjacency_in.remove(&p); self.invalidate_cache(); }
+    fn remove_base_point(&mut self, p: P) {
+        if self.adjacency_out.contains_key(&p) {
+            self.scrub_outgoing_only(p);
+        }
+        self.invalidate_cache();
+    }
+    fn remove_cap_point(&mut self, p: P) {
+        if self.adjacency_in.contains_key(&p) {
+            self.scrub_incoming_only(p);
+        }
+        self.invalidate_cache();
+    }
     fn reserve_cone(&mut self, p: P, additional: usize) { self.adjacency_out.entry(p).or_default().reserve(additional); }
     fn reserve_support(&mut self, p: P, additional: usize) { self.adjacency_in.entry(p).or_default().reserve(additional); }
 }
