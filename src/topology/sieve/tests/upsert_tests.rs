@@ -1,3 +1,4 @@
+use crate::topology::orientation::Sign;
 use crate::topology::sieve::in_memory_oriented::InMemoryOrientedSieve;
 use crate::topology::sieve::{InMemorySieve, Sieve};
 use crate::topology::stack::{InMemoryStack, Stack};
@@ -37,13 +38,13 @@ fn set_cone_last_wins_and_mirrors() {
 
 #[test]
 fn oriented_add_upserts_payload_and_orientation() {
-    let mut s = InMemoryOrientedSieve::<u32, i32, i32>::default();
-    s.add_arrow_o(1, 2, 10, 5);
-    s.add_arrow_o(1, 2, 20, -3);
+    let mut s = InMemoryOrientedSieve::<u32, i32>::default();
+    s.add_arrow_o(1, 2, 10, Sign(true));
+    s.add_arrow_o(1, 2, 20, Sign(false));
     let outs: Vec<_> = s.cone(1).collect();
     assert_eq!(outs, vec![(2, 20)]);
     let outs_o: Vec<_> = s.cone_o(1).collect();
-    assert_eq!(outs_o, vec![(2, -3)]);
+    assert_eq!(outs_o, vec![(2, Sign(false))]);
 }
 
 #[test]

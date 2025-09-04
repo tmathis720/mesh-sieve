@@ -5,15 +5,16 @@ use once_cell::sync::OnceCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use super::mutable::MutableSieve;
 use super::oriented::{Orientation, OrientedSieve};
 use super::sieve_trait::Sieve;
-use super::mutable::MutableSieve;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cache::InvalidateCache;
-use crate::topology::sieve::strata::{compute_strata, StrataCache};
+use crate::topology::orientation::Sign;
+use crate::topology::sieve::strata::{StrataCache, compute_strata};
 
 #[derive(Clone, Debug)]
-pub struct InMemoryOrientedSieve<P, T = (), O = i32>
+pub struct InMemoryOrientedSieve<P, T = (), O = Sign>
 where
     P: Ord + std::fmt::Debug,
     O: Orientation,
@@ -307,7 +308,6 @@ where
     fn chart_points(&mut self) -> Result<Vec<P>, MeshSieveError> {
         Ok(self.strata_cache()?.chart_points.clone())
     }
-
 }
 
 impl<P, T, O> MutableSieve for InMemoryOrientedSieve<P, T, O>

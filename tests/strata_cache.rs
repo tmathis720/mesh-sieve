@@ -16,7 +16,7 @@ fn strata_single_cache_path() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn strata_consistency_oriented() -> Result<(), Box<dyn std::error::Error>> {
-    let mut s = InMemoryOrientedSieve::<u32, (), i32>::default();
+    let mut s = InMemoryOrientedSieve::<u32, ()>::default();
     s.add_arrow(1, 2, ());
     s.add_arrow(2, 3, ());
     assert_eq!(s.diameter()?, 2);

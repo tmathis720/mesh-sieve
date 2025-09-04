@@ -61,7 +61,7 @@ fn remove_cap_point_removes_incoming_and_cap_key() {
 
 #[test]
 fn oriented_remove_point_scrubs_both_sides_and_preserves_presence() {
-    let mut s = InMemoryOrientedSieve::<u32, (), i32>::default();
+    let mut s = InMemoryOrientedSieve::<u32, ()>::default();
 
     s.add_point(1);
     s.add_point(2);
