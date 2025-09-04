@@ -5,6 +5,7 @@
 
 use super::sieve_ref::SieveRef;
 use super::sieve_trait::Sieve;
+use super::mutable::MutableSieve;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cache::InvalidateCache;
 use crate::topology::sieve::strata::{compute_strata, StrataCache};
@@ -312,13 +313,6 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
         removed
     }
 
-    fn reserve_cone(&mut self, p: P, additional: usize) {
-        self.adjacency_out.entry(p).or_default().reserve(additional);
-    }
-
-    fn reserve_support(&mut self, q: P, additional: usize) {
-        self.adjacency_in.entry(q).or_default().reserve(additional);
-    }
     // strata helpers now provided by Sieve trait default impls
     /// Adds a point to the sieve, creating empty adjacencies for it.
     ///
@@ -331,39 +325,6 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
     /// assert!(s.adjacency_out.contains_key(&1));
     /// assert!(s.adjacency_in.contains_key(&1));
     /// ```
-    fn add_point(&mut self, p: P) {
-        self.adjacency_out.entry(p).or_default();
-        self.adjacency_in.entry(p).or_default();
-        self.invalidate_cache();
-        #[cfg(debug_assertions)]
-        self.debug_assert_consistent();
-    }
-    /// Removes all arrows incident to `p` from both sides.
-    ///
-    /// If `p` existed in the maps, its entries remain but are emptied.
-    ///
-    /// # Example
-    /// ```rust
-    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
-    /// use mesh_sieve::topology::sieve::Sieve;
-    /// let mut s = InMemorySieve::<u32, ()>::new();
-    /// s.add_point(1);
-    /// s.add_arrow(1, 2, ());
-    /// s.remove_point(1);
-    /// assert!(s.adjacency_out.get(&1).unwrap().is_empty());
-    /// assert!(s.adjacency_in.get(&1).unwrap().is_empty());
-    /// ```
-    fn remove_point(&mut self, p: P) {
-        if self.adjacency_out.contains_key(&p) {
-            self.scrub_outgoing_only(p);
-        }
-        if self.adjacency_in.contains_key(&p) {
-            self.scrub_incoming_only(p);
-        }
-        self.invalidate_cache();
-        #[cfg(debug_assertions)]
-        self.debug_assert_consistent();
-    }
     /// Adds a base point to the sieve, creating an empty outgoing adjacency for it.
     ///
     /// # Example
@@ -374,226 +335,9 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
     /// s.add_base_point(1);
     /// assert!(s.adjacency_out.contains_key(&1));
     /// ```
-    fn add_base_point(&mut self, p: P) {
-        self.adjacency_out.entry(p).or_default();
-        self.invalidate_cache();
-        #[cfg(debug_assertions)]
-        self.debug_assert_consistent();
-    }
-    /// Adds a cap point to the sieve, creating an empty incoming adjacency for it.
-    ///
-    /// # Example
-    /// ```rust
-    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
-    /// use mesh_sieve::topology::sieve::Sieve;
-    /// let mut s = InMemorySieve::<u32, ()>::new();
-    /// s.add_cap_point(2);
-    /// assert!(s.adjacency_in.contains_key(&2));
-    /// ```
-    fn add_cap_point(&mut self, p: P) {
-        self.adjacency_in.entry(p).or_default();
-        self.invalidate_cache();
-        #[cfg(debug_assertions)]
-        self.debug_assert_consistent();
-    }
-    /// Removes a base point and its outgoing arrows from the sieve.
-    ///
-    /// # Example
-    /// ```rust
-    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
-    /// use mesh_sieve::topology::sieve::Sieve;
-    /// let mut s = InMemorySieve::<u32, ()>::new();
-    /// s.add_arrow(1, 2, ());
-    /// s.remove_base_point(1);
-    /// assert!(!s.adjacency_out.contains_key(&1));
-    /// ```
-    fn remove_base_point(&mut self, p: P) {
-        if self.adjacency_out.contains_key(&p) {
-            self.scrub_outgoing_only(p);
-            self.adjacency_out.remove(&p);
-        }
-        self.invalidate_cache();
-        #[cfg(debug_assertions)]
-        self.debug_assert_consistent();
-    }
-    /// Removes a cap point and its incoming arrows from the sieve.
-    ///
-    /// # Example
-    /// ```rust
-    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
-    /// use mesh_sieve::topology::sieve::Sieve;
-    /// let mut s = InMemorySieve::<u32, ()>::new();
-    /// s.add_arrow(1, 2, ());
-    /// s.remove_cap_point(2);
-    /// assert!(!s.adjacency_in.contains_key(&2));
-    /// ```
-    fn remove_cap_point(&mut self, p: P) {
-        if self.adjacency_in.contains_key(&p) {
-            self.scrub_incoming_only(p);
-            self.adjacency_in.remove(&p);
-        }
-        self.invalidate_cache();
-        #[cfg(debug_assertions)]
-        self.debug_assert_consistent();
-    }
     /// Sets the cone for a point, replacing any existing cone.
     ///
     /// This method takes ownership of the provided iterator, consuming it.
-    /// The iterator items are collected into a vector and stored as the new cone.
-    ///
-    /// # Example
-    /// ```rust
-    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
-    /// use mesh_sieve::topology::sieve::Sieve;
-    /// let mut s = InMemorySieve::<u32, ()>::new();
-    /// s.set_cone(1, vec![(2, ()), (3, ())]);
-    /// let mut cone: Vec<_> = s.cone(1).collect();
-    /// cone.sort_by_key(|(d, _)| *d);
-    /// assert_eq!(cone, vec![(2, ()), (3, ())]);
-    /// ```
-    fn set_cone(&mut self, p: P, chain: impl IntoIterator<Item = (P, T)>) {
-        let mut new_cone: Vec<(P, T)> = chain.into_iter().collect();
-
-        // Dedup by destination, last wins
-        {
-            use std::collections::HashSet;
-            let mut seen = HashSet::new();
-            let mut dedup = Vec::with_capacity(new_cone.len());
-            for (dst, pay) in new_cone.into_iter().rev() {
-                if seen.insert(dst) {
-                    dedup.push((dst, pay));
-                }
-            }
-            dedup.reverse();
-            new_cone = dedup;
-        }
-
-        // Remove mirrors of old cone
-        let old_cone: Vec<(P, T)> = std::mem::take(self.adjacency_out.entry(p).or_default());
-        for (dst, _) in &old_cone {
-            if let Some(ins) = self.adjacency_in.get_mut(dst) {
-                ins.retain(|(src, _)| *src != p);
-            }
-        }
-
-        // Install new cone and mirrors
-        self.adjacency_out.insert(p, new_cone.clone());
-        for (dst, pay) in new_cone {
-            let ins = self.adjacency_in.entry(dst).or_default();
-            if let Some(slot) = ins.iter_mut().find(|(s, _)| *s == p) {
-                slot.1 = pay;
-            } else {
-                ins.push((p, pay));
-            }
-        }
-
-        self.invalidate_cache();
-
-        #[cfg(debug_assertions)]
-        {
-            self.debug_assert_consistent();
-            self.debug_assert_no_parallel_edges_src(p);
-        }
-    }
-    /// Adds to the cone of a point, appending to any existing cone.
-    ///
-    /// This method takes ownership of the provided iterator, consuming it.
-    /// The iterator items are appended to the existing cone of the point.
-    ///
-    /// # Example
-    /// ```rust
-    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
-    /// use mesh_sieve::topology::sieve::Sieve;
-    /// let mut s = InMemorySieve::<u32, ()>::new();
-    /// s.add_cone(1, vec![(2, ()), (3, ())]);
-    /// let mut cone: Vec<_> = s.cone(1).collect();
-    /// cone.sort_by_key(|(d, _)| *d);
-    /// assert_eq!(cone, vec![(2, ()), (3, ())]);
-    /// ```
-    fn add_cone(&mut self, p: P, chain: impl IntoIterator<Item = (P, T)>) {
-        for (dst, pay) in chain {
-            self.add_arrow(p, dst, pay);
-        }
-    }
-    /// Sets the support for a point, replacing any existing support.
-    ///
-    /// This method takes ownership of the provided iterator, consuming it.
-    /// The iterator items are collected into a vector and stored as the new support.
-    ///
-    /// # Example
-    /// ```rust
-    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
-    /// use mesh_sieve::topology::sieve::Sieve;
-    /// let mut s = InMemorySieve::<u32, ()>::new();
-    /// s.set_support(5, vec![(1, ()), (2, ())]);
-    /// let mut support: Vec<_> = s.support(5).collect();
-    /// support.sort_by_key(|(src, _)| *src);
-    /// assert_eq!(support, vec![(1, ()), (2, ())]);
-    /// ```
-    fn set_support(&mut self, q: P, chain: impl IntoIterator<Item = (P, T)>) {
-        let mut new_sup: Vec<(P, T)> = chain.into_iter().collect();
-
-        // Dedup by source, last wins
-        {
-            use std::collections::HashSet;
-            let mut seen = HashSet::new();
-            let mut dedup = Vec::with_capacity(new_sup.len());
-            for (src, pay) in new_sup.into_iter().rev() {
-                if seen.insert(src) {
-                    dedup.push((src, pay));
-                }
-            }
-            dedup.reverse();
-            new_sup = dedup;
-        }
-
-        // Remove mirrors of old support
-        let old_sup: Vec<(P, T)> = std::mem::take(self.adjacency_in.entry(q).or_default());
-        for (src, _) in &old_sup {
-            if let Some(outs) = self.adjacency_out.get_mut(src) {
-                outs.retain(|(dst, _)| *dst != q);
-            }
-        }
-
-        // Install new support and mirrors
-        self.adjacency_in.insert(q, new_sup.clone());
-        for (src, pay) in new_sup {
-            let outs = self.adjacency_out.entry(src).or_default();
-            if let Some(slot) = outs.iter_mut().find(|(d, _)| *d == q) {
-                slot.1 = pay;
-            } else {
-                outs.push((q, pay));
-            }
-        }
-
-        self.invalidate_cache();
-
-        #[cfg(debug_assertions)]
-        {
-            self.debug_assert_consistent();
-            self.debug_assert_no_parallel_edges_dst(q);
-        }
-    }
-    /// Adds to the support of a point, appending to any existing support.
-    ///
-    /// This method takes ownership of the provided iterator, consuming it.
-    /// The iterator items are appended to the existing support of the point.
-    ///
-    /// # Example
-    /// ```rust
-    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
-    /// use mesh_sieve::topology::sieve::Sieve;
-    /// let mut s = InMemorySieve::<u32, ()>::new();
-    /// s.add_support(5, vec![(3, ())]);
-    /// let mut support: Vec<_> = s.support(5).collect();
-    /// support.sort_by_key(|(src, _)| *src);
-    /// assert_eq!(support, vec![(3, ())]);
-    /// ```
-    fn add_support(&mut self, q: P, chain: impl IntoIterator<Item = (P, T)>) {
-        for (src, pay) in chain {
-            self.add_arrow(src, q, pay);
-        }
-    }
     /// Restricts the sieve to only include arrows originating from the given chain of base points.
     ///
     /// # Example
@@ -720,6 +464,176 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
     }
 }
 
+impl<P, T> MutableSieve for InMemorySieve<P, T>
+where
+    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    T: Clone,
+{
+    fn reserve_cone(&mut self, p: P, additional: usize) {
+        self.adjacency_out.entry(p).or_default().reserve(additional);
+    }
+
+    fn reserve_support(&mut self, q: P, additional: usize) {
+        self.adjacency_in.entry(q).or_default().reserve(additional);
+    }
+
+    fn add_point(&mut self, p: P) {
+        self.adjacency_out.entry(p).or_default();
+        self.adjacency_in.entry(p).or_default();
+        self.invalidate_cache();
+        #[cfg(debug_assertions)]
+        self.debug_assert_consistent();
+    }
+
+    fn remove_point(&mut self, p: P) {
+        if self.adjacency_out.contains_key(&p) {
+            self.scrub_outgoing_only(p);
+        }
+        if self.adjacency_in.contains_key(&p) {
+            self.scrub_incoming_only(p);
+        }
+        self.invalidate_cache();
+        #[cfg(debug_assertions)]
+        self.debug_assert_consistent();
+    }
+
+    fn add_base_point(&mut self, p: P) {
+        self.adjacency_out.entry(p).or_default();
+        self.invalidate_cache();
+        #[cfg(debug_assertions)]
+        self.debug_assert_consistent();
+    }
+
+    fn add_cap_point(&mut self, p: P) {
+        self.adjacency_in.entry(p).or_default();
+        self.invalidate_cache();
+        #[cfg(debug_assertions)]
+        self.debug_assert_consistent();
+    }
+
+    fn remove_base_point(&mut self, p: P) {
+        if self.adjacency_out.contains_key(&p) {
+            self.scrub_outgoing_only(p);
+            self.adjacency_out.remove(&p);
+        }
+        self.invalidate_cache();
+        #[cfg(debug_assertions)]
+        self.debug_assert_consistent();
+    }
+
+    fn remove_cap_point(&mut self, p: P) {
+        if self.adjacency_in.contains_key(&p) {
+            self.scrub_incoming_only(p);
+            self.adjacency_in.remove(&p);
+        }
+        self.invalidate_cache();
+        #[cfg(debug_assertions)]
+        self.debug_assert_consistent();
+    }
+
+    fn set_cone(&mut self, p: P, chain: impl IntoIterator<Item = (P, T)>) {
+        let mut new_cone: Vec<(P, T)> = chain.into_iter().collect();
+
+        // Dedup by destination, last wins
+        {
+            use std::collections::HashSet;
+            let mut seen = HashSet::new();
+            let mut dedup = Vec::with_capacity(new_cone.len());
+            for (dst, pay) in new_cone.into_iter().rev() {
+                if seen.insert(dst) {
+                    dedup.push((dst, pay));
+                }
+            }
+            dedup.reverse();
+            new_cone = dedup;
+        }
+
+        // Remove mirrors of old cone
+        let old_cone: Vec<(P, T)> = std::mem::take(self.adjacency_out.entry(p).or_default());
+        for (dst, _) in &old_cone {
+            if let Some(ins) = self.adjacency_in.get_mut(dst) {
+                ins.retain(|(src, _)| *src != p);
+            }
+        }
+
+        // Install new cone and mirrors
+        self.adjacency_out.insert(p, new_cone.clone());
+        for (dst, pay) in new_cone {
+            let ins = self.adjacency_in.entry(dst).or_default();
+            if let Some(slot) = ins.iter_mut().find(|(s, _)| *s == p) {
+                slot.1 = pay;
+            } else {
+                ins.push((p, pay));
+            }
+        }
+
+        self.invalidate_cache();
+
+        #[cfg(debug_assertions)]
+        {
+            self.debug_assert_consistent();
+            self.debug_assert_no_parallel_edges_src(p);
+        }
+    }
+
+    fn add_cone(&mut self, p: P, chain: impl IntoIterator<Item = (P, T)>) {
+        for (dst, pay) in chain {
+            self.add_arrow(p, dst, pay);
+        }
+    }
+
+    fn set_support(&mut self, q: P, chain: impl IntoIterator<Item = (P, T)>) {
+        let mut new_sup: Vec<(P, T)> = chain.into_iter().collect();
+
+        // Dedup by source, last wins
+        {
+            use std::collections::HashSet;
+            let mut seen = HashSet::new();
+            let mut dedup = Vec::with_capacity(new_sup.len());
+            for (src, pay) in new_sup.into_iter().rev() {
+                if seen.insert(src) {
+                    dedup.push((src, pay));
+                }
+            }
+            dedup.reverse();
+            new_sup = dedup;
+        }
+
+        // Remove mirrors of old support
+        let old_sup: Vec<(P, T)> = std::mem::take(self.adjacency_in.entry(q).or_default());
+        for (src, _) in &old_sup {
+            if let Some(outs) = self.adjacency_out.get_mut(src) {
+                outs.retain(|(dst, _)| *dst != q);
+            }
+        }
+
+        // Install new support and mirrors
+        self.adjacency_in.insert(q, new_sup.clone());
+        for (src, pay) in new_sup {
+            let outs = self.adjacency_out.entry(src).or_default();
+            if let Some(slot) = outs.iter_mut().find(|(d, _)| *d == q) {
+                slot.1 = pay;
+            } else {
+                outs.push((q, pay));
+            }
+        }
+
+        self.invalidate_cache();
+
+        #[cfg(debug_assertions)]
+        {
+            self.debug_assert_consistent();
+            self.debug_assert_no_parallel_edges_dst(q);
+        }
+    }
+
+    fn add_support(&mut self, q: P, chain: impl IntoIterator<Item = (P, T)>) {
+        for (src, pay) in chain {
+            self.add_arrow(src, q, pay);
+        }
+    }
+}
+
 impl<P, T> SieveRef for InMemorySieve<P, T>
 where
     P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
@@ -759,8 +673,8 @@ where
 
 #[cfg(test)]
 mod sieve_tests {
-    use super::*;
-    use crate::topology::sieve::sieve_trait::Sieve;
+    use super::InMemorySieve;
+    use crate::topology::sieve::Sieve;
 
     #[test]
     fn insertion_and_removal() {
@@ -835,7 +749,7 @@ mod sieve_tests {
 
 #[cfg(test)]
 mod covering_api_tests {
-    use super::*;
+    use super::InMemorySieve;
     use crate::topology::sieve::Sieve;
 
     #[test]

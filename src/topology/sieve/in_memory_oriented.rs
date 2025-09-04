@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 use super::oriented::{Orientation, OrientedSieve};
 use super::sieve_trait::Sieve;
+use super::mutable::MutableSieve;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cache::InvalidateCache;
 use crate::topology::sieve::strata::{compute_strata, StrataCache};
@@ -288,6 +289,14 @@ where
         Ok(self.strata_cache()?.chart_points.clone())
     }
 
+}
+
+impl<P, T, O> MutableSieve for InMemoryOrientedSieve<P, T, O>
+where
+    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    T: Clone,
+    O: Orientation,
+{
     fn reserve_cone(&mut self, p: P, additional: usize) {
         self.adjacency_out.entry(p).or_default().reserve(additional);
     }
