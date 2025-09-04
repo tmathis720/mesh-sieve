@@ -13,6 +13,8 @@ use crate::overlap::delta::CopyDelta;
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
 use crate::topology::stack::{InMemoryStack, Stack};
+#[allow(unused_imports)]
+use crate::data::refine::delta::SliceDelta;
 
 /// `Bundle<V, D>` packages a mesh‐to‐DOF stack, a data section, and a `Delta`-type.
 ///
@@ -40,29 +42,32 @@ where
     V: Clone + Default,
     D: crate::overlap::delta::Delta<V, Part = V>,
 {
-    /// **Refine**: push data *down* the stack (base → cap).
+    /// **Refine**: push data *down* the stack (base → cap) using per-arrow orientation.
+    ///
+    /// For each base point in the sieve closure of `bases`, applies the
+    /// orientation delta from the base slice to each cap slice. Disjoint source
+    /// and destination slices are copied without allocation; overlapping slices
+    /// are temporarily buffered for safety.
+    ///
+    /// # Complexity
+    /// - Time: \(\sum_{b \in \text{closure(bases)}} \sum_{(b \to c)} O(k)\), where `k` is the
+    ///   slice length.
+    /// - Space: `O(1)` extra for disjoint copies; `O(k)` when slices overlap.
     ///
     /// # Errors
-    /// Returns an error if any point is missing in the underlying Section.
+    /// Propagates errors from [`Section::try_apply_delta_between_points`].
     pub fn refine(
         &mut self,
         bases: impl IntoIterator<Item = PointId>,
     ) -> Result<(), crate::mesh_error::MeshSieveError> {
-        let mut actions = Vec::new();
-        for b in self.stack.base().closure(bases) {
-            let base_vals = self.section.try_restrict(b)?.to_vec();
-            let caps: Vec<_> = self.stack.lift(b).collect();
-            actions.push((base_vals, caps));
+        let bases_vec: Vec<PointId> = bases.into_iter().collect();
+        for &b in &bases_vec {
+            self.section.try_restrict(b)?;
         }
-        for (base_vals, caps) in actions {
-            for (cap, orientation) in caps {
-                let mut oriented_vals = base_vals.clone();
-                if let crate::topology::arrow::Orientation::Reverse = orientation {
-                    oriented_vals.reverse();
-                }
-                let cap_vals = self.section.try_restrict_mut(cap)?;
-                let n = cap_vals.len().min(oriented_vals.len());
-                cap_vals[..n].clone_from_slice(&oriented_vals[..n]);
+        for b in self.stack.base().closure(bases_vec) {
+            for (cap, orientation) in self.stack.lift(b) {
+                self.section
+                    .try_apply_delta_between_points(b, cap, &orientation)?;
             }
         }
         Ok(())

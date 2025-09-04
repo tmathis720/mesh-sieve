@@ -8,6 +8,7 @@ use crate::data::atlas::Atlas;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::point::PointId;
 use crate::topology::cache::InvalidateCache;
+use crate::data::refine::delta::SliceDelta;
 
 /// Storage for per-point field data, backed by an `Atlas`.
 #[derive(Clone, Debug)]
@@ -110,6 +111,70 @@ impl<V: Clone + Default> Section<V> {
         crate::topology::cache::InvalidateCache::invalidate_cache(self);
         Ok(())
     }
+
+    /// Apply a delta from `src_point` → `dst_point` directly within the section buffer.
+    ///
+    /// If the underlying slices do not overlap, the delta is applied without any
+    /// additional allocation. Otherwise, the source slice is first copied into a
+    /// temporary buffer to maintain aliasing safety.
+    ///
+    /// # Errors
+    /// - [`MeshSieveError::PointNotInAtlas`] if either point is missing.
+    /// - [`MeshSieveError::SliceLengthMismatch`] if the slice lengths differ.
+    pub fn try_apply_delta_between_points<D: SliceDelta<V>>(
+        &mut self,
+        src_point: PointId,
+        dst_point: PointId,
+        delta: &D,
+    ) -> Result<(), MeshSieveError> {
+        use MeshSieveError::*;
+
+        let (soff, slen) = self
+            .atlas
+            .get(src_point)
+            .ok_or(PointNotInAtlas(src_point))?;
+        let (doff, dlen) = self
+            .atlas
+            .get(dst_point)
+            .ok_or(PointNotInAtlas(dst_point))?;
+
+        if slen != dlen {
+            return Err(SliceLengthMismatch {
+                point: dst_point,
+                expected: slen,
+                found: dlen,
+            });
+        }
+        if slen == 0 {
+            return Ok(());
+        }
+
+        let disjoint = soff + slen <= doff || doff + dlen <= soff;
+
+        if disjoint {
+            let data = &mut self.data;
+            if soff < doff {
+                let (a, b) = data.split_at_mut(doff);
+                let src = &a[soff..soff + slen];
+                let dst = &mut b[0..dlen];
+                delta.apply(src, dst)?;
+            } else {
+                let (a, b) = data.split_at_mut(soff);
+                let dst = &mut a[doff..doff + dlen];
+                let src = &b[0..slen];
+                delta.apply(src, dst)?;
+            }
+        } else {
+            let src_copy: Vec<V> = self.data[soff..soff + slen].to_vec();
+            let dst = &mut self.data[doff..doff + dlen];
+            delta.apply(&src_copy, dst)?;
+        }
+
+        crate::topology::cache::InvalidateCache::invalidate_cache(self);
+        #[cfg(debug_assertions)]
+        self.debug_assert_invariants();
+        Ok(())
+    }
 }
 
 impl<V: Clone + Send> Section<V> {
@@ -167,6 +232,17 @@ impl<V: Clone + Default> Map<V> for Section<V> {
 impl<V> InvalidateCache for Section<V> {
     fn invalidate_cache(&mut self) {
         // If you ever cache anything derived from atlas/data, clear it here.
+    }
+}
+
+#[cfg(any(debug_assertions, feature = "strict-invariants"))]
+impl<V> Section<V> {
+    pub(crate) fn debug_assert_invariants(&self) {
+        debug_assert_eq!(
+            self.atlas.total_len(),
+            self.data.len(),
+            "section data length does not match atlas total"
+        );
     }
 }
 
