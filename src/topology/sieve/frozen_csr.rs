@@ -1,8 +1,9 @@
 //! Frozen CSR (Compressed Sparse Row) representation of a [`Sieve`] topology.
 //!
 //! Immutable, cache-friendly adjacency structure with deterministic iteration
-//! order.  Built from any [`Sieve`] implementation and intended for read-only
-//! traversal workloads.
+//! order. All neighbor lists and the global chart are sorted; `cone`/`support`
+//! walk contiguous slices, and global iteration is deterministic. Built from
+//! any [`Sieve`] implementation and intended for read-only traversal workloads.
 
 use std::collections::HashMap;
 use std::sync::Arc;

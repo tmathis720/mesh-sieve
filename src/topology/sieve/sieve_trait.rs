@@ -58,8 +58,22 @@ where
         Self: 'a;
 
     /// Outgoing arrows from `p`.
+    ///
+    /// ## Complexity
+    /// - Time: **O(degree(p))**
+    /// - Space: **O(1)** (iterator adaptor only)
+    /// - Backend notes:
+    ///   - [`InMemorySieve`](crate::topology::sieve::InMemorySieve): iteration over a
+    ///     `Vec`, average-case stable cost.
+    ///   - CSR/frozen backends: iteration walks a contiguous slice (cache-friendly).
     fn cone<'a>(&'a self, p: Self::Point) -> Self::ConeIter<'a>;
+
     /// Incoming arrows to `p`.
+    ///
+    /// ## Complexity
+    /// - Time: **O(degree_in(p))**
+    /// - Space: **O(1)**
+    /// - Backend notes: as for [`cone`](Self::cone).
     fn support<'a>(&'a self, p: Self::Point) -> Self::SupportIter<'a>;
 
     /// Insert or replace the arrow `src → dst`.
@@ -104,12 +118,19 @@ where
         self.cone_points(src).any(|q| q == dst)
     }
 
-    /// Return an iterator over **all** points in this Sieve’s domain
-    /// (points that appear as a source or a destination of any arrow).
+    /// All points that appear as either a source (`base_points`) or destination
+    /// (`cap_points`).
+    ///
+    /// ## Complexity
+    /// - Time: **O(|V|)**
+    /// - Space: **O(|V|)** (uses a `HashSet` to form the union)
+    ///
+    /// ## Notes
+    /// - Backends may override for lower overhead (e.g., CSR can iterate a dense chart).
+    /// - For deterministic global order, prefer [`chart_points`](Self::chart_points).
     fn points<'a>(&'a self) -> Box<dyn Iterator<Item = Self::Point> + 'a> {
         use std::collections::HashSet;
         let mut set = HashSet::new();
-        // collect anything with outgoing or incoming arrows
         for p in self.base_points() {
             set.insert(p);
         }
@@ -133,6 +154,10 @@ where
     /// Deterministic whole-graph order guided by strata (height-major then `Ord`).
     /// Uses the cached chart when available; computes strata otherwise.
     ///
+    /// ## Complexity
+    /// - First use after mutation: **O(|V| + |E|)** (strata cache build).
+    /// - Subsequent calls: **O(|V|)** to clone the chart vector.
+    ///
     /// Returns an error if the topology is cyclic.
     #[inline]
     fn points_chart_order(&mut self) -> Result<Vec<Self::Point>, MeshSieveError>
@@ -149,6 +174,13 @@ where
 
     /// Concrete iterator over the transitive closure (downward) from `seeds`.
     /// Prefer this over [`closure`] for zero-alloc traversal.
+    ///
+    /// ## Complexity
+    /// - Worst case: **O(|V| + |E|)** time, **O(|V|)** space (visited set + stack),
+    ///   but bounded to the subgraph reachable from `seeds`.
+    /// - Determinism: unspecified neighbor order unless you use sorted variants
+    ///   (see [`closure_iter_sorted`](Self::closure_iter_sorted)); deterministic for CSR
+    ///   if neighbors are pre-sorted.
     fn closure_iter<'s, I>(&'s self, seeds: I) -> ClosureIter<'s, Self>
     where
         I: IntoIterator<Item = Self::Point>,
@@ -157,7 +189,8 @@ where
         ClosureIter::new(self, seeds)
     }
 
-    /// Concrete iterator over the transitive star (upward) from `seeds`.
+    /// Concrete iterator over the star (upward) from `seeds`.
+    /// Complexity and determinism notes as in [`closure_iter`](Self::closure_iter).
     fn star_iter<'s, I>(&'s self, seeds: I) -> StarIter<'s, Self>
     where
         I: IntoIterator<Item = Self::Point>,
@@ -343,14 +376,54 @@ where
 
     // --- lattice ops ---
     // --- Lattice operations: meet and join ---
-    /// Computes the minimal separator (meet) of two points in the Sieve.
+    /// Computes the meet of two points in the Sieve.
     ///
     /// Definition (Sieve): the smallest set whose removal makes `closure(a)` and
     /// `closure(b)` disjoint. We compute `C = closure(a) ∩ closure(b)` and keep
-    /// only elements minimal w.r.t. the downward reachability (cone-transitive)
-    /// order: drop `x` if some other candidate's closure contains `x`
-    /// (equivalently, if `x` appears in another candidate's cone). See
-    /// Knepley–Karpeev: Table 1/2 (meet).  // refs: SPR-2009 Table 1,2
+    /// only elements **maximal with respect to downward reachability**: drop `x`
+    /// if some *higher* candidate’s closure contains `x` (equivalently, if `x`
+    /// appears in another candidate's cone). See Knepley–Karpeev: Table 1/2
+    /// (meet).  // refs: SPR-2009 Table 1,2
+
+    /// ## Complexity
+    /// - Let `G_s` be the subgraph reachable from `{a}` and `{b}` in the downward
+    ///   direction.
+    /// - Time: **O(|V_s| + |E_s|)** for the two traversals + **O(k log k)** to
+    ///   sort/dedup candidates (`k = |C|`) +
+    ///   **O(\sum_{x∈C} degree_up(x))** for the dominance filter.
+    /// - Space: **O(|V_s|)** for visited sets.
+
+    /// ## Determinism
+    /// Deterministic if neighbor order is deterministic (e.g., CSR with sorted
+    /// neighbors, or if you use the “sorted neighbor” traversal variants).
+
+    /// ```rust
+    /// use mesh_sieve::topology::sieve::{Sieve, InMemorySieve};
+    ///
+    /// // DAG:
+    /// //   c1 → f
+    /// //   c2 → f
+    /// //   f  → e1, e2
+    /// //   e1 → v1, v2
+    /// //   e2 → v2, v3
+    ///
+    /// let (c1,c2,f,e1,e2,v1,v2,v3) = (1,2,3,4,5,6,7,8);
+    /// let mut s = InMemorySieve::<u32, ()>::default();
+    /// s.add_arrow(c1, f, ());
+    /// s.add_arrow(c2, f, ());
+    /// s.add_arrow(f, e1, ());
+    /// s.add_arrow(f, e2, ());
+    /// s.add_arrow(e1, v1, ());
+    /// s.add_arrow(e1, v2, ());
+    /// s.add_arrow(e2, v2, ());
+    /// s.add_arrow(e2, v3, ());
+    ///
+    /// // meet(c1, c2) keeps the highest elements in closure(c1)∩closure(c2),
+    /// // i.e., the shared face `f`.
+    /// let mut m: Vec<_> = s.meet(c1, c2).collect();
+    /// m.sort_unstable();
+    /// assert_eq!(m, vec![f]);
+    /// ```
     fn meet<'s>(
         &'s self,
         a: Self::Point,
@@ -376,18 +449,18 @@ where
         // HashSet for O(1) membership test
         let cand_set: HashSet<_> = cand.iter().copied().collect();
 
-        // Keep only minimal elements: x is minimal if no other candidate's closure contains x
+        // Keep only maximal elements: x is maximal if no other candidate's closure contains x
         let mut out: Vec<_> = cand
             .into_iter()
             .filter(|&x| {
-                let mut minimal = true;
+                let mut maximal = true;
                 for y in self.star(std::iter::once(x)) {
                     if y != x && cand_set.contains(&y) {
-                        minimal = false; // some candidate covers x -> not minimal
+                        maximal = false; // some higher candidate covers x -> not maximal
                         break;
                     }
                 }
-                minimal
+                maximal
             })
             .collect();
 
@@ -396,13 +469,73 @@ where
         Box::new(out.into_iter())
     }
 
-    /// Computes the minimal separator (join) of two points in the Sieve.
+    /// Computes the join of two points in the Sieve.
     ///
     /// Definition (Sieve): the smallest set whose removal makes `star(a)` and
     /// `star(b)` disjoint. We compute `C = star(a) ∩ star(b)` and keep only
-    /// elements minimal w.r.t. the upward reachability (support-transitive)
-    /// order: drop x if x reaches another candidate via star.  See
-    /// Knepley–Karpeev: Table 1/2 (join).  // refs: SPR-2009 Table 1,2
+    /// elements **maximal with respect to upward reachability**: drop `x` if
+    /// `star(x)` contains another candidate above it. See Knepley–Karpeev:
+    /// Table 1/2 (join).  // refs: SPR-2009 Table 1,2
+
+    /// ## Complexity
+    /// - Let `G_s` be the subgraph reachable from `{a}` and `{b}` in the upward
+    ///   direction.
+    /// - Time: **O(|V_s| + |E_s|)** for the two traversals + **O(k log k)** to
+    ///   sort/dedup candidates (`k = |C|`) +
+    ///   **O(\sum_{x∈C} degree_down(x))** for the dominance filter.
+    /// - Space: **O(|V_s|)** for visited sets.
+
+    /// ## Determinism
+    /// Deterministic under deterministic neighbor order (e.g., CSR with sorted
+    /// neighbors or using sorted traversal variants).
+
+    /// ```rust
+    /// use mesh_sieve::topology::sieve::{Sieve, InMemorySieve};
+    ///
+    /// // Reuse the graph from the `meet` example.
+    /// let (c1,c2,f,e1,e2,v1,v2,v3) = (1,2,3,4,5,6,7,8);
+    /// let mut s = InMemorySieve::<u32, ()>::default();
+    /// s.add_arrow(c1, f, ());
+    /// s.add_arrow(c2, f, ());
+    /// s.add_arrow(f, e1, ());
+    /// s.add_arrow(f, e2, ());
+    /// s.add_arrow(e1, v1, ());
+    /// s.add_arrow(e1, v2, ());
+    /// s.add_arrow(e2, v2, ());
+    /// s.add_arrow(e2, v3, ());
+    ///
+    /// // join(v1, v3) keeps the highest elements in star(v1)∩star(v3),
+    /// // which are the cells c1 and c2.
+    /// let mut j: Vec<_> = s.join(v1, v3).collect();
+    /// j.sort_unstable();
+    /// assert_eq!(j, vec![c1, c2]);
+    /// ```
+    ///
+    /// ```rust
+    /// use mesh_sieve::topology::sieve::{Sieve, InMemorySieve};
+    ///
+    /// // Y-shape:
+    /// //    a     b
+    /// //     \   /
+    /// //      x
+    /// //     / \
+    /// //    y   z
+    ///
+    /// let (a,b,x,y,z) = (10,11,12,13,14);
+    /// let mut s = InMemorySieve::<u32, ()>::default();
+    /// s.add_arrow(a, x, ());
+    /// s.add_arrow(b, x, ());
+    /// s.add_arrow(x, y, ());
+    /// s.add_arrow(x, z, ());
+    ///
+    /// let mut m: Vec<_> = s.meet(a,b).collect();
+    /// m.sort_unstable();
+    /// assert_eq!(m, vec![x]);
+    ///
+    /// let mut j: Vec<_> = s.join(y,z).collect();
+    /// j.sort_unstable();
+    /// assert_eq!(j, vec![a,b]);
+    /// ```
     fn join<'s>(
         &'s self,
         a: Self::Point,
@@ -427,19 +560,19 @@ where
 
         let cand_set: HashSet<_> = cand.iter().copied().collect();
 
-        // Keep only minimal elements in the upward (support) order:
-        // x is minimal if star(x) contains no other candidate.
+        // Keep only maximal elements in the upward (support) order:
+        // x is maximal if star(x) contains no other candidate above it.
         let mut out: Vec<_> = cand
             .into_iter()
             .filter(|&x| {
-                let mut minimal = true;
+                let mut maximal = true;
                 for y in self.star(std::iter::once(x)) {
                     if y != x && cand_set.contains(&y) {
-                        minimal = false; // x reaches a higher candidate -> not minimal
+                        maximal = false; // x reaches a higher candidate -> not maximal
                         break;
                     }
                 }
-                minimal
+                maximal
             })
             .collect();
 
@@ -450,6 +583,11 @@ where
 
     // --- strata helpers (default impl via compute_strata) ---
     /// Distance from any zero-in-degree “source” to `p`.
+    ///
+    /// ## Complexity
+    /// - First call after a topology change triggers strata computation:
+    ///   **O(|V| + |E|)** time, **O(|V| + |E|)** space (heights, depths, strata).
+    /// - Subsequent calls are **O(1)** from cache (amortized via `OnceCell`).
     fn height(&mut self, p: Self::Point) -> Result<u32, MeshSieveError>
     where
         Self::Point: Ord,
@@ -477,7 +615,11 @@ where
         Ok(compute_strata(&*self)?.diameter)
     }
 
-    /// Iterator over all points at height `k`.
+    /// Iterator over points at height `k`.
+    /// - With cache: collecting the layer is **O(|strata[k]|)** time,
+    ///   **O(|strata[k]|)** space.
+    /// - Without cache (if using [`compute_strata`](crate::topology::sieve::strata::compute_strata)):
+    ///   part of the **O(|V| + |E|)** pass.
     fn height_stratum<'a>(
         &'a mut self,
         k: u32,
@@ -517,7 +659,11 @@ where
         Ok(cache.index_of(p))
     }
 
-    /// Full chart of points in deterministic order (index → point).
+    /// Deterministic global chart (height-major, then `Ord`).
+    ///
+    /// ## Complexity
+    /// - First use after mutation: **O(|V| + |E|)** (strata cache build).
+    /// - Subsequent calls: **O(|V|)** to clone the `chart_points` vector.
     fn chart_points(&mut self) -> Result<Vec<Self::Point>, MeshSieveError>
     where
         Self: Sized,
