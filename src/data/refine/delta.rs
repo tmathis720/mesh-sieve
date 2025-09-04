@@ -3,9 +3,13 @@
 //! This module defines the [`SliceDelta`] trait for slice-level transformations and
 //! provides an implementation for [`Orientation`] to permute or reverse slices.
 //!
+//! # Naming
+//! [`SliceDelta`] is the preferred name. A deprecated [`Delta`] alias is provided
+//! for backward compatibility and will be removed in a future release.
+//!
 //! # Choosing the right `Delta`
-//! - [`crate::data::refine::delta::SliceDelta`] (re-exported as [`Delta`]):
-//!   transforms one *slice* into another (e.g. reverse for orientation).
+//! - [`crate::data::refine::delta::SliceDelta`]: transforms one *slice* into another
+//!   (e.g. reverse for orientation).
 //! - [`crate::overlap::delta::Delta`]: describes *communication/merge semantics*
 //!   for overlap/exchange between parts.
 //!
@@ -29,6 +33,7 @@ pub trait SliceDelta<V: Clone>: Sync {
 }
 
 /// Backward-compatible re-export: external code can still name this trait `Delta`.
+#[deprecated(note = "Renamed to SliceDelta; Delta will be removed in a future major release")]
 pub use SliceDelta as Delta;
 
 impl<V: Clone> SliceDelta<V> for Orientation {

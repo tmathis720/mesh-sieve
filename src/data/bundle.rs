@@ -16,6 +16,68 @@ use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
 use crate::topology::stack::{InMemoryStack, Stack};
 
+/// Reducer combining multiple cap slices into a base slice.
+pub trait Reducer<V> {
+    /// Reduce `caps` into `base` in-place (element-wise).
+    ///
+    /// Implementations may define their own semantics; they should return
+    /// an error if slice lengths mismatch or other reducer-specific conditions
+    /// are violated.
+    fn reduce_into(
+        &self,
+        base: &mut [V],
+        caps: &[&[V]],
+    ) -> Result<(), crate::mesh_error::MeshSieveError>;
+}
+
+/// Element-wise averaging reducer used by [`Bundle::assemble`].
+#[derive(Copy, Clone, Debug, Default)]
+pub struct AverageReducer;
+
+impl<V> Reducer<V> for AverageReducer
+where
+    V: Clone
+        + Default
+        + num_traits::FromPrimitive
+        + core::ops::AddAssign
+        + core::ops::Div<Output = V>,
+{
+    fn reduce_into(
+        &self,
+        base: &mut [V],
+        caps: &[&[V]],
+    ) -> Result<(), crate::mesh_error::MeshSieveError> {
+        use crate::mesh_error::MeshSieveError;
+        if caps.is_empty() {
+            return Ok(());
+        }
+        let k = base.len();
+        for c in caps {
+            if c.len() != k {
+                return Err(MeshSieveError::SliceLengthMismatch {
+                    point: unsafe { PointId::new_unchecked(1) },
+                    expected: k,
+                    found: c.len(),
+                });
+            }
+        }
+        for v in base.iter_mut() {
+            *v = V::default();
+        }
+        for c in caps {
+            for (dst, src) in base.iter_mut().zip(c.iter()) {
+                *dst += src.clone();
+            }
+        }
+        let denom: V = num_traits::FromPrimitive::from_usize(caps.len())
+            .ok_or(MeshSieveError::SievedArrayPrimitiveConversionFailure(caps.len()))?;
+        for v in base.iter_mut() {
+            *v = v.clone() / denom.clone();
+        }
+        Ok(())
+    }
+}
+
 /// `Bundle<V, D>` packages a mesh‐to‐DOF stack, a data section, and a `Delta`-type.
 ///
 /// - `V`: underlying data type stored at each DOF (e.g., `f64`, `i32`, …).
@@ -39,7 +101,7 @@ pub struct Bundle<V, D = CopyDelta> {
 
 impl<V, D> Bundle<V, D>
 where
-    V: Clone,
+    V: Clone + Default,
     D: crate::overlap::delta::Delta<V, Part = V>,
 {
     /// **Refine**: push data *down* the stack (base → cap) using per-arrow orientation.
@@ -91,49 +153,45 @@ where
     ///
     /// # Errors
     /// Returns an error if slice lengths mismatch or primitive conversion fails.
+    /// Assemble using a custom reducer (e.g., average).
+    ///
+    /// # Behavior
+    /// Collects all cap slices attached to each base point (via the vertical stack),
+    /// then calls `reducer.reduce_into(base_slice, &cap_slices)`.
+    pub fn assemble_with<R: Reducer<V>>(
+        &mut self,
+        bases: impl IntoIterator<Item = PointId>,
+        reducer: &R,
+    ) -> Result<(), crate::mesh_error::MeshSieveError> {
+        for b in self.stack.base().closure(bases) {
+            let caps: Vec<_> = self.stack.lift(b).map(|(cap, _)| cap).collect();
+            let cap_bufs: Vec<Vec<V>> = caps
+                .iter()
+                .map(|&cap| Ok(self.section.try_restrict(cap)?.to_vec()))
+                .collect::<Result<_, crate::mesh_error::MeshSieveError>>()?;
+            let cap_refs: Vec<&[V]> = cap_bufs.iter().map(|v| &v[..]).collect();
+            let base_slice = self.section.try_restrict_mut(b)?;
+            reducer.reduce_into(base_slice, &cap_refs)?;
+        }
+        Ok(())
+    }
+
+    /// Backward-compatible assemble: element-wise average of cap slices.
+    ///
+    /// # Migration
+    /// Prefer [`Bundle::assemble_with`] for explicit reduction control.
     pub fn assemble(
         &mut self,
         bases: impl IntoIterator<Item = PointId>,
     ) -> Result<(), crate::mesh_error::MeshSieveError>
     where
-        V: Default + std::ops::AddAssign + std::ops::Div<Output = V>,
-        V: num_traits::FromPrimitive,
+        V: Clone
+            + Default
+            + num_traits::FromPrimitive
+            + std::ops::AddAssign
+            + std::ops::Div<Output = V>,
     {
-        use crate::mesh_error::MeshSieveError;
-        use num_traits::FromPrimitive;
-
-        for b in self.stack.base().closure(bases) {
-            let caps: Vec<_> = self.stack.lift(b).map(|(cap, _)| cap).collect();
-            if caps.is_empty() {
-                continue;
-            }
-            let base_len = self.section.try_restrict(b)?.len();
-            let mut accum = vec![V::default(); base_len];
-            let mut count = 0usize;
-            for cap in caps {
-                let cap_vals = self.section.try_restrict(cap)?;
-                if cap_vals.len() != base_len {
-                    return Err(MeshSieveError::SliceLengthMismatch {
-                        point: cap,
-                        expected: base_len,
-                        found: cap_vals.len(),
-                    });
-                }
-                for (a, v) in accum.iter_mut().zip(cap_vals.iter()) {
-                    *a += v.clone();
-                }
-                count += 1;
-            }
-            if count > 0 {
-                let divisor: V = FromPrimitive::from_usize(count)
-                    .ok_or(MeshSieveError::SievedArrayPrimitiveConversionFailure(count))?;
-                for a in accum.iter_mut() {
-                    *a = a.clone() / divisor.clone();
-                }
-                self.section.try_set(b, &accum)?;
-            }
-        }
-        Ok(())
+        self.assemble_with(bases, &AverageReducer::default())
     }
 
     /// Iterate over `(cap_point, &[V])` pairs for all DOFs attached to base `p`.
