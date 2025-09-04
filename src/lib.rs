@@ -28,7 +28,7 @@
 //! - Fallible map access via `try_restrict_*` helpers and the [`FallibleMap`]
 //!   trait.
 //! - [`Bundle::assemble`] now averages element-wise; use
-//!   [`Bundle::assemble_with`] with a [`Reducer`](crate::data::bundle::Reducer)
+//!   [`Bundle::assemble_with`] with a [`SliceReducer`](crate::data::bundle::SliceReducer)
 //!   for custom behavior.
 //! - `data::refine::delta::SliceDelta` replaces the deprecated `Delta` alias.
 //!

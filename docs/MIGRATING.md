@@ -8,7 +8,7 @@
 
 - Old: `bundle.assemble(bases)` (previously under-specified).
 - New: `bundle.assemble(bases)` now **averages element-wise**.
-- Prefer: `bundle.assemble_with(bases, &AverageReducer)` or a custom reducer implementing `Reducer<V>`.
+- Prefer: `bundle.assemble_with(bases, &AverageReducer)` or a custom reducer implementing `SliceReducer<V>`.
 
 ## Delta rename
 

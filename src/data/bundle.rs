@@ -16,25 +16,36 @@ use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
 use crate::topology::stack::{InMemoryStack, Stack};
 
-/// Reducer combining multiple cap slices into a base slice.
-pub trait Reducer<V> {
-    /// Reduce `caps` into `base` in-place (element-wise).
-    ///
-    /// Implementations may define their own semantics; they should return
-    /// an error if slice lengths mismatch or other reducer-specific conditions
-    /// are violated.
-    fn reduce_into(
+/// Reducer combining multiple cap slices into an accumulator slice.
+///
+/// Implementors supply zero-initialization, per-slice accumulation, and an
+/// optional finalize step (e.g. for averaging).
+pub trait SliceReducer<V>: Sync {
+    /// Create a zero-initialized accumulator of length `len`.
+    fn make_zero(&self, len: usize) -> Vec<V>;
+
+    /// Accumulate `src` into `acc` element-wise.
+    fn accumulate(
         &self,
-        base: &mut [V],
-        caps: &[&[V]],
+        acc: &mut [V],
+        src: &[V],
     ) -> Result<(), crate::mesh_error::MeshSieveError>;
+
+    /// Optional finalize step once all sources have been accumulated.
+    fn finalize(
+        &self,
+        _acc: &mut [V],
+        _count: usize,
+    ) -> Result<(), crate::mesh_error::MeshSieveError> {
+        Ok(())
+    }
 }
 
 /// Element-wise averaging reducer used by [`Bundle::assemble`].
 #[derive(Copy, Clone, Debug, Default)]
 pub struct AverageReducer;
 
-impl<V> Reducer<V> for AverageReducer
+impl<V> SliceReducer<V> for AverageReducer
 where
     V: Clone
         + Default
@@ -42,36 +53,41 @@ where
         + core::ops::AddAssign
         + core::ops::Div<Output = V>,
 {
-    fn reduce_into(
+    fn make_zero(&self, len: usize) -> Vec<V> {
+        vec![V::default(); len]
+    }
+
+    fn accumulate(
         &self,
-        base: &mut [V],
-        caps: &[&[V]],
+        acc: &mut [V],
+        src: &[V],
     ) -> Result<(), crate::mesh_error::MeshSieveError> {
         use crate::mesh_error::MeshSieveError;
-        if caps.is_empty() {
+        if acc.len() != src.len() {
+            return Err(MeshSieveError::SliceLengthMismatch {
+                point: unsafe { PointId::new_unchecked(1) },
+                expected: acc.len(),
+                found: src.len(),
+            });
+        }
+        for (dst, s) in acc.iter_mut().zip(src.iter()) {
+            *dst += s.clone();
+        }
+        Ok(())
+    }
+
+    fn finalize(
+        &self,
+        acc: &mut [V],
+        count: usize,
+    ) -> Result<(), crate::mesh_error::MeshSieveError> {
+        use crate::mesh_error::MeshSieveError;
+        if count == 0 {
             return Ok(());
         }
-        let k = base.len();
-        for c in caps {
-            if c.len() != k {
-                return Err(MeshSieveError::SliceLengthMismatch {
-                    point: unsafe { PointId::new_unchecked(1) },
-                    expected: k,
-                    found: c.len(),
-                });
-            }
-        }
-        for v in base.iter_mut() {
-            *v = V::default();
-        }
-        for c in caps {
-            for (dst, src) in base.iter_mut().zip(c.iter()) {
-                *dst += src.clone();
-            }
-        }
-        let denom: V = num_traits::FromPrimitive::from_usize(caps.len())
-            .ok_or(MeshSieveError::SievedArrayPrimitiveConversionFailure(caps.len()))?;
-        for v in base.iter_mut() {
+        let denom: V = num_traits::FromPrimitive::from_usize(count)
+            .ok_or(MeshSieveError::SievedArrayPrimitiveConversionFailure(count))?;
+        for v in acc.iter_mut() {
             *v = v.clone() / denom.clone();
         }
         Ok(())
@@ -157,21 +173,30 @@ where
     ///
     /// # Behavior
     /// Collects all cap slices attached to each base point (via the vertical stack),
-    /// then calls `reducer.reduce_into(base_slice, &cap_slices)`.
-    pub fn assemble_with<R: Reducer<V>>(
+    /// then reduces them element-wise into a fresh accumulator before writing the
+    /// result back to the base slice.
+    pub fn assemble_with<R: SliceReducer<V>>(
         &mut self,
         bases: impl IntoIterator<Item = PointId>,
         reducer: &R,
     ) -> Result<(), crate::mesh_error::MeshSieveError> {
         for b in self.stack.base().closure(bases) {
             let caps: Vec<_> = self.stack.lift(b).map(|(cap, _)| cap).collect();
-            let cap_bufs: Vec<Vec<V>> = caps
-                .iter()
-                .map(|&cap| Ok(self.section.try_restrict(cap)?.to_vec()))
-                .collect::<Result<_, crate::mesh_error::MeshSieveError>>()?;
-            let cap_refs: Vec<&[V]> = cap_bufs.iter().map(|v| &v[..]).collect();
-            let base_slice = self.section.try_restrict_mut(b)?;
-            reducer.reduce_into(base_slice, &cap_refs)?;
+            if caps.is_empty() {
+                continue;
+            }
+
+            let first = caps[0];
+            let first_slice = self.section.try_restrict(first)?;
+            let mut acc = reducer.make_zero(first_slice.len());
+            let mut count = 0usize;
+            for cap in caps {
+                let cap_slice = self.section.try_restrict(cap)?;
+                reducer.accumulate(&mut acc, cap_slice)?;
+                count += 1;
+            }
+            reducer.finalize(&mut acc, count)?;
+            self.section.try_set(b, &acc)?;
         }
         Ok(())
     }
