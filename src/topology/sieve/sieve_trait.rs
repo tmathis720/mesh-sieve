@@ -7,7 +7,9 @@
 
 use crate::mesh_error::MeshSieveError;
 use crate::topology::sieve::strata::compute_strata;
-use crate::topology::sieve::traversal_iter::{ClosureBothIter, ClosureIter, StarIter};
+use crate::topology::sieve::traversal_iter::{
+    ClosureBothIter, ClosureBothIterRef, ClosureIter, ClosureIterRef, StarIter, StarIterRef,
+};
 
 pub use crate::topology::cache::InvalidateCache;
 
@@ -135,6 +137,10 @@ where
     }
 
     // --- graph traversals ---
+    /// If you only require point IDs during traversal, implement
+    /// [`SieveRef`](crate::topology::sieve::SieveRef) and use the `_ref`
+    /// variants which borrow payloads and avoid cloning.
+
     /// Concrete iterator over the transitive closure (downward) from `seeds`.
     /// Prefer this over [`closure`] for zero-alloc traversal.
     fn closure_iter<'s, I>(&'s self, seeds: I) -> ClosureIter<'s, Self>
@@ -234,6 +240,99 @@ where
         I: IntoIterator<Item = Self::Point>,
     {
         Box::new(self.closure_both_iter_sorted(seeds))
+    }
+
+    /// Borrow-based downward closure: requires [`SieveRef`] and clones no payloads.
+    #[inline]
+    fn closure_iter_ref<'s, I>(&'s self, seeds: I) -> ClosureIterRef<'s, Self>
+    where
+        I: IntoIterator<Item = Self::Point>,
+        Self: crate::topology::sieve::SieveRef + Sized,
+    {
+        ClosureIterRef::new_ref(self, seeds)
+    }
+
+    /// Borrow-based upward star.
+    #[inline]
+    fn star_iter_ref<'s, I>(&'s self, seeds: I) -> StarIterRef<'s, Self>
+    where
+        I: IntoIterator<Item = Self::Point>,
+        Self: crate::topology::sieve::SieveRef + Sized,
+    {
+        StarIterRef::new_ref(self, seeds)
+    }
+
+    /// Borrow-based both-direction closure.
+    #[inline]
+    fn closure_both_iter_ref<'s, I>(&'s self, seeds: I) -> ClosureBothIterRef<'s, Self>
+    where
+        I: IntoIterator<Item = Self::Point>,
+        Self: crate::topology::sieve::SieveRef + Sized,
+    {
+        ClosureBothIterRef::new_ref(self, seeds)
+    }
+
+    /// Deterministic ref variant: seeds sorted/deduped.
+    #[inline]
+    fn closure_iter_ref_sorted<'s, I>(&'s self, seeds: I) -> ClosureIterRef<'s, Self>
+    where
+        I: IntoIterator<Item = Self::Point>,
+        Self: crate::topology::sieve::SieveRef + Sized,
+    {
+        ClosureIterRef::new_ref_sorted(self, seeds)
+    }
+
+    /// Deterministic ref variant: seeds sorted/deduped.
+    #[inline]
+    fn star_iter_ref_sorted<'s, I>(&'s self, seeds: I) -> StarIterRef<'s, Self>
+    where
+        I: IntoIterator<Item = Self::Point>,
+        Self: crate::topology::sieve::SieveRef + Sized,
+    {
+        StarIterRef::new_ref_sorted(self, seeds)
+    }
+
+    /// Deterministic ref variant: seeds sorted/deduped.
+    #[inline]
+    fn closure_both_iter_ref_sorted<'s, I>(&'s self, seeds: I) -> ClosureBothIterRef<'s, Self>
+    where
+        I: IntoIterator<Item = Self::Point>,
+        Self: crate::topology::sieve::SieveRef + Sized,
+    {
+        ClosureBothIterRef::new_ref_sorted(self, seeds)
+    }
+
+    /// Strongly deterministic ref variant sorting neighbors on expansion.
+    #[inline]
+    fn closure_iter_ref_sorted_neighbors<'s, I>(&'s self, seeds: I) -> ClosureIterRef<'s, Self>
+    where
+        I: IntoIterator<Item = Self::Point>,
+        Self: crate::topology::sieve::SieveRef + Sized,
+    {
+        ClosureIterRef::new_ref_sorted_neighbors(self, seeds)
+    }
+
+    /// Strongly deterministic ref variant sorting neighbors on expansion.
+    #[inline]
+    fn star_iter_ref_sorted_neighbors<'s, I>(&'s self, seeds: I) -> StarIterRef<'s, Self>
+    where
+        I: IntoIterator<Item = Self::Point>,
+        Self: crate::topology::sieve::SieveRef + Sized,
+    {
+        StarIterRef::new_ref_sorted_neighbors(self, seeds)
+    }
+
+    /// Strongly deterministic ref variant sorting neighbors on expansion.
+    #[inline]
+    fn closure_both_iter_ref_sorted_neighbors<'s, I>(
+        &'s self,
+        seeds: I,
+    ) -> ClosureBothIterRef<'s, Self>
+    where
+        I: IntoIterator<Item = Self::Point>,
+        Self: crate::topology::sieve::SieveRef + Sized,
+    {
+        ClosureBothIterRef::new_ref_sorted_neighbors(self, seeds)
     }
 
     // --- lattice ops ---

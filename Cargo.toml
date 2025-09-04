@@ -46,7 +46,6 @@ criterion = "0.4"
 [features]
 default = []            # keep core lean
 mpi-support = ["mpi", "rayon", "rand", "ahash"]
-sieve_point_only = []
 metis-support = ["metis", "metis-sys", "libffi-sys","bindgen","pkg-config"]
 sieve_ref_fast_dag = []
 
