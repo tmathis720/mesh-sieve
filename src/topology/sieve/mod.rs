@@ -42,7 +42,18 @@ use std::sync::Arc;
 /// In-memory sieve storing `Arc<T>` payloads for shared ownership.
 pub type InMemorySieveArc<P, T> = in_memory::InMemorySieve<P, Arc<T>>;
 /// Oriented in-memory sieve storing `Arc<T>` payloads.
-pub type InMemoryOrientedSieveArc<P, T, O = i32> =
+pub type InMemoryOrientedSieveArc<P, T, O = crate::topology::orientation::Sign> =
     in_memory_oriented::InMemoryOrientedSieve<P, Arc<T>, O>;
 /// Vertical stack with `Arc<T>` payload sharing.
 pub type InMemoryStackArc<B, C, T> = crate::topology::stack::InMemoryStack<B, C, Arc<T>>;
+
+// Helpful aliases for common orientation groups
+pub type OrientedTriSieve<P, T> =
+    in_memory_oriented::InMemoryOrientedSieve<P, T, crate::topology::orientation::D3>;
+pub type OrientedQuadSieve<P, T> =
+    in_memory_oriented::InMemoryOrientedSieve<P, T, crate::topology::orientation::D4>;
+pub type OrientedSignSieve<P, T> =
+    in_memory_oriented::InMemoryOrientedSieve<P, T, crate::topology::orientation::Sign>;
+
+#[cfg(test)]
+mod tests;

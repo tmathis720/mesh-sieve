@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use mesh_sieve::topology::orientation::Sign;
 use mesh_sieve::topology::sieve::{
     InMemoryOrientedSieveArc, InMemorySieveArc, InMemoryStackArc, Sieve,
 };
@@ -31,10 +32,10 @@ fn add_arrow_val_wraps_once() {
 
 #[test]
 fn oriented_upsert_replaces_payload() {
-    let mut s = InMemoryOrientedSieveArc::<u32, i32, i32>::default();
-    s.add_arrow_o_val(1, 2, 10, 5);
+    let mut s = InMemoryOrientedSieveArc::<u32, i32>::default();
+    s.add_arrow_o_val(1, 2, 10, Sign(true));
     let (_, a1) = s.cone(1).next().unwrap();
-    s.add_arrow_o_val(1, 2, 20, -3);
+    s.add_arrow_o_val(1, 2, 20, Sign(false));
     let (_, a2) = s.cone(1).next().unwrap();
     assert_eq!((*a1, *a2), (10, 20));
 }
