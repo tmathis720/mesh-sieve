@@ -10,6 +10,13 @@ use crate::mesh_error::MeshSieveError;
 use crate::topology::cache::InvalidateCache;
 use crate::topology::point::PointId;
 
+/// Precomputed plan for scattering data into a section.
+#[derive(Clone, Debug)]
+pub struct ScatterPlan {
+    pub(crate) atlas_version: u64,
+    pub(crate) spans: Vec<(usize, usize)>,
+}
+
 /// Storage for per-point field data, backed by an `Atlas`.
 #[derive(Clone, Debug)]
 pub struct Section<V> {
@@ -65,6 +72,43 @@ impl<V> Section<V> {
         self.atlas
             .points()
             .filter_map(move |pid| self.try_restrict(pid).ok().map(|sl| (pid, sl)))
+    }
+
+    /// Read-only view of the entire flat buffer in insertion order.
+    pub fn as_flat_slice(&self) -> &[V] {
+        &self.data
+    }
+
+    /// Apply a closure to every `(PointId, &mut [V])` in insertion order.
+    pub fn for_each_in_order_mut<F>(&mut self, mut f: F)
+    where
+        F: FnMut(PointId, &mut [V]),
+    {
+        for pid in self.atlas.points() {
+            let (off, len) = self.atlas.get(pid).expect("invariants");
+            f(pid, &mut self.data[off..off + len]);
+        }
+        crate::topology::cache::InvalidateCache::invalidate_cache(self);
+        #[cfg(debug_assertions)]
+        self.debug_assert_invariants();
+    }
+
+    /// Read-only variant of [`for_each_in_order_mut`].
+    pub fn for_each_in_order<F>(&self, mut f: F)
+    where
+        F: FnMut(PointId, &[V]),
+    {
+        for pid in self.atlas.points() {
+            let (off, len) = self.atlas.get(pid).expect("invariants");
+            f(pid, &self.data[off..off + len]);
+        }
+    }
+}
+
+impl<V: Clone> Section<V> {
+    /// Gather the entire section into a flat buffer in insertion order.
+    pub fn gather_in_order(&self) -> Vec<V> {
+        self.data.clone()
     }
 }
 
@@ -224,21 +268,53 @@ impl<V: Clone + Send> Section<V> {
                 found,
             });
         }
+
+        // Bounds checks up front
+        for &(offset, len) in atlas_map {
+            let end = offset
+                .checked_add(len)
+                .ok_or(MeshSieveError::ScatterChunkMismatch { offset, len })?;
+            if end > self.data.len() {
+                return Err(MeshSieveError::ScatterChunkMismatch { offset, len });
+            }
+        }
+
         let mut start = 0;
         for &(offset, len) in atlas_map {
             let end = start + len;
             let chunk = other
                 .get(start..end)
                 .ok_or(MeshSieveError::ScatterChunkMismatch { offset: start, len })?;
-            let dest = self
-                .data
-                .get_mut(offset..offset + len)
-                .ok_or(MeshSieveError::ScatterChunkMismatch { offset, len })?;
+            let dest = &mut self.data[offset..offset + len];
             dest.clone_from_slice(chunk);
             start = end;
         }
         crate::topology::cache::InvalidateCache::invalidate_cache(self);
+        #[cfg(debug_assertions)]
+        self.debug_assert_invariants();
         Ok(())
+    }
+
+    /// Scatter a flat buffer into the section in atlas insertion order.
+    pub fn try_scatter_in_order(&mut self, buf: &[V]) -> Result<(), MeshSieveError> {
+        let spans = self.atlas.atlas_map();
+        self.try_scatter_from(buf, &spans)
+    }
+
+    /// Scatter using a precomputed plan; fails if the atlas has changed.
+    pub fn try_scatter_with_plan(
+        &mut self,
+        buf: &[V],
+        plan: &ScatterPlan,
+    ) -> Result<(), MeshSieveError> {
+        let cur = self.atlas.version();
+        if plan.atlas_version != cur {
+            return Err(MeshSieveError::AtlasPlanStale {
+                expected: plan.atlas_version,
+                found: cur,
+            });
+        }
+        self.try_scatter_from(buf, &plan.spans)
     }
 }
 
