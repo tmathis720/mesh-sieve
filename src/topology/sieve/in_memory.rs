@@ -1,7 +1,10 @@
 //! In-memory implementation of the [`Sieve`] trait.
 //!
 //! This module provides [`InMemorySieve`], a simple and efficient in-memory representation
-//! of a sieve using hash maps for adjacency storage. It supports generic point and payload types.
+//! of a sieve using hash maps for adjacency storage. Hash-map + `Vec` adjacency
+//! yields average-case **O(1)** updates. Iteration order follows insertion order of
+//! the adjacency vectors (not globally deterministic unless you pre-sort).
+//! It supports generic point and payload types.
 
 use super::mutable::MutableSieve;
 use super::sieve_ref::SieveRef;
@@ -292,8 +295,14 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
     }
     /// Adds a new arrow from `src` to `dst` with the given `payload`.
     ///
-    /// This method updates the outgoing adjacency of `src` and the incoming adjacency of `dst`.
-    /// It also invalidates the cache for strata information.
+    /// ## Complexity (amortized)
+    /// - Time: **O(1)** expected to append to both adjacency vectors (hash map
+    ///   lookup + `Vec::push`), **O(degree(dst))** in worst case if a rehash or
+    ///   vector reallocation occurs.
+    /// - Space: amortized **O(1)** per insertion.
+    ///
+    /// This method updates the outgoing adjacency of `src` and the incoming
+    /// adjacency of `dst`. It also invalidates the cache for strata information.
     ///
     /// # Example
     /// ```rust
@@ -324,10 +333,14 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
         debug_invariants!(self);
     }
 
-    /// Removes the arrow from `src` to `dst`, returning the associated payload if it existed.
+    /// Removes the arrow from `src` to `dst`, returning the associated payload if it
+    /// existed.
     ///
-    /// This method updates both the outgoing adjacency of `src` and the incoming adjacency of `dst`.
-    /// It also invalidates the cache for strata information.
+    /// ## Complexity
+    /// - **O(degree(src) + degree(dst))** (linear scan to find & remove).
+    ///
+    /// This method updates both the outgoing adjacency of `src` and the incoming
+    /// adjacency of `dst`. It also invalidates the cache for strata information.
     ///
     /// # Example
     /// ```rust

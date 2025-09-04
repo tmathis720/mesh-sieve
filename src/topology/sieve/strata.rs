@@ -65,9 +65,13 @@ impl<P: Copy + Eq + std::hash::Hash + Ord> StrataCache<P> {
     }
 }
 
-/// Compute strata information for any sieve instance on-the-fly (no cache).
+/// Compute strata information on-the-fly (no cache).
 ///
 /// Returns a [`StrataCache`] containing height, depth, strata, and diameter information for all points.
+///
+/// ## Complexity
+/// - Time: **O(|V| + |E|)** (Kahn topological sort + forward/backward passes)
+/// - Space: **O(|V| + |E|)** for intermediate degree maps and result vectors.
 ///
 /// # Errors
 /// Returns `Err(MeshSieveError::MissingPointInCone(p))` if a `cone` points to `p` not in `points()`,
