@@ -13,11 +13,12 @@ use crate::topology::cache::InvalidateCache;
 use crate::topology::orientation::Sign;
 use crate::topology::sieve::strata::{StrataCache, compute_strata};
 use crate::topology::_debug_invariants::debug_invariants;
+use crate::topology::bounds::{PointLike, PayloadLike};
 
 #[derive(Clone, Debug)]
 pub struct InMemoryOrientedSieve<P, T = (), O = Sign>
 where
-    P: Ord + std::fmt::Debug,
+    P: PointLike,
     O: Orientation,
 {
     pub adjacency_out: HashMap<P, Vec<(P, T, O)>>,
@@ -27,7 +28,7 @@ where
 
 impl<P, T, O> InMemoryOrientedSieve<P, Arc<T>, O>
 where
-    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    P: PointLike,
     O: super::oriented::Orientation + PartialEq + std::fmt::Debug,
 {
     /// Insert by value; wraps once into `Arc<T>`.
@@ -45,7 +46,7 @@ where
 
 impl<P, T, O> Default for InMemoryOrientedSieve<P, T, O>
 where
-    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    P: PointLike,
     O: Orientation + PartialEq + std::fmt::Debug,
 {
     fn default() -> Self {
@@ -59,8 +60,8 @@ where
 
 impl<P, T, O> InMemoryOrientedSieve<P, T, O>
 where
-    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    T: Clone,
+    P: PointLike,
+    T: PayloadLike,
     O: Orientation + PartialEq + std::fmt::Debug,
 {
     pub fn new() -> Self {
@@ -208,7 +209,7 @@ where
 
         fn check_orient<P, T, O>(s: &InMemoryOrientedSieve<P, T, O>)
         where
-            P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+            P: PointLike,
             O: super::oriented::Orientation + PartialEq + std::fmt::Debug,
         {
             use std::collections::HashMap;
@@ -294,8 +295,8 @@ type MapOOut<'a, P, T, O> =
 
 impl<P, T, O> Sieve for InMemoryOrientedSieve<P, T, O>
 where
-    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    T: Clone,
+    P: PointLike,
+    T: PayloadLike,
     O: Orientation + PartialEq + std::fmt::Debug,
 {
     type Point = P;
@@ -412,8 +413,8 @@ where
 
 impl<P, T, O> MutableSieve for InMemoryOrientedSieve<P, T, O>
 where
-    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    T: Clone,
+    P: PointLike,
+    T: PayloadLike,
     O: Orientation + PartialEq + std::fmt::Debug,
 {
     fn reserve_cone(&mut self, p: P, additional: usize) {
@@ -648,8 +649,8 @@ where
 
 impl<P, T, O> OrientedSieve for InMemoryOrientedSieve<P, T, O>
 where
-    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    T: Clone,
+    P: PointLike,
+    T: PayloadLike,
     O: Orientation + PartialEq + std::fmt::Debug,
 {
     type Orient = O;
@@ -710,8 +711,8 @@ where
 
 impl<P, T, O> InvalidateCache for InMemoryOrientedSieve<P, T, O>
 where
-    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    T: Clone,
+    P: PointLike,
+    T: PayloadLike,
     O: Orientation + PartialEq + std::fmt::Debug,
 {
     #[inline]

@@ -11,6 +11,7 @@ use crate::topology::cache::InvalidateCache;
 use std::collections::HashMap;
 use std::sync::Arc;
 use crate::topology::_debug_invariants::debug_invariants;
+use crate::topology::bounds::{PointLike, PayloadLike};
 
 /// A `Stack` links a *base* Sieve to a *cap* Sieve via vertical arrows.
 /// Each arrow carries a payload (e.g., orientation or permutation).
@@ -103,8 +104,8 @@ pub trait Stack {
 /// Also embeds two `InMemorySieve`s to represent the base and cap topologies themselves.
 #[derive(Clone, Debug)]
 pub struct InMemoryStack<
-    B: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    C: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    B: PointLike,
+    C: PointLike,
     P = (),
 > {
     /// Underlying base sieve (e.g., mesh connectivity).
@@ -119,8 +120,8 @@ pub struct InMemoryStack<
 
 impl<B, C, P> InMemoryStack<B, C, P>
 where
-    B: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    C: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    B: PointLike,
+    C: PointLike,
 {
     /// Creates an empty `InMemoryStack` with no arrows.
     pub fn new() -> Self {
@@ -156,10 +157,10 @@ where
 }
 
 /// Provides a default implementation for `InMemoryStack`.
-impl<B, C, P: Clone> Default for InMemoryStack<B, C, P>
+impl<B, C, P: PayloadLike> Default for InMemoryStack<B, C, P>
 where
-    B: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    C: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    B: PointLike,
+    C: PointLike,
 {
     /// Returns an empty `InMemoryStack`.
     fn default() -> Self {
@@ -174,9 +175,9 @@ where
 
 impl<B, C, P> Stack for InMemoryStack<B, C, P>
 where
-    B: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    C: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    P: Clone,
+    B: PointLike,
+    C: PointLike,
+    P: PayloadLike,
 {
     type Point = B;
     type CapPt = C;
@@ -287,8 +288,8 @@ where
 
 impl<B, C, T> InMemoryStack<B, C, Arc<T>>
 where
-    B: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    C: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    B: PointLike,
+    C: PointLike,
 {
     /// Insert by value; wraps once into `Arc<T>`.
     #[inline]
@@ -300,9 +301,9 @@ where
 /// Provides accessors for base and cap points for testability.
 impl<B, C, P> InMemoryStack<B, C, P>
 where
-    B: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    C: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    P: Clone,
+    B: PointLike,
+    C: PointLike,
+    P: PayloadLike,
 {
     /// Returns an iterator over all base points with at least one upward arrow.
     pub fn base_points(&self) -> impl Iterator<Item = B> + '_ {
@@ -462,9 +463,9 @@ fn composed_stack_no_leak() {
 
 impl<B, C, P> InvalidateCache for InMemoryStack<B, C, P>
 where
-    B: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    C: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    P: Clone,
+    B: PointLike,
+    C: PointLike,
+    P: PayloadLike,
 {
     fn invalidate_cache(&mut self) {
         self.base.invalidate_cache();

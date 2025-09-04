@@ -16,6 +16,7 @@ use once_cell::sync::OnceCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 use crate::topology::_debug_invariants::debug_invariants;
+use crate::topology::bounds::{PointLike, PayloadLike};
 
 /// An in-memory sieve implementation using hash maps for adjacency storage.
 ///
@@ -25,7 +26,7 @@ use crate::topology::_debug_invariants::debug_invariants;
 #[derive(Clone, Debug)]
 pub struct InMemorySieve<P, T = ()>
 where
-    P: Ord + std::fmt::Debug,
+    P: PointLike,
 {
     /// Outgoing adjacency: maps each point to a vector of (destination, payload) pairs.
     pub adjacency_out: HashMap<P, Vec<(P, T)>>,
@@ -37,7 +38,7 @@ where
 
 impl<P, T> InMemorySieve<P, Arc<T>>
 where
-    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    P: PointLike,
 {
     /// Insert by value; wraps once into `Arc<T>`.
     #[inline]
@@ -55,7 +56,7 @@ where
     }
 }
 
-impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T> Default for InMemorySieve<P, T> {
+impl<P: PointLike, T> Default for InMemorySieve<P, T> {
     fn default() -> Self {
         Self {
             adjacency_out: HashMap::new(),
@@ -65,7 +66,7 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T> Default for InMe
     }
 }
 
-impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> InMemorySieve<P, T> {
+impl<P: PointLike, T: PayloadLike> InMemorySieve<P, T> {
     /// Creates a new, empty `InMemorySieve`.
     pub fn new() -> Self {
         Self::default()
@@ -216,8 +217,7 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> InMemoryS
     }
 }
 
-impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> InvalidateCache
-    for InMemorySieve<P, T>
+impl<P: PointLike, T: PayloadLike> InvalidateCache for InMemorySieve<P, T>
 {
     #[inline]
     fn invalidate_cache(&mut self) {
@@ -229,8 +229,7 @@ type ConeMapIter<'a, P, T> = std::iter::Map<std::slice::Iter<'a, (P, T)>, fn(&'a
 type ConeRefMapIter<'a, P, T> =
     std::iter::Map<std::slice::Iter<'a, (P, T)>, fn(&'a (P, T)) -> (P, &'a T)>;
 
-impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
-    for InMemorySieve<P, T>
+impl<P: PointLike, T: PayloadLike> Sieve for InMemorySieve<P, T>
 {
     type Point = P;
     type Payload = T;
@@ -451,8 +450,8 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
 
 impl<P, T> MutableSieve for InMemorySieve<P, T>
 where
-    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    T: Clone,
+    P: PointLike,
+    T: PayloadLike,
 {
     fn reserve_cone(&mut self, p: P, additional: usize) {
         self.adjacency_out.entry(p).or_default().reserve(additional);
@@ -685,8 +684,8 @@ where
 
 impl<P, T> SieveRef for InMemorySieve<P, T>
 where
-    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    T: Clone,
+    P: PointLike,
+    T: PayloadLike,
 {
     type ConeRefIter<'a>
         = ConeRefMapIter<'a, P, T>

@@ -11,12 +11,13 @@ use std::sync::Arc;
 use super::sieve_ref::SieveRef;
 use super::sieve_trait::Sieve;
 use crate::topology::cache::InvalidateCache;
+use crate::topology::bounds::{PointLike, PayloadLike};
 
 /// Immutable sieve backed by a pair of CSR adjacency graphs.
 #[derive(Clone, Debug)]
 pub struct FrozenSieveCsr<P, T>
 where
-    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    P: PointLike,
 {
     /// Dense index → point mapping in deterministic order.
     pub point_of: Arc<[P]>,
@@ -36,7 +37,7 @@ where
 
 impl<P, T> Default for FrozenSieveCsr<P, T>
 where
-    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    P: PointLike,
 {
     fn default() -> Self {
         Self {
@@ -54,15 +55,15 @@ where
 
 impl<P, T> InvalidateCache for FrozenSieveCsr<P, T>
 where
-    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    P: PointLike,
 {
     fn invalidate_cache(&mut self) {}
 }
 
 impl<P, T> FrozenSieveCsr<P, T>
 where
-    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    T: Clone,
+    P: PointLike,
+    T: PayloadLike,
 {
     /// Build from any [`Sieve`], enforcing deterministic order.
     pub fn from_sieve<S>(mut s: S) -> Self
@@ -148,8 +149,8 @@ where
 pub fn freeze_csr<S, P, T>(s: S) -> FrozenSieveCsr<P, T>
 where
     S: Sieve<Point = P, Payload = T>,
-    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    T: Clone,
+    P: PointLike,
+    T: PayloadLike,
 {
     FrozenSieveCsr::from_sieve(s)
 }
@@ -158,8 +159,8 @@ where
 
 pub struct ConeIter<'a, P, T>
 where
-    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    T: Clone,
+    P: PointLike,
+    T: PayloadLike,
 {
     sieve: &'a FrozenSieveCsr<P, T>,
     pos: usize,
@@ -168,8 +169,8 @@ where
 
 impl<'a, P, T> Iterator for ConeIter<'a, P, T>
 where
-    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    T: Clone,
+    P: PointLike,
+    T: PayloadLike,
 {
     type Item = (P, T);
     fn next(&mut self) -> Option<Self::Item> {
@@ -186,7 +187,7 @@ where
 
 pub struct ConeRefIter<'a, P, T>
 where
-    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    P: PointLike,
 {
     sieve: &'a FrozenSieveCsr<P, T>,
     pos: usize,
@@ -195,7 +196,7 @@ where
 
 impl<'a, P, T> Iterator for ConeRefIter<'a, P, T>
 where
-    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    P: PointLike,
 {
     type Item = (P, &'a T);
     fn next(&mut self) -> Option<Self::Item> {
@@ -212,8 +213,8 @@ where
 
 pub struct SupportIter<'a, P, T>
 where
-    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    T: Clone,
+    P: PointLike,
+    T: PayloadLike,
 {
     sieve: &'a FrozenSieveCsr<P, T>,
     pos: usize,
@@ -222,8 +223,8 @@ where
 
 impl<'a, P, T> Iterator for SupportIter<'a, P, T>
 where
-    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    T: Clone,
+    P: PointLike,
+    T: PayloadLike,
 {
     type Item = (P, T);
     fn next(&mut self) -> Option<Self::Item> {
@@ -240,7 +241,7 @@ where
 
 pub struct SupportRefIter<'a, P, T>
 where
-    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    P: PointLike,
 {
     sieve: &'a FrozenSieveCsr<P, T>,
     pos: usize,
@@ -249,7 +250,7 @@ where
 
 impl<'a, P, T> Iterator for SupportRefIter<'a, P, T>
 where
-    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    P: PointLike,
 {
     type Item = (P, &'a T);
     fn next(&mut self) -> Option<Self::Item> {
@@ -268,8 +269,8 @@ where
 
 impl<P, T> Sieve for FrozenSieveCsr<P, T>
 where
-    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    T: Clone,
+    P: PointLike,
+    T: PayloadLike,
 {
     type Point = P;
     type Payload = T;
@@ -338,8 +339,8 @@ where
 
 impl<P, T> SieveRef for FrozenSieveCsr<P, T>
 where
-    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    T: Clone,
+    P: PointLike,
+    T: PayloadLike,
 {
     type ConeRefIter<'a>
         = ConeRefIter<'a, P, T>

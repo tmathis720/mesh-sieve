@@ -51,6 +51,7 @@ pub mod prelude {
     };
     pub use crate::topology::stack::{InMemoryStack, Stack};
     pub use crate::topology::point::PointId;
+    pub use crate::topology::bounds::{PointLike, PayloadLike};
     pub use crate::data::atlas::Atlas;
     pub use crate::data::section::{Section, Map};
     pub use crate::overlap::delta::{Delta, CopyDelta, AddDelta};

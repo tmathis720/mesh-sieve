@@ -7,6 +7,7 @@ use crate::topology::sieve::strata::compute_strata;
 use crate::topology::sieve::Sieve;
 use crate::topology::cache::InvalidateCache;
 use std::collections::{HashMap, HashSet, VecDeque};
+use crate::topology::bounds::PointLike;
 
 pub type Point = PointId;
 
@@ -386,7 +387,7 @@ where
 pub fn closure_ordered<I, S>(sieve: &mut S, seeds: I) -> Result<Vec<S::Point>, MeshSieveError>
 where
     S: Sieve,
-    S::Point: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    S::Point: PointLike,
     I: IntoIterator<Item = S::Point>,
 {
     let cache = compute_strata(&*sieve)?;
@@ -437,7 +438,7 @@ where
 pub fn star_ordered<I, S>(sieve: &mut S, seeds: I) -> Result<Vec<S::Point>, MeshSieveError>
 where
     S: Sieve,
-    S::Point: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    S::Point: PointLike,
     I: IntoIterator<Item = S::Point>,
 {
     let cache = compute_strata(&*sieve)?;
