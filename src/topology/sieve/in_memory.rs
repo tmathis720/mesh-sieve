@@ -196,10 +196,7 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> InMemoryS
     }
 
     /// Pre-size cone/support capacities from `(src, dst, count)` tuples.
-    pub fn reserve_from_edge_counts(
-        &mut self,
-        counts: impl IntoIterator<Item = (P, P, usize)>,
-    ) {
+    pub fn reserve_from_edge_counts(&mut self, counts: impl IntoIterator<Item = (P, P, usize)>) {
         use std::collections::HashMap;
         let mut by_src: HashMap<P, usize> = HashMap::new();
         let mut by_dst: HashMap<P, usize> = HashMap::new();
@@ -394,76 +391,6 @@ impl<P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug, T: Clone> Sieve
     }
 
     // strata helpers now provided by Sieve trait default impls
-    /// Adds a point to the sieve, creating empty adjacencies for it.
-    ///
-    /// # Example
-    /// ```rust
-    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
-    /// use mesh_sieve::topology::sieve::Sieve;
-    /// let mut s = InMemorySieve::<u32, ()>::new();
-    /// s.add_point(1);
-    /// assert!(s.adjacency_out.contains_key(&1));
-    /// assert!(s.adjacency_in.contains_key(&1));
-    /// ```
-    /// Adds a base point to the sieve, creating an empty outgoing adjacency for it.
-    ///
-    /// # Example
-    /// ```rust
-    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
-    /// use mesh_sieve::topology::sieve::Sieve;
-    /// let mut s = InMemorySieve::<u32, ()>::new();
-    /// s.add_base_point(1);
-    /// assert!(s.adjacency_out.contains_key(&1));
-    /// ```
-    /// Sets the cone for a point, replacing any existing cone.
-    ///
-    /// This method takes ownership of the provided iterator, consuming it.
-    /// Restricts the sieve to only include arrows originating from the given chain of base points.
-    ///
-    /// # Example
-    /// ```rust
-    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
-    /// use mesh_sieve::topology::sieve::Sieve;
-    /// let mut s = InMemorySieve::<u32, ()>::new();
-    /// s.add_arrow(1, 2, ());
-    /// s.add_arrow(3, 4, ());
-    /// let restricted = s.restrict_base(vec![1, 3]);
-    /// assert_eq!(restricted.cone(1).count() + restricted.cone(3).count(), 2);
-    /// ```
-    fn restrict_base(&self, chain: impl IntoIterator<Item = P>) -> Self {
-        let mut out = Self::default();
-        for p in chain {
-            if let Some(outs) = self.adjacency_out.get(&p) {
-                for (d, pay) in outs {
-                    out.add_arrow(p, *d, pay.clone());
-                }
-            }
-        }
-        out
-    }
-    /// Restricts the sieve to only include arrows ending at the given chain of cap points.
-    ///
-    /// # Example
-    /// ```rust
-    /// use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
-    /// use mesh_sieve::topology::sieve::Sieve;
-    /// let mut s = InMemorySieve::<u32, ()>::new();
-    /// s.add_arrow(1, 2, ());
-    /// s.add_arrow(3, 4, ());
-    /// let restricted = s.restrict_cap(vec![2, 4]);
-    /// assert_eq!(restricted.support(2).count() + restricted.support(4).count(), 2);
-    /// ```
-    fn restrict_cap(&self, chain: impl IntoIterator<Item = P>) -> Self {
-        let mut out = Self::default();
-        for q in chain {
-            if let Some(ins) = self.adjacency_in.get(&q) {
-                for (src, pay) in ins {
-                    out.add_arrow(*src, q, pay.clone());
-                }
-            }
-        }
-        out
-    }
     /// Returns an iterator over all points in the sieve.
     ///
     /// # Example
@@ -629,7 +556,10 @@ where
         }
 
         // Reserve outgoing for p and incoming per destination
-        self.adjacency_out.entry(p).or_default().reserve(new_cone.len());
+        self.adjacency_out
+            .entry(p)
+            .or_default()
+            .reserve(new_cone.len());
         {
             use std::collections::HashMap;
             let mut dst_counts: HashMap<P, usize> = HashMap::new();
@@ -716,7 +646,10 @@ where
         }
 
         // Reserve incoming for q and outgoing per source
-        self.adjacency_in.entry(q).or_default().reserve(new_sup.len());
+        self.adjacency_in
+            .entry(q)
+            .or_default()
+            .reserve(new_sup.len());
         {
             use std::collections::HashMap;
             let mut src_counts: HashMap<P, usize> = HashMap::new();
