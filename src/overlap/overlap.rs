@@ -416,6 +416,57 @@ impl Sieve for Overlap {
     // default impls of set_cone/add_support/etc. will call our add_arrow
 }
 
+/// One-hop upward support of `seeds`, deduped and returned in deterministic order.
+fn support1<M: Sieve<Point = PointId>>(
+    mesh: &M,
+    seeds: impl IntoIterator<Item = PointId>,
+) -> Vec<PointId> {
+    use std::collections::BTreeSet;
+    let mut set = BTreeSet::new();
+    for p in seeds {
+        for (q, _) in mesh.support(p) {
+            set.insert(q);
+        }
+    }
+    set.into_iter().collect()
+}
+
+/// Expand structurally by one-hop star → full closure toward `neighbor`.
+///
+/// For each seed `p`, walks one level up (`support`) to gather immediate
+/// neighbors, then adds all points in the full `closure` of those neighbors to
+/// the overlap as structural links (`remote_point = None`). Existing links are
+/// left untouched. Returns the number of **new** edges inserted. Deterministic
+/// order is preserved for reproducible behavior.
+pub fn expand_one_layer_mesh<M: Sieve<Point = PointId>>(
+    ov: &mut Overlap,
+    mesh: &M,
+    seeds: impl IntoIterator<Item = PointId>,
+    neighbor: usize,
+) -> usize {
+    use std::collections::BTreeSet;
+
+    let mut to_add: BTreeSet<PointId> = BTreeSet::new();
+    for s in support1(mesh, seeds) {
+        for q in mesh.closure(std::iter::once(s)) {
+            to_add.insert(q);
+        }
+    }
+
+    let mut added = 0;
+    for q in to_add {
+        let src = local(q);
+        let dst = part(neighbor);
+        let is_new = !ov.inner.cone(src).any(|(d, _)| d == dst);
+        ov.add_link_structural(q, neighbor);
+        if is_new {
+            added += 1;
+        }
+    }
+    ov.invalidate_cache();
+    added
+}
+
 /// Ensure closure-of-support: for any `Local(p) -> Part(r)` edge already present,
 /// also link every `q` in `mesh.closure({p})` to `Part(r)`. New links are
 /// structural only (`remote_point = None`).
@@ -525,9 +576,7 @@ mod tests {
         assert_eq!(ranks, vec![1usize, 2usize]);
 
         let pairs: Vec<_> = ov.links_to_resolved(1).collect();
-        assert!(
-            pairs.contains(&(PointId::new(2).unwrap(), PointId::new(101).unwrap()))
-        );
+        assert!(pairs.contains(&(PointId::new(2).unwrap(), PointId::new(101).unwrap())));
     }
 
     #[test]
@@ -675,6 +724,51 @@ mod tests {
     }
 
     #[test]
+    fn expand_one_layer_one_hop() {
+        // cell -> edges -> vertices
+        let cell = PointId::new(1).unwrap();
+        let e0 = PointId::new(10).unwrap();
+        let e1 = PointId::new(11).unwrap();
+        let v0 = PointId::new(100).unwrap();
+        let v1 = PointId::new(101).unwrap();
+        let v2 = PointId::new(102).unwrap();
+        let mut mesh = Mesh::<PointId, ()>::default();
+        mesh.add_arrow(cell, e0, ());
+        mesh.add_arrow(cell, e1, ());
+        mesh.add_arrow(e0, v0, ());
+        mesh.add_arrow(e0, v1, ());
+        mesh.add_arrow(e1, v1, ());
+        mesh.add_arrow(e1, v2, ());
+
+        let neighbor = 7usize;
+        let seed = v1;
+        let mut ov = Overlap::new();
+
+        let added = expand_one_layer_mesh(&mut ov, &mesh, [seed], neighbor);
+        assert_eq!(added, 5);
+
+        let links: std::collections::BTreeSet<_> = ov.links_to(neighbor).collect();
+        let expected: std::collections::BTreeSet<_> =
+            [(e0, None), (e1, None), (v0, None), (v1, None), (v2, None)]
+                .into_iter()
+                .collect();
+        assert_eq!(links, expected);
+        assert!(!links.contains(&(cell, None))); // one-hop: cell not added
+
+        // Only specified neighbor present
+        let ranks: Vec<_> = ov.neighbor_ranks().collect();
+        assert_eq!(ranks, vec![neighbor]);
+
+        // All mappings unresolved
+        assert!(ov.links_to(neighbor).all(|(_, rp)| rp.is_none()));
+
+        // Idempotent
+        let added2 = expand_one_layer_mesh(&mut ov, &mesh, [seed], neighbor);
+        assert_eq!(added2, 0);
+        assert_eq!(ov.links_to(neighbor).count(), expected.len());
+    }
+
+    #[test]
     fn links_sorted_deterministic() {
         let mut ov = Overlap::new();
         // insert out of order
@@ -684,11 +778,14 @@ mod tests {
 
         let sorted = ov.links_to_sorted(1);
         let order: Vec<_> = sorted.iter().map(|(p, _)| *p).collect();
-        assert_eq!(order, vec![
-            PointId::new(1).unwrap(),
-            PointId::new(2).unwrap(),
-            PointId::new(3).unwrap(),
-        ]);
+        assert_eq!(
+            order,
+            vec![
+                PointId::new(1).unwrap(),
+                PointId::new(2).unwrap(),
+                PointId::new(3).unwrap(),
+            ]
+        );
 
         let sorted_res = ov.links_to_resolved_sorted(1);
         let order_res: Vec<_> = sorted_res.iter().map(|(p, _)| *p).collect();
@@ -702,7 +799,10 @@ mod tests {
         ov.inner.add_arrow(
             part(1),
             local(PointId::new(1).unwrap()),
-            Remote { rank: 1, remote_point: None },
+            Remote {
+                rank: 1,
+                remote_point: None,
+            },
         );
         assert!(ov.validate_invariants().is_err());
     }
