@@ -22,6 +22,16 @@
 //!
 //! For a complete API reference and usage guide, see [API_Guide.md](API_Guide.md).
 //!
+//! ## Migration highlights
+//! See [docs/MIGRATING.md](docs/MIGRATING.md) for more details on recent API
+//! changes:
+//! - Fallible map access via `try_restrict_*` helpers and the [`FallibleMap`]
+//!   trait.
+//! - [`Bundle::assemble`] now averages element-wise; use
+//!   [`Bundle::assemble_with`] with a [`Reducer`](crate::data::bundle::Reducer)
+//!   for custom behavior.
+//! - `data::refine::delta::SliceDelta` replaces the deprecated `Delta` alias.
+//!
 //! ## Shared payloads
 //! When payloads are large or shared across many arrows, instantiate a sieve with `Payload = Arc<T>`.
 //! Traversal and algorithms will clone the `Arc` handle (cheap) without copying `T`.

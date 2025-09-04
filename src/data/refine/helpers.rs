@@ -13,6 +13,10 @@ use crate::topology::sieve::Sieve;
 /// Restrict a map along the closure of the given seed points.
 ///
 /// Returns an iterator over `(PointId, &[V])` for all points in the closure.
+///
+/// # Migration
+/// Prefer [`try_restrict_closure`] with [`FallibleMap`] for robust error handling;
+/// this helper panics if a point is missing.
 pub fn restrict_closure<'s, M, V: 's>(
     sieve: &'s impl Sieve<Point = PointId>,
     map: &'s M,
@@ -27,6 +31,10 @@ where
 /// Restrict a map along the star of the given seed points.
 ///
 /// Returns an iterator over `(PointId, &[V])` for all points in the star.
+///
+/// # Migration
+/// Prefer [`try_restrict_star`] with [`FallibleMap`] for robust error handling;
+/// this helper panics if a point is missing.
 pub fn restrict_star<'s, M, V: 's>(
     sieve: &'s impl Sieve<Point = PointId>,
     map: &'s M,
@@ -39,6 +47,10 @@ where
 }
 
 /// Restrict a map along the closure of the given seed points, collecting results into a vector.
+///
+/// # Migration
+/// Prefer [`try_restrict_closure_vec`] with [`FallibleMap`] for robust error handling;
+/// this helper panics if a point is missing.
 pub fn restrict_closure_vec<'s, M, V: 's>(
     sieve: &'s impl Sieve<Point = PointId>,
     map: &'s M,
@@ -51,6 +63,10 @@ where
 }
 
 /// Restrict a map along the star of the given seed points, collecting results into a vector.
+///
+/// # Migration
+/// Prefer [`try_restrict_star_vec`] with [`FallibleMap`] for robust error handling;
+/// this helper panics if a point is missing.
 pub fn restrict_star_vec<'s, M, V: 's>(
     sieve: &'s impl Sieve<Point = PointId>,
     map: &'s M,
@@ -63,6 +79,12 @@ where
 }
 
 /// Restrict a map along the closure of the given seed points, propagating errors.
+///
+/// # Errors
+/// Returns [`MeshSieveError`] if any point is missing in the underlying map.
+///
+/// # Complexity
+/// **O(n)** in the size of the closure.
 pub fn try_restrict_closure<'s, M, V: 's>(
     sieve: &'s impl Sieve<Point = PointId>,
     map: &'s M,
@@ -77,6 +99,12 @@ where
 }
 
 /// Restrict a map along the star of the given seed points, propagating errors.
+///
+/// # Errors
+/// Returns [`MeshSieveError`] if any point is missing in the underlying map.
+///
+/// # Complexity
+/// **O(n)** in the size of the star.
 pub fn try_restrict_star<'s, M, V: 's>(
     sieve: &'s impl Sieve<Point = PointId>,
     map: &'s M,
@@ -91,6 +119,9 @@ where
 }
 
 /// Collects the closure restriction into a vector, short-circuiting on error.
+///
+/// # Errors
+/// Propagates the first error encountered while traversing the closure.
 pub fn try_restrict_closure_vec<'s, M, V: 's>(
     sieve: &'s impl Sieve<Point = PointId>,
     map: &'s M,
@@ -103,6 +134,9 @@ where
 }
 
 /// Collects the star restriction into a vector, short-circuiting on error.
+///
+/// # Errors
+/// Propagates the first error encountered while traversing the star.
 pub fn try_restrict_star_vec<'s, M, V: 's>(
     sieve: &'s impl Sieve<Point = PointId>,
     map: &'s M,

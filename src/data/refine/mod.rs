@@ -8,7 +8,7 @@ pub mod helpers;
 pub mod sieved_array;
 
 // re-export the main pieces at the top level:
-pub use delta::Delta;
+pub use delta::{SliceDelta, Delta};
 pub use helpers::{
     restrict_closure, restrict_closure_vec, restrict_star, restrict_star_vec, try_restrict_closure,
     try_restrict_closure_vec, try_restrict_star, try_restrict_star_vec,

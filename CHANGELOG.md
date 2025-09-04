@@ -6,3 +6,11 @@
 - Added optional invariant checking for `Atlas` and `Section` via the
   `DebugInvariants` trait. Enable the `check-invariants` feature to run these
   validations in release builds.
+- Introduced `FallibleMap` and `try_restrict_*` helpers for error-aware data
+  access. Legacy `restrict_*` helpers remain but now document their panicking
+  behavior.
+- Added `Reducer` and `Bundle::assemble_with` to customize how cap slices
+  are merged into base slices. `Bundle::assemble` now performs element-wise
+  averaging via `AverageReducer`.
+- Renamed `data::refine::delta::Delta` to `SliceDelta`; `Delta` remains as a
+  deprecated alias.
