@@ -77,35 +77,60 @@ where
         Ok(())
     }
 
-    /// **Assemble**: pull data *up* the stack (cap → base) using `delta`.
+    /// **Assemble**: pull data *up* the stack (cap → base) using element-wise averaging.
+    ///
+    /// For each base point, gathers slices from all cap points and replaces the base
+    /// slice with the element-wise average. Cap slices must match the base slice
+    /// length.
     ///
     /// # Complexity
     /// **O(Σ deg(base) · k)**; one pass.
     ///
     /// # Determinism
-    /// Deterministic if `delta` is deterministic. Each cap contributes at most once.
+    /// Deterministic; each cap contributes at most once.
     ///
     /// # Errors
-    /// Returns an error if any point is missing in the underlying Section.
+    /// Returns an error if slice lengths mismatch or primitive conversion fails.
     pub fn assemble(
         &mut self,
         bases: impl IntoIterator<Item = PointId>,
-    ) -> Result<(), crate::mesh_error::MeshSieveError> {
-        let mut actions = Vec::new();
+    ) -> Result<(), crate::mesh_error::MeshSieveError>
+    where
+        V: Default + std::ops::AddAssign + std::ops::Div<Output = V>,
+        V: num_traits::FromPrimitive,
+    {
+        use crate::mesh_error::MeshSieveError;
+        use num_traits::FromPrimitive;
+
         for b in self.stack.base().closure(bases) {
             let caps: Vec<_> = self.stack.lift(b).map(|(cap, _)| cap).collect();
-            let cap_vals: Vec<_> = caps
-                .iter()
-                .map(|&cap| self.section.try_restrict(cap).map(|sl| sl.to_vec()))
-                .collect::<Result<_, _>>()?;
-            actions.push((b, cap_vals));
-        }
-        for (b, cap_vals_vec) in actions {
-            let base_vals = self.section.try_restrict_mut(b)?;
-            for cap_vals in cap_vals_vec {
-                if !cap_vals.is_empty() {
-                    D::fuse(&mut base_vals[0], D::restrict(&cap_vals[0]));
+            if caps.is_empty() {
+                continue;
+            }
+            let base_len = self.section.try_restrict(b)?.len();
+            let mut accum = vec![V::default(); base_len];
+            let mut count = 0usize;
+            for cap in caps {
+                let cap_vals = self.section.try_restrict(cap)?;
+                if cap_vals.len() != base_len {
+                    return Err(MeshSieveError::SliceLengthMismatch {
+                        point: cap,
+                        expected: base_len,
+                        found: cap_vals.len(),
+                    });
                 }
+                for (a, v) in accum.iter_mut().zip(cap_vals.iter()) {
+                    *a += v.clone();
+                }
+                count += 1;
+            }
+            if count > 0 {
+                let divisor: V = FromPrimitive::from_usize(count)
+                    .ok_or(MeshSieveError::SievedArrayPrimitiveConversionFailure(count))?;
+                for a in accum.iter_mut() {
+                    *a = a.clone() / divisor.clone();
+                }
+                self.section.try_set(b, &accum)?;
             }
         }
         Ok(())
@@ -303,13 +328,13 @@ mod tests {
             delta: AddDelta,
         };
         bundle.assemble([PointId::new(1).unwrap()]).unwrap();
-        // base receives sum 5+7
+        // base receives average (5+7)/2
         assert_eq!(
             bundle
                 .section
                 .try_restrict(PointId::new(1).unwrap())
                 .unwrap(),
-            &[12]
+            &[6]
         );
     }
 
