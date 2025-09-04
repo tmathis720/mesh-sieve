@@ -16,6 +16,7 @@
 
 pub mod arrow;
 pub mod cache;
+pub mod bounds;
 pub mod orientation;
 pub mod point;
 pub mod sieve;

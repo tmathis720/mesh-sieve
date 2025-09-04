@@ -2,6 +2,7 @@
 use crate::mesh_error::MeshSieveError;
 use crate::topology::sieve::Sieve;
 use std::collections::{HashMap, VecDeque};
+use crate::topology::bounds::PointLike;
 
 /// Generic DAG check for any `S: Sieve`.
 ///
@@ -13,7 +14,7 @@ use std::collections::{HashMap, VecDeque};
 pub fn check_dag<S>(s: &S) -> Result<(), MeshSieveError>
 where
     S: Sieve,
-    S::Point: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    S::Point: PointLike,
 {
     // 1) Build in-degree map over all points we know about,
     //    and insert any cone destinations that were not listed by `points()`.
@@ -59,7 +60,7 @@ where
 pub fn check_dag_ref<S>(s: &S) -> Result<(), MeshSieveError>
 where
     S: Sieve + crate::topology::sieve::SieveRef,
-    S::Point: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    S::Point: PointLike,
 {
     use std::collections::{HashMap, VecDeque};
     let mut in_deg: HashMap<S::Point, usize> = HashMap::new();

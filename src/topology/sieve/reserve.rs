@@ -1,6 +1,7 @@
 //! Extension trait providing bulk preallocation helpers for sieves.
 
 use super::{InMemoryOrientedSieve, InMemorySieve};
+use crate::topology::bounds::{PointLike, PayloadLike};
 
 /// Helpers for bulk preallocation based on edge lists or counts.
 pub trait SieveReserveExt<P> {
@@ -13,8 +14,8 @@ pub trait SieveReserveExt<P> {
 
 impl<P, T> SieveReserveExt<P> for InMemorySieve<P, T>
 where
-    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    T: Clone,
+    P: PointLike,
+    T: PayloadLike,
 {
     fn reserve_from_edge_counts(&mut self, counts: impl IntoIterator<Item = (P, P, usize)>) {
         InMemorySieve::reserve_from_edge_counts(self, counts);
@@ -27,8 +28,8 @@ where
 
 impl<P, T, O> SieveReserveExt<P> for InMemoryOrientedSieve<P, T, O>
 where
-    P: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
-    T: Clone,
+    P: PointLike,
+    T: PayloadLike,
     O: super::oriented::Orientation + PartialEq + std::fmt::Debug,
 {
     fn reserve_from_edge_counts(&mut self, counts: impl IntoIterator<Item = (P, P, usize)>) {

@@ -9,6 +9,7 @@ mesh-sieve is a modular, high-performance Rust library for mesh and data managem
 - **Partitioning**: Built-in support for graph partitioning (Metis, custom algorithms).
 - **MPI Integration**: Examples and tests for distributed mesh and data exchange using MPI.
 - **Extensive Testing**: Serial, parallel, and property-based tests.
+- **Ergonomic bounds**: `PointLike` and `PayloadLike` marker traits reduce repeated `Copy + Eq + Hash + Ord + Debug` bounds.
 
 ## Getting Started
 

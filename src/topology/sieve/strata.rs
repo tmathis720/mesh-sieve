@@ -11,6 +11,7 @@
 use crate::mesh_error::MeshSieveError;
 use crate::topology::sieve::Sieve;
 use std::collections::HashMap;
+use crate::topology::bounds::PointLike;
 
 /// Precomputed stratum information for a sieve.
 ///
@@ -33,7 +34,7 @@ pub struct StrataCache<P> {
     pub chart_index: HashMap<P, usize>, // point -> index
 }
 
-impl<P: Copy + Eq + std::hash::Hash + Ord> StrataCache<P> {
+impl<P: PointLike> StrataCache<P> {
     /// Create a new, empty `StrataCache`.
     pub fn new() -> Self {
         Self {
@@ -79,7 +80,7 @@ impl<P: Copy + Eq + std::hash::Hash + Ord> StrataCache<P> {
 pub fn compute_strata<S>(s: &S) -> Result<StrataCache<S::Point>, MeshSieveError>
 where
     S: Sieve,
-    S::Point: Copy + Eq + std::hash::Hash + Ord + std::fmt::Debug,
+    S::Point: PointLike,
 {
     // 1) collect in-degrees over s.points()
     let mut in_deg = HashMap::new();
