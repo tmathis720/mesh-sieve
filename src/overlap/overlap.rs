@@ -22,6 +22,15 @@
 //!    for each `(local, neighbor_rank, remote)` triple.
 //! 5. Assert [`Overlap::is_fully_resolved`] before constructing on-wire buffers.
 
+//! ## Mesh-driven overlap completion
+//!
+//! Overlap structure must mirror the mesh topology. If a local mesh point `p`
+//! is shared with neighbor rank `r`, then every `q ∈ closure_mesh(p)` must also
+//! be shared with `r`. The helper [`ensure_closure_of_support`] expands the
+//! overlap using **mesh** incidence (cones/closure), keeping structural links
+//! only (no fabricated remote IDs). Mappings can be filled later via
+//! [`Overlap::resolve_remote_point`].
+
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cache::InvalidateCache;
 use crate::topology::point::PointId;
@@ -122,7 +131,8 @@ impl Overlap {
         );
     }
 
-    /// Insert `Local(p) -> Part(r)` if missing; leaves `remote_point = None`.
+    /// Insert `Local(p) -> Part(r)` structurally (`remote_point = None`).
+    /// Dedupe if the link already exists.
     pub fn add_link_structural(&mut self, p: PointId, r: usize) {
         let src = local(p);
         let dst = part(r);
@@ -401,6 +411,47 @@ pub fn ensure_closure_of_support<M: Sieve<Point = PointId>>(ov: &mut Overlap, me
     ov.invalidate_cache();
 }
 
+/// Incremental variant: expand closure only from explicit `(point, rank)` seeds.
+///
+/// Useful when a subset of links was newly added and only those need
+/// propagation. Idempotent and safe to call multiple times.
+pub fn ensure_closure_of_support_from_seeds<M: Sieve<Point = PointId>, I>(
+    ov: &mut Overlap,
+    mesh: &M,
+    seeds: I,
+) where
+    I: IntoIterator<Item = (PointId, usize)>,
+{
+    use std::collections::HashSet;
+
+    // Build seen from current state
+    let mut seen: HashSet<(PointId, usize)> = ov
+        .base_points()
+        .filter_map(|id| match id {
+            OvlId::Local(p) => Some(p),
+            _ => None,
+        })
+        .flat_map(|p| {
+            ov.cone(local(p)).filter_map(move |(dst, rem)| match dst {
+                OvlId::Part(r) => {
+                    debug_assert_eq!(rem.rank, r);
+                    Some((p, r))
+                }
+                _ => None,
+            })
+        })
+        .collect();
+
+    for (p, r) in seeds {
+        for q in mesh.closure(std::iter::once(p)) {
+            if seen.insert((q, r)) {
+                ov.add_link_structural(q, r);
+            }
+        }
+    }
+    ov.invalidate_cache();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -482,16 +533,101 @@ mod tests {
     }
 
     #[test]
-    fn closure_adds_structural_links() {
-        // mesh: 1 -> 2
+    fn basic_closure_completion() {
+        // cell -> faces -> vertices
+        let cell = PointId::new(1).unwrap();
+        let f0 = PointId::new(10).unwrap();
+        let f1 = PointId::new(11).unwrap();
+        let v0 = PointId::new(100).unwrap();
+        let v1 = PointId::new(101).unwrap();
+        let v2 = PointId::new(110).unwrap();
+        let v3 = PointId::new(111).unwrap();
+        let mut mesh = Mesh::<PointId, ()>::default();
+        mesh.add_arrow(cell, f0, ());
+        mesh.add_arrow(cell, f1, ());
+        mesh.add_arrow(f0, v0, ());
+        mesh.add_arrow(f0, v1, ());
+        mesh.add_arrow(f1, v2, ());
+        mesh.add_arrow(f1, v3, ());
+
+        let mut ov = Overlap::new();
+        ov.add_link_structural(cell, 7);
+        ensure_closure_of_support(&mut ov, &mesh);
+
+        let links: Vec<_> = ov.links_to_maybe(7).collect();
+        assert_eq!(links.len(), 7);
+        for p in [cell, f0, f1, v0, v1, v2, v3] {
+            assert!(links.contains(&(p, None)));
+        }
+    }
+
+    #[test]
+    fn closure_idempotent() {
         let mut mesh = Mesh::<PointId, ()>::default();
         mesh.add_arrow(PointId::new(1).unwrap(), PointId::new(2).unwrap(), ());
         let mut ov = Overlap::new();
         ov.add_link_structural(PointId::new(1).unwrap(), 7);
         ensure_closure_of_support(&mut ov, &mesh);
-        let v: Vec<_> = ov.links_to_maybe(7).collect();
-        assert_eq!(v.len(), 2);
-        assert!(v.contains(&(PointId::new(1).unwrap(), None)));
-        assert!(v.contains(&(PointId::new(2).unwrap(), None)));
+        let count = ov.links_to_maybe(7).count();
+        ensure_closure_of_support(&mut ov, &mesh);
+        assert_eq!(ov.links_to_maybe(7).count(), count);
+    }
+
+    #[test]
+    fn closure_multiple_ranks() {
+        let mut mesh = Mesh::<PointId, ()>::default();
+        mesh.add_arrow(PointId::new(1).unwrap(), PointId::new(2).unwrap(), ());
+        let mut ov = Overlap::new();
+        ov.add_link_structural(PointId::new(1).unwrap(), 1);
+        ov.add_link_structural(PointId::new(1).unwrap(), 2);
+        ensure_closure_of_support(&mut ov, &mesh);
+
+        let set1: std::collections::HashSet<_> = ov.links_to_maybe(1).collect();
+        let set2: std::collections::HashSet<_> = ov.links_to_maybe(2).collect();
+        let expected: std::collections::HashSet<_> =
+            [PointId::new(1).unwrap(), PointId::new(2).unwrap()]
+                .into_iter()
+                .map(|p| (p, None))
+                .collect();
+        assert_eq!(set1, expected);
+        assert_eq!(set2, expected);
+    }
+
+    #[test]
+    fn closure_preserves_resolved_edges() {
+        let mut mesh = Mesh::<PointId, ()>::default();
+        mesh.add_arrow(PointId::new(1).unwrap(), PointId::new(2).unwrap(), ());
+        let mut ov = Overlap::new();
+        let p = PointId::new(1).unwrap();
+        let r = 5usize;
+        ov.add_link(p, r, PointId::new(101).unwrap());
+        ensure_closure_of_support(&mut ov, &mesh);
+        let links: Vec<_> = ov.links_to_maybe(r).collect();
+        assert!(links.contains(&(p, Some(PointId::new(101).unwrap()))));
+        assert!(links.contains(&(PointId::new(2).unwrap(), None)));
+    }
+
+    #[test]
+    fn closure_from_seeds() {
+        // mesh: 1 -> 2, 3 -> 4
+        let mut mesh = Mesh::<PointId, ()>::default();
+        mesh.add_arrow(PointId::new(1).unwrap(), PointId::new(2).unwrap(), ());
+        mesh.add_arrow(PointId::new(3).unwrap(), PointId::new(4).unwrap(), ());
+        let r = 9usize;
+
+        let mut ov = Overlap::new();
+        ov.add_link_structural(PointId::new(1).unwrap(), r);
+        ov.add_link_structural(PointId::new(3).unwrap(), r);
+
+        ensure_closure_of_support_from_seeds(&mut ov, &mesh, [(PointId::new(1).unwrap(), r)]);
+        let links: std::collections::HashSet<_> = ov.links_to_maybe(r).collect();
+        assert!(links.contains(&(PointId::new(1).unwrap(), None)));
+        assert!(links.contains(&(PointId::new(2).unwrap(), None)));
+        assert!(links.contains(&(PointId::new(3).unwrap(), None)));
+        assert!(!links.contains(&(PointId::new(4).unwrap(), None)));
+
+        ensure_closure_of_support_from_seeds(&mut ov, &mesh, [(PointId::new(3).unwrap(), r)]);
+        let links2: std::collections::HashSet<_> = ov.links_to_maybe(r).collect();
+        assert!(links2.contains(&(PointId::new(4).unwrap(), None)));
     }
 }
