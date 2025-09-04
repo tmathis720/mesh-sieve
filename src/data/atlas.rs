@@ -6,8 +6,8 @@
 //! single contiguous `Vec` for efficient storage and communication.
 
 use crate::mesh_error::MeshSieveError;
-use crate::topology::point::PointId;
 use crate::topology::cache::InvalidateCache;
+use crate::topology::point::PointId;
 use std::collections::HashMap;
 
 /// `Atlas` maintains:
@@ -23,6 +23,8 @@ pub struct Atlas {
     order: Vec<PointId>,
     /// Total length of all slices; also next available offset.
     total_len: usize,
+    /// Monotonic version that changes on any structural modification.
+    version: u64,
 }
 
 impl InvalidateCache for Atlas {
@@ -65,12 +67,16 @@ impl Atlas {
         self.map.insert(p, (offset, len));
         self.order.push(p);
         self.total_len += len;
+        self.version = self.version.wrapping_add(1);
         InvalidateCache::invalidate_cache(self);
+        #[cfg(debug_assertions)]
+        self.debug_assert_invariants();
         Ok(offset)
     }
     #[deprecated(note = "Use `try_insert` which returns Result instead of panicking")]
     pub fn insert(&mut self, p: PointId, len: usize) -> usize {
-        self.try_insert(p, len).expect("Atlas::insert panicked; use try_insert")
+        self.try_insert(p, len)
+            .expect("Atlas::insert panicked; use try_insert")
     }
 
     /// Look up the slice descriptor `(offset, len)` for point `p`.
@@ -91,12 +97,48 @@ impl Atlas {
         self.total_len
     }
 
+    /// Monotonic version that changes whenever the atlas structure changes.
+    #[inline]
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// (offset,len) for each point in insertion order.
+    #[inline]
+    pub fn atlas_map(&self) -> Vec<(usize, usize)> {
+        self.order.iter().map(|&p| self.map[&p]).collect()
+    }
+
+    /// (PointId,(offset,len)) for each point in insertion order.
+    #[inline]
+    pub fn atlas_entries(&self) -> Vec<(PointId, (usize, usize))> {
+        self.order.iter().map(|&p| (p, self.map[&p])).collect()
+    }
+
+    /// Borrowing iterator over (PointId,(offset,len)) in insertion order.
+    pub fn iter_entries<'a>(&'a self) -> impl Iterator<Item = (PointId, (usize, usize))> + 'a {
+        self.order.iter().map(move |&p| (p, self.map[&p]))
+    }
+
+    /// Borrowing iterator over (offset,len) in insertion order.
+    pub fn iter_spans<'a>(&'a self) -> impl Iterator<Item = (usize, usize)> + 'a {
+        self.order.iter().map(move |&p| self.map[&p])
+    }
+
     /// Iterator over all registered points in insertion (deterministic) order.
     ///
     /// Useful for serializing or iterating through slices in a stable order.
     #[inline]
     pub fn points<'a>(&'a self) -> impl Iterator<Item = PointId> + 'a {
         self.order.iter().copied()
+    }
+
+    /// Build a reusable scatter plan reflecting the current atlas state.
+    pub fn build_scatter_plan(&self) -> crate::data::section::ScatterPlan {
+        crate::data::section::ScatterPlan {
+            atlas_version: self.version,
+            spans: self.atlas_map(),
+        }
     }
 
     /// Remove a point and its slice from the atlas, recomputing all offsets.
@@ -121,8 +163,57 @@ impl Atlas {
             self.map.insert(pt, (offset, len));
         }
         self.total_len = next_offset;
+        self.version = self.version.wrapping_add(1);
         InvalidateCache::invalidate_cache(self);
+        #[cfg(debug_assertions)]
+        self.debug_assert_invariants();
         Ok(())
+    }
+
+    /// Validate atlas invariants in production.
+    pub fn validate(&self) -> Result<(), MeshSieveError> {
+        use std::collections::HashSet;
+        let set: HashSet<_> = self.order.iter().copied().collect();
+        if set.len() != self.order.len() {
+            if let Some(&p) = self.order.first() {
+                return Err(MeshSieveError::MeshError(Box::new(
+                    MeshSieveError::DuplicatePoint(p),
+                )));
+            }
+        }
+        if set.len() != self.map.len() {
+            if let Some(&p) = self.order.first() {
+                return Err(MeshSieveError::MeshError(Box::new(
+                    MeshSieveError::MissingAtlasPoint(p),
+                )));
+            }
+        }
+        let mut off = 0usize;
+        for &p in &self.order {
+            let (o, len) = self
+                .map
+                .get(&p)
+                .copied()
+                .ok_or(MeshSieveError::MissingAtlasPoint(p))?;
+            if o != off {
+                return Err(MeshSieveError::ScatterChunkMismatch { offset: o, len });
+            }
+            off = off.saturating_add(len);
+        }
+        if off != self.total_len {
+            return Err(MeshSieveError::ScatterLengthMismatch {
+                expected: off,
+                found: self.total_len,
+            });
+        }
+        Ok(())
+    }
+}
+
+#[cfg(any(debug_assertions, feature = "strict-invariants"))]
+impl Atlas {
+    pub(crate) fn debug_assert_invariants(&self) {
+        self.validate().unwrap();
     }
 }
 
@@ -211,9 +302,9 @@ mod tests {
         let _ = a.try_insert(p1, 3);
         let pre_len = a.total_len();
         a.remove_point(PointId::new(999).unwrap()).unwrap(); // does not exist
-        // should be unchanged
+                                                             // should be unchanged
         assert_eq!(a.total_len(), pre_len);
-        assert_eq!(a.get(p1), Some((0,3)));
+        assert_eq!(a.get(p1), Some((0, 3)));
     }
 
     #[test]
@@ -228,12 +319,12 @@ mod tests {
         // remove first
         a.remove_point(p1).unwrap();
         assert_eq!(a.points().collect::<Vec<_>>(), vec![p2, p3]);
-        assert_eq!(a.get(p2), Some((0,4)));
-        assert_eq!(a.get(p3), Some((4,1)));
+        assert_eq!(a.get(p2), Some((0, 4)));
+        assert_eq!(a.get(p3), Some((4, 1)));
         // remove last
         a.remove_point(p3).unwrap();
         assert_eq!(a.points().collect::<Vec<_>>(), vec![p2]);
-        assert_eq!(a.get(p2), Some((0,4)));
+        assert_eq!(a.get(p2), Some((0, 4)));
         assert_eq!(a.total_len(), 4);
     }
 
@@ -253,7 +344,10 @@ mod tests {
         // reinsert anew
         let off = a.try_insert(PointId::new(30).unwrap(), 7).unwrap();
         assert_eq!(off, 0);
-        assert_eq!(a.points().collect::<Vec<_>>(), vec![PointId::new(30).unwrap()]);
+        assert_eq!(
+            a.points().collect::<Vec<_>>(),
+            vec![PointId::new(30).unwrap()]
+        );
     }
 
     #[test]
@@ -263,8 +357,11 @@ mod tests {
         a.try_insert(PointId::new(6).unwrap(), 2).unwrap();
         let ser = serde_json::to_string(&a).expect("serialize");
         let de: Atlas = serde_json::from_str(&ser).expect("deserialize");
-        assert_eq!(de.get(PointId::new(5).unwrap()), Some((0,3)));
-        assert_eq!(de.get(PointId::new(6).unwrap()), Some((3,2)));
-        assert_eq!(de.points().collect::<Vec<_>>(), vec![PointId::new(5).unwrap(), PointId::new(6).unwrap()]);
+        assert_eq!(de.get(PointId::new(5).unwrap()), Some((0, 3)));
+        assert_eq!(de.get(PointId::new(6).unwrap()), Some((3, 2)));
+        assert_eq!(
+            de.points().collect::<Vec<_>>(),
+            vec![PointId::new(5).unwrap(), PointId::new(6).unwrap()]
+        );
     }
 }

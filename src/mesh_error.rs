@@ -3,15 +3,17 @@
 //! This error type is used throughout the mesh-sieve library to provide robust,
 //! non-panicking error handling for all public APIs.
 
-use thiserror::Error;
 use std::fmt::Debug;
+use thiserror::Error;
 
 /// Unified error type for mesh-sieve operations.
 #[derive(Debug, Error)]
 pub enum MeshSieveError {
     /// Error indicating that the overlap graph is missing required neighbor links.
     #[error("Missing overlap: {source}")]
-    MissingOverlap { source: Box<dyn std::error::Error + Send + Sync> },
+    MissingOverlap {
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
     /// Generic mesh error (for internal use, e.g. error propagation)
     #[error("mesh error: {0}")]
     MeshError(Box<MeshSieveError>),
@@ -44,14 +46,18 @@ pub enum MeshSieveError {
     SievedArrayPointNotInAtlas(crate::topology::point::PointId),
 
     /// Mismatch between expected and provided slice length for a point.
-    #[error("Section error: slice length mismatch for {point:?}: expected {expected}, got {found}")]
+    #[error(
+        "Section error: slice length mismatch for {point:?}: expected {expected}, got {found}"
+    )]
     SliceLengthMismatch {
         point: crate::topology::point::PointId,
         expected: usize,
         found: usize,
     },
     /// Mismatch between expected and provided slice length for a point (SievedArray).
-    #[error("SievedArray error: slice length mismatch at {point:?}: expected {expected}, got {found}")]
+    #[error(
+        "SievedArray error: slice length mismatch at {point:?}: expected {expected}, got {found}"
+    )]
     SievedArraySliceLengthMismatch {
         point: crate::topology::point::PointId,
         expected: usize,
@@ -60,7 +66,10 @@ pub enum MeshSieveError {
 
     /// Attempt to add a point to the section failed at atlas insertion.
     #[error("Section error: failed to add point {0:?} to atlas: {1}")]
-    AtlasInsertionFailed(crate::topology::point::PointId, #[source] Box<MeshSieveError>),
+    AtlasInsertionFailed(
+        crate::topology::point::PointId,
+        #[source] Box<MeshSieveError>,
+    ),
     /// Attempt to remove or copy data for a point that disappeared.
     #[error("Section internal error: missing data for point {0:?}")]
     MissingSectionPoint(crate::topology::point::PointId),
@@ -70,15 +79,15 @@ pub enum MeshSieveError {
     /// One of the scatter chunks did not fit.
     #[error("Section error: scatter chunk at offset {offset} of length {len} out of bounds")]
     ScatterChunkMismatch { offset: usize, len: usize },
+    /// Attempted to use a scatter plan built from an outdated atlas.
+    #[error("Atlas plan is stale (expected version {expected}, found {found})")]
+    AtlasPlanStale { expected: u64, found: u64 },
     /// Failure converting count to primitive (should never happen if FromPrimitive is well-behaved).
     #[error("SievedArray error: cannot convert count {0} via FromPrimitive")]
     SievedArrayPrimitiveConversionFailure(usize),
     /// Delta application failed because source and dest slices had different lengths.
     #[error("Delta error: slice length mismatch (src.len={expected}, dest.len={found})")]
-    DeltaLengthMismatch {
-        expected: usize,
-        found: usize,
-    },
+    DeltaLengthMismatch { expected: usize, found: usize },
     /// Partition‐point computation overflowed to zero (invalid owner).
     #[error("Invalid partition owner: computed raw ID = 0")]
     PartitionPointOverflow,
@@ -136,22 +145,104 @@ impl PartialEq for MeshSieveError {
             (MissingAtlasPoint(a), MissingAtlasPoint(b)) => a == b,
             (PointNotInAtlas(a), PointNotInAtlas(b)) => a == b,
             (SievedArrayPointNotInAtlas(a), SievedArrayPointNotInAtlas(b)) => a == b,
-            (SliceLengthMismatch { point: p1, expected: e1, found: f1 },
-             SliceLengthMismatch { point: p2, expected: e2, found: f2 }) => p1 == p2 && e1 == e2 && f1 == f2,
-            (SievedArraySliceLengthMismatch { point: p1, expected: e1, found: f1 },
-             SievedArraySliceLengthMismatch { point: p2, expected: e2, found: f2 }) => p1 == p2 && e1 == e2 && f1 == f2,
+            (
+                SliceLengthMismatch {
+                    point: p1,
+                    expected: e1,
+                    found: f1,
+                },
+                SliceLengthMismatch {
+                    point: p2,
+                    expected: e2,
+                    found: f2,
+                },
+            ) => p1 == p2 && e1 == e2 && f1 == f2,
+            (
+                SievedArraySliceLengthMismatch {
+                    point: p1,
+                    expected: e1,
+                    found: f1,
+                },
+                SievedArraySliceLengthMismatch {
+                    point: p2,
+                    expected: e2,
+                    found: f2,
+                },
+            ) => p1 == p2 && e1 == e2 && f1 == f2,
             (AtlasInsertionFailed(p1, _), AtlasInsertionFailed(p2, _)) => p1 == p2,
             (MissingSectionPoint(a), MissingSectionPoint(b)) => a == b,
-            (ScatterLengthMismatch { expected: e1, found: f1 }, ScatterLengthMismatch { expected: e2, found: f2 }) => e1 == e2 && f1 == f2,
-            (ScatterChunkMismatch { offset: o1, len: l1 }, ScatterChunkMismatch { offset: o2, len: l2 }) => o1 == o2 && l1 == l2,
-            (SievedArrayPrimitiveConversionFailure(a), SievedArrayPrimitiveConversionFailure(b)) => a == b,
-            (DeltaLengthMismatch { expected: e1, found: f1 }, DeltaLengthMismatch { expected: e2, found: f2 }) => e1 == e2 && f1 == f2,
+            (
+                ScatterLengthMismatch {
+                    expected: e1,
+                    found: f1,
+                },
+                ScatterLengthMismatch {
+                    expected: e2,
+                    found: f2,
+                },
+            ) => e1 == e2 && f1 == f2,
+            (
+                ScatterChunkMismatch {
+                    offset: o1,
+                    len: l1,
+                },
+                ScatterChunkMismatch {
+                    offset: o2,
+                    len: l2,
+                },
+            ) => o1 == o2 && l1 == l2,
+            (
+                AtlasPlanStale {
+                    expected: e1,
+                    found: f1,
+                },
+                AtlasPlanStale {
+                    expected: e2,
+                    found: f2,
+                },
+            ) => e1 == e2 && f1 == f2,
+            (
+                SievedArrayPrimitiveConversionFailure(a),
+                SievedArrayPrimitiveConversionFailure(b),
+            ) => a == b,
+            (
+                DeltaLengthMismatch {
+                    expected: e1,
+                    found: f1,
+                },
+                DeltaLengthMismatch {
+                    expected: e2,
+                    found: f2,
+                },
+            ) => e1 == e2 && f1 == f2,
             (PartitionIndexOutOfBounds(a), PartitionIndexOutOfBounds(b)) => a == b,
             (MissingRecvCount { neighbor: n1 }, MissingRecvCount { neighbor: n2 }) => n1 == n2,
             (SectionAccess { point: p1, .. }, SectionAccess { point: p2, .. }) => p1 == p2,
             (CommError { neighbor: n1, .. }, CommError { neighbor: n2, .. }) => n1 == n2,
-            (BufferSizeMismatch { neighbor: n1, expected: e1, got: g1 }, BufferSizeMismatch { neighbor: n2, expected: e2, got: g2 }) => n1 == n2 && e1 == e2 && g1 == g2,
-            (PartCountMismatch { neighbor: n1, expected: e1, got: g1 }, PartCountMismatch { neighbor: n2, expected: e2, got: g2 }) => n1 == n2 && e1 == e2 && g1 == g2,
+            (
+                BufferSizeMismatch {
+                    neighbor: n1,
+                    expected: e1,
+                    got: g1,
+                },
+                BufferSizeMismatch {
+                    neighbor: n2,
+                    expected: e2,
+                    got: g2,
+                },
+            ) => n1 == n2 && e1 == e2 && g1 == g2,
+            (
+                PartCountMismatch {
+                    neighbor: n1,
+                    expected: e1,
+                    got: g1,
+                },
+                PartCountMismatch {
+                    neighbor: n2,
+                    expected: e2,
+                    got: g2,
+                },
+            ) => n1 == n2 && e1 == e2 && g1 == g2,
             (Communication(a), Communication(b)) => a == b,
             _ => false,
         }
@@ -170,4 +261,3 @@ impl PartialEq for CommError {
     }
 }
 impl Eq for CommError {}
-
