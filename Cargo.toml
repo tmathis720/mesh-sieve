@@ -58,6 +58,8 @@ deterministic-order = []
 deterministic-owners = []
 check-graph-edges = []
 expensive-checks = []
+binpack-retry = []
+log = []
 
 
 [build-dependencies]

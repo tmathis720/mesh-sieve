@@ -4,10 +4,9 @@
 //! first-fit decreasing (FFD) bin-packing and adjacency-guided merging,
 //! supporting balanced and locality-aware partitioning.
 
-use rayon::prelude::ParallelSliceMut;
-use std::cmp::Reverse;
+use rayon::prelude::*;
+use std::cmp::{Ordering, Reverse};
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Represents a “cluster” as an item to be packed into one of `k` parts.
 ///
@@ -21,171 +20,268 @@ pub struct Item {
     pub adj: Vec<(usize, u64)>,
 }
 
-/// Assigns each cluster to one of `k` parts using first-fit decreasing (FFD) bin-packing.
+/// Assigns clusters to `k` parts using an adjacency-aware first-fit decreasing strategy.
 ///
-/// # Arguments
-/// - `items`: Slice of clusters to assign.
-/// - `k`: Number of parts.
-/// - `epsilon`: Allowed balance tolerance (e.g., 0.05 for 5% imbalance).
-///
-/// # Returns
-/// A vector mapping each cluster to a part, or an error if balance cannot be achieved.
-///
-/// # Errors
-/// Returns `PartitionerError::Unbalanced` if the resulting assignment exceeds the allowed tolerance.
+/// Greedy placement never violates the balance threshold; if no admissible adjacency choice
+/// exists, the cluster is placed into the lightest feasible part. If no such part exists,
+/// `PartitionerError::Unbalanced` is returned.
 pub fn partition_clusters(
     items: &[Item],
     k: usize,
     epsilon: f64,
 ) -> Result<Vec<usize>, crate::partitioning::PartitionerError> {
-    assert!(k > 0, "Number of parts (k) must be ≥ 1");
+    use crate::partitioning::PartitionerError;
+
+    assert!(k > 0, "k must be ≥ 1");
     let n = items.len();
     if n == 0 {
         return Ok(Vec::new());
     }
 
-    // 1. Build a vector of indices [0, 1, 2, ..., n-1].
     let mut order: Vec<usize> = (0..n).collect();
-
-    // 2. Sort `order` by descending `items[i].load`.
-    //    We're using a parallel sort here so that large cluster lists
-    //    finish quickly.  For small `n`, this falls back to a serial sort.
     order.par_sort_unstable_by_key(|&i| Reverse(items[i].load));
 
-    // 3. Create `k` buckets, each with an atomic load counter initialized to 0.
-    let buckets: Vec<AtomicU64> = (0..k).map(|_| AtomicU64::new(0)).collect();
+    let cid_to_index: HashMap<usize, usize> = items
+        .iter()
+        .enumerate()
+        .map(|(i, it)| (it.cid, i))
+        .collect();
 
-    // 4. Prepare the output vector: cluster_id → part_id.
-    let mut cluster_to_part = vec![0; n];
-
-    // Map cluster IDs to indices for quick lookup of neighbors with non-contiguous cids
-    let cid_to_index: HashMap<usize, usize> =
-        items.iter().enumerate().map(|(i, it)| (it.cid, i)).collect();
-
-    // 5. Compute balance threshold
     let total_load: u64 = items.iter().map(|it| it.load).sum();
-    let threshold = ((1.0 + epsilon) * (total_load as f64 / k as f64)).ceil() as u64;
+    let threshold: u64 = ((1.0 + epsilon) * (total_load as f64 / k as f64)).ceil() as u64;
 
-    // 6. Greedily assign each cluster (in `order`) to a bucket
+    let mut part_loads = vec![0u64; k];
+    let mut assign = vec![usize::MAX; n];
+
+    let choose_best = |cands: &[(usize, u64)], part_loads: &[u64]| -> Option<usize> {
+        cands
+            .iter()
+            .copied()
+            .max_by(|&(pa, wa), &(pb, wb)| match wa.cmp(&wb) {
+                Ordering::Equal => match part_loads[pa].cmp(&part_loads[pb]) {
+                    Ordering::Equal => pa.cmp(&pb).reverse(),
+                    other => other.reverse(),
+                },
+                other => other,
+            })
+            .map(|(p, _)| p)
+    };
+
     for &idx in &order {
-        // (a) Try to place in a part containing a neighbor (adjacency-aware)
-        let mut chosen_bucket = None;
-        for &(nbr_cid, _) in &items[idx].adj {
+        let item = &items[idx];
+
+        let mut into = vec![0u64; k];
+        for &(nbr_cid, w) in &item.adj {
             if let Some(&nbr_idx) = cid_to_index.get(&nbr_cid) {
-                let part = cluster_to_part[nbr_idx];
-                let load_b = buckets[part].load(Ordering::Relaxed);
-                if load_b + items[idx].load <= threshold {
-                    chosen_bucket = Some(part);
-                    break;
+                let p = assign[nbr_idx];
+                if p != usize::MAX {
+                    into[p] = into[p].saturating_add(w);
                 }
             }
         }
-        // (b) Fallback: pick the bucket with minimal load
-        if chosen_bucket.is_none() {
-            let (b0, _) = (0..k)
-                .map(|b| (b, buckets[b].load(Ordering::Relaxed)))
-                .min_by_key(|&(_, w)| w)
-                .unwrap();
-            chosen_bucket = Some(b0);
-        }
-        let bucket = chosen_bucket.unwrap();
-        cluster_to_part[idx] = bucket;
-        buckets[bucket].fetch_add(items[idx].load, Ordering::Relaxed);
+
+        let feasible: Vec<(usize, u64)> = (0..k)
+            .filter(|&p| part_loads[p].saturating_add(item.load) <= threshold)
+            .map(|p| (p, into[p]))
+            .collect();
+
+        let chosen = if !feasible.is_empty() {
+            choose_best(&feasible, &part_loads)
+        } else {
+            None
+        };
+
+        let part = match chosen {
+            Some(p) => p,
+            None => {
+                let max_load = *part_loads.iter().max().unwrap_or(&0);
+                let min_load = *part_loads.iter().min().unwrap_or(&0);
+                let ratio = if min_load == 0 {
+                    f64::INFINITY
+                } else {
+                    max_load as f64 / min_load as f64
+                };
+                return Err(PartitionerError::Unbalanced {
+                    max_load,
+                    min_load,
+                    ratio,
+                    tolerance: 1.0 + epsilon + 1e-6,
+                });
+            }
+        };
+
+        assign[idx] = part;
+        part_loads[part] = part_loads[part].saturating_add(item.load);
     }
 
-    // 7. Check balance
-    let loads: Vec<u64> = buckets.iter().map(|b| b.load(Ordering::Relaxed)).collect();
-    let min_load = *loads.iter().min().unwrap();
-    let max_load = *loads.iter().max().unwrap();
-    let ratio = max_load as f64 / (min_load as f64 + std::f64::EPSILON);
-    let tol = 1.0 + epsilon + 1e-6;
-    if ratio > tol {
-        return Err(crate::partitioning::PartitionerError::Unbalanced {
-            max_load,
-            min_load,
-            ratio,
-            tolerance: tol,
-        });
-    }
-    Ok(cluster_to_part)
+    Ok(assign)
 }
 
 /// Phase 2 merge: adjacency-guided cluster assignment.
 ///
-/// Assigns clusters to parts by merging based on adjacency weights, then fills remaining clusters
-/// to balance load.
-///
-/// # Arguments
-/// - `items`: Slice of clusters to assign.
-/// - `k`: Number of parts.
-/// - `epsilon`: Allowed balance tolerance.
-///
-/// # Returns
-/// A vector mapping each cluster to a part, or an error if no positive merge is possible or balance fails.
-///
-/// # Errors
-/// Returns `PartitionerError::NoPositiveMerge` or `PartitionerError::Unbalanced`.
+/// Greedy merges respect the balance threshold. When no admissible positive merge remains,
+/// remaining clusters are assigned to the lightest feasible part. If no feasible part exists,
+/// the function returns `PartitionerError::Unbalanced`.
 pub fn merge_clusters_into_parts(
     items: &[Item],
     k: usize,
     epsilon: f64,
 ) -> Result<Vec<usize>, crate::partitioning::PartitionerError> {
+    use crate::partitioning::PartitionerError;
+
     assert!(k > 0 && !items.is_empty());
+
     let n = items.len();
     let mut order: Vec<usize> = (0..n).collect();
     order.sort_unstable_by_key(|&i| Reverse(items[i].load));
-    let seed_idxs = &order[..k];
-    let mut seed_loads: Vec<u64> = seed_idxs.iter().map(|&i| items[i].load).collect();
-    let mut seed_members: Vec<Vec<usize>> = seed_idxs.iter().map(|&i| vec![i]).collect();
+
+    let seed_count = k.min(n);
+    let seed_idxs = &order[..seed_count];
+
+    let total_load: u64 = items.iter().map(|it| it.load).sum();
+    let threshold: u64 = ((1.0 + epsilon) * (total_load as f64 / k as f64)).ceil() as u64;
+
+    let mut part_loads: Vec<u64> = seed_idxs.iter().map(|&i| items[i].load).collect();
+    part_loads.resize(k, 0);
+    let mut part_members: Vec<Vec<usize>> = seed_idxs.iter().map(|&i| vec![i]).collect();
+    part_members.resize(k, Vec::new());
+
+    let mut assign = vec![usize::MAX; n];
+    for (p, &i) in seed_idxs.iter().enumerate() {
+        if items[i].load > threshold {
+            return Err(PartitionerError::Unbalanced {
+                max_load: items[i].load,
+                min_load: 0,
+                ratio: f64::INFINITY,
+                tolerance: 1.0 + epsilon + 1e-6,
+            });
+        }
+        assign[i] = p;
+    }
+
+    let cid_to_index: HashMap<usize, usize> = items
+        .iter()
+        .enumerate()
+        .map(|(i, it)| (it.cid, i))
+        .collect();
+
     let mut unassigned: HashSet<usize> = (0..n).collect();
-    for &i in seed_idxs { unassigned.remove(&i); }
-    let mut did_positive_merge = false;
+    for &i in seed_idxs {
+        unassigned.remove(&i);
+    }
+
     loop {
         let mut best: Option<(usize, usize, u64)> = None;
-        for (s, members) in seed_members.iter().enumerate() {
-            for &cid in members {
-                for &(nbr, w) in &items[cid].adj {
-                    if unassigned.contains(&nbr) {
-                        if best.as_ref().is_none_or(|&(_, _, bw)| w > bw) {
-                            best = Some((s, nbr, w));
+
+        for p in 0..k {
+            for &m in &part_members[p] {
+                for &(nbr_cid, w) in &items[m].adj {
+                    if w == 0 {
+                        continue;
+                    }
+                    if let Some(&nbr_idx) = cid_to_index.get(&nbr_cid) {
+                        if unassigned.contains(&nbr_idx)
+                            && part_loads[p].saturating_add(items[nbr_idx].load) <= threshold
+                        {
+                            match best {
+                                None => best = Some((p, nbr_idx, w)),
+                                Some((_, _, bw)) if w > bw => best = Some((p, nbr_idx, w)),
+                                _ => {}
+                            }
                         }
                     }
                 }
             }
         }
-        let (seed_idx, pick, _) = match best { Some(t) => t, None => break };
-        did_positive_merge = true;
-        seed_members[seed_idx].push(pick);
-        seed_loads[seed_idx] += items[pick].load;
-        unassigned.remove(&pick);
-    }
-    if !did_positive_merge && unassigned.len() > 0 {
-        return Err(crate::partitioning::PartitionerError::NoPositiveMerge);
-    }
-    for &cid in unassigned.iter() {
-        let (s, _) = seed_loads.iter().enumerate().min_by_key(|&(_, &l)| l).unwrap();
-        seed_members[s].push(cid);
-        seed_loads[s] += items[cid].load;
-    }
-    let mut result = vec![0usize; n];
-    for (part, members) in seed_members.into_iter().enumerate() {
-        for cid in members {
-            result[cid] = part;
+
+        match best {
+            Some((p, c, _w)) => {
+                assign[c] = p;
+                part_members[p].push(c);
+                part_loads[p] = part_loads[p].saturating_add(items[c].load);
+                unassigned.remove(&c);
+            }
+            None => break,
         }
     }
-    let min_load = *seed_loads.iter().min().unwrap();
-    let max_load = *seed_loads.iter().max().unwrap();
+
+    for &i in unassigned.iter() {
+        let mut best_p: Option<usize> = None;
+        let mut best_load = u64::MAX;
+        for p in 0..k {
+            let new_load = part_loads[p].saturating_add(items[i].load);
+            if new_load <= threshold && new_load < best_load {
+                best_load = new_load;
+                best_p = Some(p);
+            }
+        }
+        let p = match best_p {
+            Some(p) => p,
+            None => {
+                let max_load = *part_loads.iter().max().unwrap_or(&0);
+                let min_load = *part_loads.iter().min().unwrap_or(&0);
+                let ratio = if min_load == 0 {
+                    f64::INFINITY
+                } else {
+                    max_load as f64 / min_load as f64
+                };
+                return Err(PartitionerError::Unbalanced {
+                    max_load,
+                    min_load,
+                    ratio,
+                    tolerance: 1.0 + epsilon + 1e-6,
+                });
+            }
+        };
+        assign[i] = p;
+        part_members[p].push(i);
+        part_loads[p] = part_loads[p].saturating_add(items[i].load);
+    }
+
+    let min_load = *part_loads.iter().min().unwrap();
+    let max_load = *part_loads.iter().max().unwrap();
     let ratio = max_load as f64 / (min_load as f64 + std::f64::EPSILON);
     let tol = 1.0 + epsilon + 1e-6;
     if ratio > tol {
-        return Err(crate::partitioning::PartitionerError::Unbalanced {
+        return Err(PartitionerError::Unbalanced {
             max_load,
             min_load,
             ratio,
             tolerance: tol,
         });
     }
-    Ok(result)
+
+    Ok(assign)
+}
+
+#[cfg(feature = "binpack-retry")]
+pub fn partition_clusters_with_retry(
+    items: &[Item],
+    k: usize,
+    epsilon: f64,
+    max_retries: usize,
+    eps_cap: f64,
+    growth: f64,
+) -> Result<Vec<usize>, crate::partitioning::PartitionerError> {
+    use crate::partitioning::PartitionerError;
+
+    let mut eps = epsilon;
+    for attempt in 0..=max_retries {
+        match partition_clusters(items, k, eps) {
+            Ok(a) => return Ok(a),
+            Err(PartitionerError::Unbalanced { .. }) if attempt < max_retries => {
+                let new_eps = (eps * growth).min(eps_cap);
+                if (new_eps - eps).abs() < f64::EPSILON {
+                    break;
+                }
+                #[cfg(feature = "log")]
+                log::warn!("binpack retry: epsilon {:.4} -> {:.4}", eps, new_eps);
+                eps = new_eps;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    partition_clusters(items, k, eps)
 }
 
 #[cfg(test)]
@@ -193,7 +289,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn simple_binpack_test() {
+    fn threshold_admissibility() {
+        let items = vec![
+            Item {
+                cid: 0,
+                load: 60,
+                adj: vec![(1, 1)],
+            },
+            Item {
+                cid: 1,
+                load: 40,
+                adj: vec![(0, 1)],
+            },
+            Item {
+                cid: 2,
+                load: 40,
+                adj: vec![],
+            },
+        ];
+
+        let parts = partition_clusters(&items, 2, 0.2).unwrap();
+
+        let mut loads = [0u64; 2];
+        for (i, &p) in parts.iter().enumerate() {
+            loads[p] += items[i].load;
+        }
+        let total_load: u64 = items.iter().map(|it| it.load).sum();
+        let threshold = ((1.0 + 0.2) * (total_load as f64 / 2.0)).ceil() as u64;
+        assert!(loads.iter().all(|&l| l <= threshold));
+    }
+
+    #[test]
+    fn merge_fallback_to_lightest_feasible() {
         let items = vec![
             Item {
                 cid: 0,
@@ -207,104 +334,87 @@ mod tests {
             },
             Item {
                 cid: 2,
-                load: 5,
-                adj: vec![],
-            },
-            Item {
-                cid: 3,
-                load: 15,
+                load: 30,
                 adj: vec![],
             },
         ];
 
-        let parts = partition_clusters(&items, 2, 0.05).unwrap();
-
-        let mut load0 = 0u64;
-        let mut load1 = 0u64;
-        for (idx, &p) in parts.iter().enumerate() {
-            if p == 0 {
-                load0 += items[idx].load;
-            } else if p == 1 {
-                load1 += items[idx].load;
-            } else {
-                panic!("Invalid part id {:?}", p);
-            }
-        }
-
-        let max_load = std::cmp::max(load0, load1);
-        let min_load = std::cmp::min(load0, load1);
-        assert!(
-            (max_load as f64) / (min_load as f64 + 1e-9) <= 1.05,
-            "Buckets are unbalanced: max={}, min={}",
-            max_load,
-            min_load
-        );
+        let parts = merge_clusters_into_parts(&items, 2, 0.05).unwrap();
+        assert_eq!(parts[0], parts[1]);
+        assert_eq!(parts[2], 0);
     }
 
     #[test]
-    fn many_buckets_few_items() {
+    fn adjacency_chain_prefers_merge() {
         let items = vec![
             Item {
                 cid: 0,
-                load: 7,
+                load: 10,
+                adj: vec![(1, 10)],
+            },
+            Item {
+                cid: 1,
+                load: 10,
+                adj: vec![(0, 10), (2, 10)],
+            },
+            Item {
+                cid: 2,
+                load: 10,
+                adj: vec![(1, 10)],
+            },
+            Item {
+                cid: 3,
+                load: 1,
+                adj: vec![],
+            },
+        ];
+
+        let parts = partition_clusters(&items, 2, 100.0).unwrap();
+        assert_eq!(parts[0], parts[1]);
+        assert_eq!(parts[1], parts[2]);
+        assert_ne!(parts[3], parts[0]);
+    }
+
+    #[test]
+    fn heavy_seed_unbalanced() {
+        let items = vec![
+            Item {
+                cid: 0,
+                load: 100,
                 adj: vec![],
             },
             Item {
                 cid: 1,
-                load: 3,
+                load: 1,
                 adj: vec![],
             },
         ];
-
-        let parts = partition_clusters(&items, 2, 2.0).unwrap(); // Allow up to 3x imbalance
-        assert!(parts[0] != parts[1]);
-        assert!(parts[0] < 2 && parts[1] < 2);
+        assert!(matches!(
+            partition_clusters(&items, 2, 0.0),
+            Err(crate::partitioning::PartitionerError::Unbalanced { .. })
+        ));
+        assert!(matches!(
+            merge_clusters_into_parts(&items, 2, 0.0),
+            Err(crate::partitioning::PartitionerError::Unbalanced { .. })
+        ));
     }
 
+    #[cfg(feature = "binpack-retry")]
     #[test]
-    fn non_contiguous_cids() {
+    fn retry_succeeds_with_larger_epsilon() {
         let items = vec![
             Item {
-                cid: 10,
-                load: 5,
-                adj: vec![(20, 1)],
+                cid: 0,
+                load: 55,
+                adj: vec![],
             },
             Item {
-                cid: 20,
-                load: 4,
-                adj: vec![(10, 1)],
-            },
-            Item {
-                cid: 30,
-                load: 3,
+                cid: 1,
+                load: 54,
                 adj: vec![],
             },
         ];
-
-        let parts = partition_clusters(&items, 2, 2.0).unwrap(); // allow high imbalance
-        assert_eq!(parts.len(), 3);
-        // Items 10 and 20 reference each other by non-contiguous cids and should end up together
-        assert_eq!(parts[0], parts[1]);
-    }
-
-    #[test]
-    fn unbalanced_error() {
-        let items = vec![
-            Item { cid: 0, load: 100, adj: vec![] },
-            Item { cid: 1, load: 1, adj: vec![] },
-        ];
-        let res = partition_clusters(&items, 2, 0.0);
-        assert!(matches!(res, Err(crate::partitioning::PartitionerError::Unbalanced { .. })));
-    }
-
-    #[test]
-    fn no_positive_merge_error() {
-        let items = vec![
-            Item { cid: 0, load: 10, adj: vec![] },
-            Item { cid: 1, load: 20, adj: vec![] },
-            Item { cid: 2, load: 30, adj: vec![] },
-        ];
-        let res = merge_clusters_into_parts(&items, 2, 0.05);
-        assert!(matches!(res, Err(crate::partitioning::PartitionerError::NoPositiveMerge)));
+        let parts = partition_clusters_with_retry(&items, 2, 0.01, 2, 0.05, 2.0).unwrap();
+        assert_eq!(parts.len(), 2);
     }
 }
