@@ -1,30 +1,30 @@
 //! Seed selection for graph partitioning.
 //!
-//! This module provides [`pick_seeds`], a function for selecting seed vertices for partitioning algorithms,
-//! with probability weighted by vertex degree and without replacement.
+//! Provides [`pick_seeds`], a deterministic, weighted sampling routine that
+//! selects vertices without replacement.  Two strategies are used depending on
+//! the regime:
+//!   * A Fenwick tree (binary indexed tree) for `k << n`.
+//!   * The A-ExpJ method of Efraimidis–Spirakis for larger `k`.
+//!
+//! The RNG is seeded from [`PartitionerConfig::rng_seed`] ensuring stable
+//! results across runs.
 
-use crate::partitioning::PartitionerConfig;
-use crate::partitioning::graph_traits::PartitionableGraph;
-use rand::Rng;
-use rand::SeedableRng;
-use rand::rngs::SmallRng;
-use rayon::iter::IntoParallelIterator;
-use rayon::iter::ParallelIterator;
+use crate::partitioning::{graph_traits::PartitionableGraph, PartitionerConfig, PartitionerError};
+use rand::{rngs::SmallRng, seq::SliceRandom, Rng, SeedableRng};
 
 /// Returns an error if `degrees.len()` doesn’t match the number of vertices.
 pub fn pick_seeds<G>(
     graph: &G,
     degrees: &[u64],
     cfg: &PartitionerConfig,
-) -> Result<Vec<G::VertexId>, crate::partitioning::PartitionerError>
+) -> Result<Vec<G::VertexId>, PartitionerError>
 where
     G: PartitionableGraph<VertexId = usize> + Sync,
 {
-    // 1) collect vertices up front and verify lengths match
     let vertices: Vec<usize> = graph.vertices().collect();
     let n = vertices.len();
     if degrees.len() != n {
-        return Err(crate::partitioning::PartitionerError::DegreeLengthMismatch {
+        return Err(PartitionerError::DegreeLengthMismatch {
             expected: n,
             got: degrees.len(),
         });
@@ -32,60 +32,160 @@ where
     if n == 0 {
         return Ok(Vec::new());
     }
-    let num_seeds = ((cfg.seed_factor * cfg.n_parts as f64).ceil() as usize)
-        .min(n)
-        .max(1);
-    let mut weights = degrees.to_vec();
-    let mut prefix: Vec<u64> = Vec::with_capacity(n);
-    let mut sum = 0u64;
-    for &w in &weights {
-        sum += w;
-        prefix.push(sum);
-    }
+
     let mut rng = SmallRng::seed_from_u64(cfg.rng_seed);
-    let mut chosen = Vec::with_capacity(num_seeds);
-    if sum == 0 {
-        // All degrees are zero, pick uniformly at random
-        let mut pool: Vec<usize> = (0..n).collect();
-        for _ in 0..num_seeds {
-            if pool.is_empty() {
-                break;
-            }
-            let idx = rng.gen_range(0..pool.len());
-            chosen.push(vertices[pool[idx]]);
-            pool.remove(idx);
-        }
-        return Ok(chosen);
+    let k = ((cfg.seed_factor * cfg.n_parts as f64).ceil() as usize).clamp(0, n);
+    if k == 0 {
+        return Ok(Vec::new());
     }
-    for _ in 0..num_seeds {
-        let total_weight = prefix[n - 1];
-        if total_weight == 0 {
-            break;
-        }
-        let t = rng.gen_range(0..total_weight);
-        let mut i = prefix.binary_search(&t).unwrap_or_else(|x| x);
-        // Find first nonzero weight ≥ t
-        while i < n && weights[i] == 0 {
-            i += 1;
-        }
-        if i == n {
-            break;
-        }
-        chosen.push(vertices[i]);
-        // Remove this vertex from future selection
-        let w = weights[i];
-        weights[i] = 0;
-        for j in i..n {
-            prefix[j] -= w;
-        }
+
+    let total_w: u128 = degrees.iter().map(|&w| w as u128).sum();
+    if total_w == 0 {
+        return Ok(pick_uniform_without_replacement(&vertices, k, &mut rng));
     }
+
+    let small_k = (k as f64) <= 0.12 * (n as f64);
+    let chosen = if small_k {
+        pick_seeds_bit(&vertices, degrees, k, &mut rng)
+    } else {
+        pick_seeds_aexpj(&vertices, degrees, k, &mut rng)
+    };
+
     Ok(chosen)
+}
+
+#[derive(Debug)]
+struct Fenwick {
+    tree: Vec<u128>,
+}
+
+impl Fenwick {
+    fn from_weights(ws: &[u64]) -> (Self, u128) {
+        let n = ws.len();
+        let mut t = vec![0u128; n + 1];
+        for (i, &w) in ws.iter().enumerate() {
+            let mut idx = (i + 1) as usize;
+            let add = w as u128;
+            while idx <= n {
+                t[idx] += add;
+                idx += idx & (!idx + 1); // idx += idx & -idx
+            }
+        }
+        let total = ws.iter().map(|&w| w as u128).sum();
+        (Self { tree: t }, total)
+    }
+
+    fn add(&mut self, i0: usize, delta: i128) {
+        let n = self.tree.len() - 1;
+        let mut idx = i0 + 1;
+        while idx <= n {
+            let cur = self.tree[idx] as i128;
+            self.tree[idx] = (cur + delta) as u128;
+            idx += idx & (!idx + 1);
+        }
+    }
+
+    fn find_by_prefix(&self, mut r: u128) -> usize {
+        let n = self.tree.len() - 1;
+        let mut step = 1usize;
+        while step << 1 <= n {
+            step <<= 1;
+        }
+        let mut idx = 0usize;
+        let mut k = step;
+        while k != 0 {
+            let next = idx + k;
+            if next <= n && self.tree[next] <= r {
+                r -= self.tree[next];
+                idx = next;
+            }
+            k >>= 1;
+        }
+        idx
+    }
+}
+
+fn pick_seeds_bit(vertices: &[usize], weights: &[u64], k: usize, rng: &mut SmallRng) -> Vec<usize> {
+    let n = vertices.len();
+    let mut ws = weights.to_vec();
+    let (mut bit, mut total) = Fenwick::from_weights(&ws);
+    let mut out = Vec::with_capacity(k.min(n));
+
+    for _ in 0..k.min(n) {
+        if total == 0 {
+            break;
+        }
+        let r = (rng.next_u64() as u128) % total;
+        let idx = bit.find_by_prefix(r);
+        out.push(vertices[idx]);
+
+        let w = ws[idx] as u128;
+        ws[idx] = 0;
+        total -= w;
+        bit.add(idx, -(w as i128));
+    }
+    out
+}
+
+fn pick_seeds_aexpj(
+    vertices: &[usize],
+    weights: &[u64],
+    k: usize,
+    rng: &mut SmallRng,
+) -> Vec<usize> {
+    use std::cmp::Ordering;
+
+    let n = vertices.len();
+    let k = k.min(n);
+    if k == 0 {
+        return Vec::new();
+    }
+
+    let mut keys: Vec<(f64, usize)> = Vec::with_capacity(n);
+    for (i, &w) in weights.iter().enumerate() {
+        if w == 0 {
+            continue;
+        }
+        let mut u: f64 = rand::Rng::r#gen(rng);
+        if u <= f64::MIN_POSITIVE {
+            u = f64::MIN_POSITIVE;
+        }
+        if u >= 1.0 {
+            u = 0.999_999_999_999_999_9;
+        }
+        let key = -u.ln() / (w as f64);
+        keys.push((key, i));
+    }
+    if keys.is_empty() {
+        return pick_uniform_without_replacement(vertices, k, rng);
+    }
+
+    let kth = k - 1;
+    keys.select_nth_unstable_by(kth, |a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
+
+    let mut chosen = keys[..=kth].to_vec();
+    chosen.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
+    chosen.truncate(k);
+    chosen.into_iter().map(|(_, i)| vertices[i]).collect()
+}
+
+fn pick_uniform_without_replacement(
+    vertices: &[usize],
+    k: usize,
+    rng: &mut SmallRng,
+) -> Vec<usize> {
+    let n = vertices.len();
+    let mut idxs: Vec<usize> = (0..n).collect();
+    idxs.shuffle(rng);
+    idxs.truncate(k.min(n));
+    idxs.into_iter().map(|i| vertices[i]).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::partitioning::graph_traits::PartitionableGraph;
+    use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
     struct PathGraph {
         n: usize,
@@ -126,50 +226,55 @@ mod tests {
     #[test]
     fn pick_seeds_length_mismatch() {
         let g = PathGraph { n: 3 };
-        let degrees = vec![1, 2]; // wrong length
+        let degrees = vec![1, 2];
         let cfg = PartitionerConfig::default();
         let err = pick_seeds(&g, &degrees, &cfg).unwrap_err();
         assert!(matches!(
             err,
-            crate::partitioning::PartitionerError::DegreeLengthMismatch { expected: 3, got: 2 }
+            PartitionerError::DegreeLengthMismatch {
+                expected: 3,
+                got: 2
+            }
         ));
     }
 
     #[test]
-    fn pick_seeds_path_highest_degree() {
-        let g = PathGraph { n: 5 };
-        let degrees: Vec<u64> = (0..5).map(|v| g.degree(v) as u64).collect();
-        let cfg = PartitionerConfig {
-            n_parts: 1,
-            seed_factor: 1.0,
-            ..Default::default()
-        };
-        let seeds = pick_seeds(&g, &degrees, &cfg).unwrap();
-        // For a path, the highest degree is in the middle. This is probabilistic,
-        // so just check that the seed count is correct and all are valid.
-        assert!(seeds.len() == 1 && seeds[0] < 5, "seeds = {:?}", seeds);
-    }
-
-    #[test]
-    fn pick_seeds_equal_degrees() {
-        let g = PathGraph { n: 4 };
-        let degrees = vec![1, 1, 1, 1];
+    fn determinism() {
+        let g = PathGraph { n: 10 };
+        let degrees = vec![1u64; 10];
         let cfg = PartitionerConfig {
             n_parts: 2,
             seed_factor: 1.0,
+            rng_seed: 7,
+            ..Default::default()
+        };
+        let s1 = pick_seeds(&g, &degrees, &cfg).unwrap();
+        let s2 = pick_seeds(&g, &degrees, &cfg).unwrap();
+        assert_eq!(s1, s2);
+    }
+
+    #[test]
+    fn zero_degrees_uniform() {
+        let g = PathGraph { n: 5 };
+        let degrees = vec![0u64; 5];
+        let cfg = PartitionerConfig {
+            n_parts: 2,
+            seed_factor: 1.0,
+            rng_seed: 3,
             ..Default::default()
         };
         let seeds = pick_seeds(&g, &degrees, &cfg).unwrap();
         assert_eq!(seeds.len(), 2);
-        for &s in &seeds {
-            assert!(s < 4);
-        }
+        let mut s = seeds.clone();
+        s.sort();
+        s.dedup();
+        assert_eq!(s.len(), seeds.len());
     }
 
     #[test]
-    fn pick_seeds_more_than_n() {
+    fn k_greater_than_n() {
         let g = PathGraph { n: 3 };
-        let degrees = vec![1, 1, 1];
+        let degrees = vec![1u64; 3];
         let cfg = PartitionerConfig {
             n_parts: 5,
             seed_factor: 1.0,
@@ -177,63 +282,5 @@ mod tests {
         };
         let seeds = pick_seeds(&g, &degrees, &cfg).unwrap();
         assert_eq!(seeds.len(), 3);
-    }
-}
-
-#[cfg(feature = "mpi-support")]
-mod onizuka_partitioning {
-    use super::*;
-    use crate::partitioning::graph_traits::PartitionableGraph;
-
-    struct CompleteGraph {
-        n: usize,
-    }
-    impl PartitionableGraph for CompleteGraph {
-        type VertexId = usize;
-        type VertexParIter<'a> = rayon::vec::IntoIter<usize>;
-        type NeighParIter<'a> = rayon::vec::IntoIter<usize>;
-        type NeighIter<'a> = std::vec::IntoIter<usize>;
-
-        fn vertices(&self) -> Self::VertexParIter<'_> {
-            (0..self.n).collect::<Vec<_>>().into_par_iter()
-        }
-        fn neighbors(&self, v: usize) -> Self::NeighParIter<'_> {
-            self.neighbors_seq(v).collect::<Vec<_>>().into_par_iter()
-        }
-        fn neighbors_seq(&self, v: usize) -> Self::NeighIter<'_> {
-            let mut neigh = (0..self.n).collect::<Vec<_>>();
-            neigh.remove(v);
-            neigh.into_iter()
-        }
-        fn degree(&self, _v: usize) -> usize {
-            self.n - 1
-        }
-        fn edges(&self) -> rayon::vec::IntoIter<(usize, usize)> {
-            let mut es = Vec::new();
-            for u in 0..self.n {
-                for v in (u + 1)..self.n {
-                    es.push((u, v));
-                }
-            }
-            es.into_par_iter()
-        }
-    }
-
-    #[test]
-    fn pick_seeds_complete_graph() {
-        let g = CompleteGraph { n: 4 };
-        let degrees: Vec<u64> = (0..4).map(|v| g.degree(v) as u64).collect();
-        let cfg = PartitionerConfig {
-            n_parts: 2,
-            seed_factor: 1.0,
-            ..Default::default()
-        };
-        let seeds = pick_seeds(&g, &degrees, &cfg).unwrap();
-        // In a complete graph, all vertices have the same degree. Seeds should be
-        // picked uniformly at random.
-        assert_eq!(seeds.len(), 2);
-        for &s in &seeds {
-            assert!(s < 4);
-        }
     }
 }

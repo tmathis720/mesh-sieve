@@ -1,9 +1,10 @@
 //! Cluster ID management for partitioning algorithms.
 //!
-//! This module provides [`ClusterIds`], a concurrent union-find structure for tracking cluster
-//! assignments of vertices, supporting efficient parallel operations and path compression.
+//! Provides [`ClusterIds`], a union–find (disjoint-set) structure used to track
+//! vertex clusters.  When the `mpi-support` feature is enabled the structure is
+//! lock‑free and safe for concurrent use via atomics.  Without the feature a
+//! lightweight serial implementation is provided.
 
-use std::sync::atomic::AtomicU32;
 use thiserror::Error;
 
 /// Errors returned by `ClusterIds` methods.
@@ -14,108 +15,252 @@ pub enum ClusterError {
     IndexOutOfBounds(usize, usize),
 }
 
-/// Stores cluster IDs for each vertex (1-to-1 with vertex index).
-///
-/// This structure is used for concurrent union-find operations in partitioning algorithms.
-/// Each vertex is associated with an atomic cluster ID, allowing for thread-safe updates.
+// ---------------------------------------------------------------------------
+// Concurrent version
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "mpi-support")]
+use std::sync::atomic::{
+    AtomicU32, AtomicU8,
+    Ordering::{AcqRel, Acquire, Release},
+};
+
 #[cfg(feature = "mpi-support")]
 pub struct ClusterIds {
-    /// Atomic cluster IDs for each vertex.
-    pub ids: Vec<AtomicU32>,
+    parent: Vec<AtomicU32>,
+    rank: Vec<AtomicU8>,
+    len: usize,
 }
 
 #[cfg(feature = "mpi-support")]
 impl ClusterIds {
-    /// Create a new `ClusterIds` structure for `size` vertices, all initialized to 0.
     pub fn new(size: usize) -> Self {
-        let ids = (0..size).map(|_| AtomicU32::new(0)).collect();
-        Self { ids }
+        assert!(size <= u32::MAX as usize, "ClusterIds: size exceeds u32");
+        let parent = (0..size).map(|i| AtomicU32::new(i as u32)).collect();
+        let rank = (0..size).map(|_| AtomicU8::new(0)).collect();
+        Self {
+            parent,
+            rank,
+            len: size,
+        }
     }
-    /// Get the cluster ID for the vertex at `idx`.
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    fn load_parent(&self, i: u32) -> u32 {
+        self.parent[i as usize].load(Acquire)
+    }
+
     pub fn get(&self, idx: usize) -> Result<u32, ClusterError> {
-        let len = self.ids.len();
-        self.ids
-            .get(idx)
-            .map(|a| a.load(std::sync::atomic::Ordering::Relaxed))
-            .ok_or(ClusterError::IndexOutOfBounds(idx, len))
+        if idx >= self.len {
+            return Err(ClusterError::IndexOutOfBounds(idx, self.len));
+        }
+        Ok(self.load_parent(idx as u32))
     }
-    /// Set the cluster ID for the vertex at `idx` to `val`.
+
     pub fn set(&self, idx: usize, val: u32) -> Result<(), ClusterError> {
-        let len = self.ids.len();
-        if let Some(a) = self.ids.get(idx) {
-            a.store(val, std::sync::atomic::Ordering::Relaxed);
-            Ok(())
-        } else {
-            Err(ClusterError::IndexOutOfBounds(idx, len))
+        if idx >= self.len {
+            return Err(ClusterError::IndexOutOfBounds(idx, self.len));
+        }
+        self.parent[idx].store(val, Release);
+        Ok(())
+    }
+
+    pub fn find(&self, i: usize) -> Result<u32, ClusterError> {
+        if i >= self.len {
+            return Err(ClusterError::IndexOutOfBounds(i, self.len));
+        }
+        let mut x = i as u32;
+        loop {
+            let p = self.load_parent(x);
+            let gp = self.load_parent(p);
+            if p == x {
+                return Ok(x);
+            }
+            let _ = self.parent[x as usize].compare_exchange(p, gp, AcqRel, Acquire);
+            x = p;
         }
     }
-    /// Find the root of the set for `idx`, with path compression.
-    ///
-    /// Returns the root cluster ID for the given vertex.
-    pub fn find(&self, idx: usize) -> Result<u32, ClusterError> {
-        let len = self.ids.len();
-        if idx >= len {
-            return Err(ClusterError::IndexOutOfBounds(idx, len));
-        }
-        let mut root = self.get(idx)?;
-        while (root as usize) < len && root != self.get(root as usize)? {
-            root = self.get(root as usize)?;
-        }
-        // Path compression
-        let mut cur = idx as u32;
-        while cur != root {
-            let parent = self.get(cur as usize)?;
-            self.set(cur as usize, root)?;
-            cur = parent;
-        }
-        Ok(root)
-    }
-    /// Union two sets, returns the new root.
-    ///
-    /// Merges the sets containing `a` and `b`, returning the new root cluster ID.
+
     pub fn union(&self, a: usize, b: usize) -> Result<u32, ClusterError> {
-        let ra = self.find(a)?;
-        let rb = self.find(b)?;
+        if a >= self.len || b >= self.len {
+            return Err(ClusterError::IndexOutOfBounds(a.max(b), self.len));
+        }
+        let mut ra = self.find(a)?;
+        loop {
+            let mut rb = self.find(b)?;
+            if ra == rb {
+                return Ok(ra);
+            }
+
+            let rank_a = self.rank[ra as usize].load(Acquire);
+            let rank_b = self.rank[rb as usize].load(Acquire);
+            let (child, parent) = match rank_a.cmp(&rank_b) {
+                std::cmp::Ordering::Less => (ra, rb),
+                std::cmp::Ordering::Greater => (rb, ra),
+                std::cmp::Ordering::Equal => {
+                    if rb > ra {
+                        (rb, ra)
+                    } else {
+                        (ra, rb)
+                    }
+                }
+            };
+
+            let node = &self.parent[child as usize];
+            match node.compare_exchange(child, parent, AcqRel, Acquire) {
+                Ok(_) => {
+                    if rank_a == rank_b {
+                        self.rank[parent as usize].fetch_add(1, AcqRel);
+                    }
+                    return Ok(parent);
+                }
+                Err(cur) => {
+                    if cur != child {
+                        ra = self.find(a)?;
+                        continue;
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn compress_all(&self) -> Result<(), ClusterError> {
+        for i in 0..self.len {
+            let root = self.find(i)?;
+            self.parent[i].store(root, Release);
+        }
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Serial fallback
+// ---------------------------------------------------------------------------
+
+#[cfg(not(feature = "mpi-support"))]
+use std::cell::Cell;
+
+#[cfg(not(feature = "mpi-support"))]
+pub struct ClusterIds {
+    parent: Vec<Cell<u32>>,
+    rank: Vec<Cell<u8>>,
+    len: usize,
+}
+
+#[cfg(not(feature = "mpi-support"))]
+impl ClusterIds {
+    pub fn new(size: usize) -> Self {
+        assert!(size <= u32::MAX as usize, "ClusterIds: size exceeds u32");
+        let parent = (0..size).map(|i| Cell::new(i as u32)).collect();
+        let rank = (0..size).map(|_| Cell::new(0u8)).collect();
+        Self {
+            parent,
+            rank,
+            len: size,
+        }
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn get(&self, idx: usize) -> Result<u32, ClusterError> {
+        if idx >= self.len {
+            return Err(ClusterError::IndexOutOfBounds(idx, self.len));
+        }
+        Ok(self.parent[idx].get())
+    }
+
+    pub fn set(&self, idx: usize, val: u32) -> Result<(), ClusterError> {
+        if idx >= self.len {
+            return Err(ClusterError::IndexOutOfBounds(idx, self.len));
+        }
+        self.parent[idx].set(val);
+        Ok(())
+    }
+
+    pub fn find(&self, i: usize) -> Result<u32, ClusterError> {
+        if i >= self.len {
+            return Err(ClusterError::IndexOutOfBounds(i, self.len));
+        }
+        let mut x = i as u32;
+        loop {
+            let p = self.parent[x as usize].get();
+            let gp = self.parent[p as usize].get();
+            if p == x {
+                return Ok(x);
+            }
+            self.parent[x as usize].set(gp);
+            x = p;
+        }
+    }
+
+    pub fn union(&self, a: usize, b: usize) -> Result<u32, ClusterError> {
+        if a >= self.len || b >= self.len {
+            return Err(ClusterError::IndexOutOfBounds(a.max(b), self.len));
+        }
+        let mut ra = self.find(a)?;
+        let mut rb = self.find(b)?;
         if ra == rb {
             return Ok(ra);
         }
-        let (small, big) = if ra < rb { (ra, rb) } else { (rb, ra) };
-        self.set(small as usize, big)?;
-        Ok(big)
-    }
-    /// Compress all paths so every node points directly to its root.
-    ///
-    /// Returns the number of successful compressions, or the first error encountered.
-    pub fn compress_all(&self) -> Result<usize, ClusterError> {
-        let mut count = 0;
-        for u in 0..self.ids.len() {
-            self.find(u)?;
-            count += 1;
+
+        let rank_a = self.rank[ra as usize].get();
+        let rank_b = self.rank[rb as usize].get();
+        let (child, parent) = match rank_a.cmp(&rank_b) {
+            std::cmp::Ordering::Less => (ra, rb),
+            std::cmp::Ordering::Greater => (rb, ra),
+            std::cmp::Ordering::Equal => {
+                if rb > ra {
+                    (rb, ra)
+                } else {
+                    (ra, rb)
+                }
+            }
+        };
+        self.parent[child as usize].set(parent);
+        if rank_a == rank_b {
+            let r = self.rank[parent as usize].get();
+            self.rank[parent as usize].set(r + 1);
         }
-        Ok(count)
+        Ok(parent)
+    }
+
+    pub fn compress_all(&self) -> Result<(), ClusterError> {
+        for i in 0..self.len {
+            let root = self.find(i)?;
+            self.parent[i].set(root);
+        }
+        Ok(())
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn union_find_basic() -> Result<(), ClusterError> {
         let uf = ClusterIds::new(5);
-        // Initially, each is its own root
         for i in 0..5 {
             assert_eq!(uf.find(i)?, i as u32);
         }
-        // Union 1 and 2
         let r = uf.union(1, 2)?;
         assert_eq!(uf.find(1)?, r);
         assert_eq!(uf.find(2)?, r);
-        // Union 2 and 3
         let r2 = uf.union(2, 3)?;
         assert_eq!(uf.find(3)?, r2);
         assert_eq!(uf.find(1)?, r2);
-        // Compress all
-        let _ = uf.compress_all()?;
+        uf.compress_all()?;
         let root = uf.find(1)?;
         for i in 1..=3 {
             assert_eq!(uf.get(i)?, root);
@@ -126,14 +271,21 @@ mod tests {
     #[test]
     fn out_of_bounds_errors() {
         let uf = ClusterIds::new(3);
-        assert!(matches!(uf.get(10), Err(ClusterError::IndexOutOfBounds(10, 3))));
-        assert!(matches!(uf.set(10, 0), Err(ClusterError::IndexOutOfBounds(10, 3))));
-        assert!(matches!(uf.find(10), Err(ClusterError::IndexOutOfBounds(10, 3))));
-        assert!(matches!(uf.union(10, 1), Err(ClusterError::IndexOutOfBounds(10, 3))));
+        assert!(matches!(
+            uf.get(10),
+            Err(ClusterError::IndexOutOfBounds(10, 3))
+        ));
+        assert!(matches!(
+            uf.set(10, 0),
+            Err(ClusterError::IndexOutOfBounds(10, 3))
+        ));
+        assert!(matches!(
+            uf.find(10),
+            Err(ClusterError::IndexOutOfBounds(10, 3))
+        ));
+        assert!(matches!(
+            uf.union(10, 1),
+            Err(ClusterError::IndexOutOfBounds(10, 3))
+        ));
     }
-}
-
-#[cfg(feature = "mpi-support")]
-impl ClusterIds {
-    /// Additional methods or overrides for onizuka partitioning can be added here.
 }
