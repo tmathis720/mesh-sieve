@@ -35,7 +35,7 @@ impl<V: Eq + Hash + Copy> PartitionMap<V> {
 pub fn edge_cut<G>(g: &G, pm: &PartitionMap<G::VertexId>) -> usize
 where
     G: PartitionableGraph,
-    G::VertexId: Eq + Hash + Copy,
+    G::VertexId: Eq + Hash + Copy, <G as graph_traits::PartitionableGraph>::VertexId: 'static,
 {
     g.edges()
         .filter(|&(u, v)| pm.part_of(u) != pm.part_of(v))

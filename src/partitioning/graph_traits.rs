@@ -54,7 +54,7 @@ pub trait PartitionableGraph: Sync {
     /// - Thread-safe and read-only.
     fn edges(&self) -> Self::EdgeParIter<'_>
     where
-        Self: Sized,
+        Self::VertexId: 'static, Self: Sized,
     {
         self.vertices().flat_map_iter(move |u| {
             self.neighbors_seq(u)
@@ -71,7 +71,7 @@ pub trait PartitionableGraph: Sync {
     /// Deterministic O(E) helper: count of undirected edges.
     fn edge_count(&self) -> usize
     where
-        Self::VertexId: 'static,
+        Self::VertexId: 'static, Self: Sized,
     {
         self.edges().count()
     }
@@ -79,7 +79,7 @@ pub trait PartitionableGraph: Sync {
 
 /// Debug-time verification that `edges()` upholds its contract.
 #[cfg(any(debug_assertions, feature = "check-graph-edges"))]
-pub fn assert_edges_well_formed<G: PartitionableGraph>(g: &G) {
+pub fn assert_edges_well_formed<G: PartitionableGraph>(g: &G) where <G as partitioning::graph_traits::PartitionableGraph>::VertexId: std::fmt::Debug {
     use std::collections::HashSet;
     let mut seen = HashSet::new();
     g.edges().for_each(|(u, v)| {
