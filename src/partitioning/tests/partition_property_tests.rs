@@ -18,11 +18,16 @@ fn e2e_cycle_4_nodes_k2() {
         type VertexId = usize;
         type VertexParIter<'a> = rayon::vec::IntoIter<usize> where Self: 'a;
         type NeighParIter<'a>   = rayon::vec::IntoIter<usize> where Self: 'a;
+        type NeighIter<'a>      = std::vec::IntoIter<usize> where Self: 'a;
+        type EdgeParIter<'a>    = rayon::vec::IntoIter<(usize, usize)> where Self: 'a;
 
         fn vertices(&self) -> Self::VertexParIter<'_> {
             (0..4).collect::<Vec<_>>().into_par_iter()
         }
         fn neighbors(&self, v: usize) -> Self::NeighParIter<'_> {
+            self.neighbors_seq(v).collect::<Vec<_>>().into_par_iter()
+        }
+        fn neighbors_seq(&self, v: usize) -> Self::NeighIter<'_> {
             let nbrs = match v {
                 0 => vec![1,3],
                 1 => vec![0,2],
@@ -30,10 +35,13 @@ fn e2e_cycle_4_nodes_k2() {
                 3 => vec![2,0],
                 _ => vec![],
             };
-            nbrs.into_par_iter()
+            nbrs.into_iter()
         }
         fn degree(&self, v: usize) -> usize {
-            self.neighbors(v).count()
+            self.neighbors_seq(v).count()
+        }
+        fn edges(&self) -> Self::EdgeParIter<'_> {
+            vec![(0,1),(1,2),(2,3),(0,3)].into_par_iter()
         }
     }
 
@@ -107,17 +115,25 @@ proptest! {
             type VertexId = usize;
             type VertexParIter<'a> = rayon::vec::IntoIter<usize> where Self: 'a;
             type NeighParIter<'a>   = rayon::vec::IntoIter<usize> where Self: 'a;
+            type NeighIter<'a>      = std::vec::IntoIter<usize> where Self: 'a;
+            type EdgeParIter<'a>    = rayon::vec::IntoIter<(usize, usize)> where Self: 'a;
             fn vertices(&self)->Self::VertexParIter<'_> {
                 (0..self.n).collect::<Vec<_>>().into_par_iter()
             }
             fn neighbors(&self, u: usize)->Self::NeighParIter<'_> {
+                self.neighbors_seq(u).collect::<Vec<_>>().into_par_iter()
+            }
+            fn neighbors_seq(&self, u: usize)->Self::NeighIter<'_> {
                 let nbrs: Vec<_> = self.edges.iter()
                     .filter_map(|&(a,b)| if a==u {Some(b)} else if b==u {Some(a)} else {None})
                     .collect();
-                nbrs.into_par_iter()
+                nbrs.into_iter()
             }
             fn degree(&self, u: usize) -> usize {
-                self.neighbors(u).count()
+                self.neighbors_seq(u).count()
+            }
+            fn edges(&self) -> Self::EdgeParIter<'_> {
+                self.edges.clone().into_par_iter()
             }
         }
         let g = RandGraph { edges: edges.clone(), n };

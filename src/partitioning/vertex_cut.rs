@@ -175,18 +175,26 @@ mod tests {
         type VertexId = usize;
         type VertexParIter<'a> = rayon::vec::IntoIter<usize> where Self: 'a;
         type NeighParIter<'a> = rayon::vec::IntoIter<usize> where Self: 'a;
+        type NeighIter<'a> = std::vec::IntoIter<usize> where Self: 'a;
+        type EdgeParIter<'a> = rayon::vec::IntoIter<(usize, usize)> where Self: 'a;
 
         fn vertices(&self) -> Self::VertexParIter<'_> {
             (0..self.n).collect::<Vec<_>>().into_par_iter()
         }
         fn neighbors(&self, v: usize) -> Self::NeighParIter<'_> {
+            self.neighbors_seq(v).collect::<Vec<_>>().into_par_iter()
+        }
+        fn neighbors_seq(&self, v: usize) -> Self::NeighIter<'_> {
             let ns = self.edges.iter()
                 .filter_map(|&(a,b)| if a==v { Some(b) } else if b==v { Some(a) } else { None })
                 .collect::<Vec<_>>();
-            ns.into_par_iter()
+            ns.into_iter()
         }
         fn degree(&self, v: usize) -> usize {
-            self.neighbors(v).count()
+            self.neighbors_seq(v).count()
+        }
+        fn edges(&self) -> Self::EdgeParIter<'_> {
+            self.edges.clone().into_par_iter()
         }
     }
 

@@ -35,32 +35,11 @@ impl<V: Eq + Hash + Copy> PartitionMap<V> {
 pub fn edge_cut<G>(g: &G, pm: &PartitionMap<G::VertexId>) -> usize
 where
     G: PartitionableGraph,
-    G::VertexId: PartialOrd + Eq + Hash + Copy,
+    G::VertexId: Eq + Hash + Copy,
 {
-    // We iterate over all (u,v) with u < v and count how many cross‐parts.
-    // Then divide by 1 if vertices() yields each undirected edge exactly once.
-    // If neighbors() is symmetric (u->v and v->u), we must divide by 2 at the end.
-
-    // Build a Vec of all undirected edges (u < v) in parallel:
-    let cut_count: usize = g
-        .vertices()
-        .flat_map(|u| {
-            // NeighParIter is a ParallelIterator, not Iterator, so use .filter_map directly
-            g.neighbors(u).filter_map(move |v| {
-                if u < v {
-                    if pm.part_of(u) != pm.part_of(v) {
-                        Some(1)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            })
-        })
-        .sum();
-
-    cut_count
+    g.edges()
+        .filter(|&(u, v)| pm.part_of(u) != pm.part_of(v))
+        .count()
 }
 
 /// Computes the replication factor of a partitioning (O(E)).
@@ -133,11 +112,18 @@ mod tests {
         type VertexId = usize;
         type VertexParIter<'a> = rayon::vec::IntoIter<usize>;
         type NeighParIter<'a> = rayon::vec::IntoIter<usize>;
+        type NeighIter<'a> = std::vec::IntoIter<usize>;
+        type EdgeParIter<'a> = rayon::vec::IntoIter<(usize, usize)>;
+
         fn vertices(&self) -> Self::VertexParIter<'_> {
             (0..self.n).collect::<Vec<_>>().into_par_iter()
         }
         fn neighbors(&self, v: usize) -> Self::NeighParIter<'_> {
-            self.edges
+            self.neighbors_seq(v).collect::<Vec<_>>().into_par_iter()
+        }
+        fn neighbors_seq(&self, v: usize) -> Self::NeighIter<'_> {
+            let ns: Vec<_> = self
+                .edges
                 .iter()
                 .filter_map(|&(a, b)| {
                     if a == v {
@@ -148,11 +134,14 @@ mod tests {
                         None
                     }
                 })
-                .collect::<Vec<_>>()
-                .into_par_iter()
+                .collect();
+            ns.into_iter()
         }
         fn degree(&self, v: usize) -> usize {
-            self.neighbors(v).count()
+            self.neighbors_seq(v).count()
+        }
+        fn edges(&self) -> Self::EdgeParIter<'_> {
+            self.edges.clone().into_par_iter()
         }
     }
 

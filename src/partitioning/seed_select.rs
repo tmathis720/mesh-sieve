@@ -94,10 +94,16 @@ mod tests {
         type VertexId = usize;
         type VertexParIter<'a> = rayon::vec::IntoIter<usize>;
         type NeighParIter<'a> = rayon::vec::IntoIter<usize>;
+        type NeighIter<'a> = std::vec::IntoIter<usize>;
+        type EdgeParIter<'a> = rayon::vec::IntoIter<(usize, usize)>;
+
         fn vertices(&self) -> Self::VertexParIter<'_> {
             (0..self.n).collect::<Vec<_>>().into_par_iter()
         }
         fn neighbors(&self, v: usize) -> Self::NeighParIter<'_> {
+            self.neighbors_seq(v).collect::<Vec<_>>().into_par_iter()
+        }
+        fn neighbors_seq(&self, v: usize) -> Self::NeighIter<'_> {
             let mut neigh = Vec::new();
             if v > 0 {
                 neigh.push(v - 1);
@@ -105,10 +111,16 @@ mod tests {
             if v + 1 < self.n {
                 neigh.push(v + 1);
             }
-            neigh.into_par_iter()
+            neigh.into_iter()
         }
         fn degree(&self, v: usize) -> usize {
-            self.neighbors(v).count()
+            self.neighbors_seq(v).count()
+        }
+        fn edges(&self) -> Self::EdgeParIter<'_> {
+            (0..self.n.saturating_sub(1))
+                .map(|i| (i, i + 1))
+                .collect::<Vec<_>>()
+                .into_par_iter()
         }
     }
 
@@ -181,16 +193,31 @@ mod onizuka_partitioning {
         type VertexId = usize;
         type VertexParIter<'a> = rayon::vec::IntoIter<usize>;
         type NeighParIter<'a> = rayon::vec::IntoIter<usize>;
+        type NeighIter<'a> = std::vec::IntoIter<usize>;
+        type EdgeParIter<'a> = rayon::vec::IntoIter<(usize, usize)>;
+
         fn vertices(&self) -> Self::VertexParIter<'_> {
             (0..self.n).collect::<Vec<_>>().into_par_iter()
         }
         fn neighbors(&self, v: usize) -> Self::NeighParIter<'_> {
+            self.neighbors_seq(v).collect::<Vec<_>>().into_par_iter()
+        }
+        fn neighbors_seq(&self, v: usize) -> Self::NeighIter<'_> {
             let mut neigh = (0..self.n).collect::<Vec<_>>();
             neigh.remove(v);
-            neigh.into_par_iter()
+            neigh.into_iter()
         }
         fn degree(&self, _v: usize) -> usize {
             self.n - 1
+        }
+        fn edges(&self) -> Self::EdgeParIter<'_> {
+            let mut es = Vec::new();
+            for u in 0..self.n {
+                for v in (u + 1)..self.n {
+                    es.push((u, v));
+                }
+            }
+            es.into_par_iter()
         }
     }
 
