@@ -5,3 +5,4 @@
 
 pub mod delta;
 pub mod overlap;
+pub mod perf;

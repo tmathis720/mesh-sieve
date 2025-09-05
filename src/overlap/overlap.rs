@@ -54,6 +54,7 @@
 //!   `Part(r)` vertices in the graph.
 
 use crate::mesh_error::MeshSieveError;
+use crate::overlap::perf::{FastMap, FastSet};
 use crate::topology::cache::InvalidateCache;
 use crate::topology::point::PointId;
 use crate::topology::sieve::{InMemorySieve, Sieve};
@@ -155,7 +156,7 @@ impl Overlap {
     }
 
     #[inline]
-    fn has_link_structural(&self, p: PointId, r: usize) -> bool {
+    fn has_structural_link(&self, p: PointId, r: usize) -> bool {
         let src = local(p);
         let dst = part(r);
         self.inner
@@ -164,13 +165,33 @@ impl Overlap {
             .map_or(false, |v| v.iter().any(|(q, _)| *q == dst))
     }
 
+    #[inline]
+    fn existing_pairs(&self) -> impl Iterator<Item = (PointId, usize)> + '_ {
+        self.inner
+            .adjacency_out
+            .iter()
+            .filter_map(|(src, outs)| match *src {
+                OvlId::Local(p) => Some((p, outs)),
+                _ => None,
+            })
+            .flat_map(|(p, outs)| {
+                outs.iter().filter_map(move |(dst, rem)| match dst {
+                    OvlId::Part(r) => {
+                        debug_assert_eq!(rem.rank, *r);
+                        Some((p, *r))
+                    }
+                    _ => None,
+                })
+            })
+    }
+
     /// Adds `Local(p) -> Part(r)` structurally (`remote_point = None`).
     ///
     /// Returns `true` if the edge was inserted, or `false` if it already
     /// existed.
     #[inline]
     pub fn add_link_structural_one(&mut self, p: PointId, r: usize) -> bool {
-        if self.has_link_structural(p, r) {
+        if self.has_structural_link(p, r) {
             return false;
         }
 
@@ -203,28 +224,32 @@ impl Overlap {
     where
         I: IntoIterator<Item = (PointId, usize)>,
     {
-        use std::collections::HashMap;
-
         let mut to_add: Vec<(OvlId, OvlId)> = Vec::new();
-        let mut need_cone: HashMap<OvlId, usize> = HashMap::new();
-        let mut need_support: HashMap<OvlId, usize> = HashMap::new();
+        let mut need_cone: FastMap<OvlId, usize> = FastMap::default();
+        let mut need_support: FastMap<OvlId, usize> = FastMap::default();
+        let mut seen_batch: FastSet<(OvlId, OvlId)> = FastSet::default();
 
         for (p, r) in edges {
             let src = local(p);
             let dst = part(r);
-            // Skip if already present or duplicated within this batch
-            if self
+            let key = (src, dst);
+
+            if !seen_batch.insert(key) {
+                continue;
+            }
+
+            let exists = self
                 .inner
                 .adjacency_out
                 .get(&src)
-                .map_or(false, |v| v.iter().any(|(q, _)| *q == dst))
-                || to_add.iter().any(|&(s, d)| s == src && d == dst)
-            {
+                .map_or(false, |outs| outs.iter().any(|(q, _)| *q == dst));
+            if exists {
                 continue;
             }
+
             *need_cone.entry(src).or_insert(0) += 1;
             *need_support.entry(dst).or_insert(0) += 1;
-            to_add.push((src, dst));
+            to_add.push(key);
         }
 
         if to_add.is_empty() {
@@ -609,37 +634,22 @@ pub fn expand_one_layer_mesh<M: Sieve<Point = PointId>>(
 /// also link every `q` in `mesh.closure({p})` to `Part(r)`. New links are
 /// structural only (`remote_point = None`).
 pub fn ensure_closure_of_support<M: Sieve<Point = PointId>>(ov: &mut Overlap, mesh: &M) {
-    use std::collections::HashSet;
+    let mut already: FastSet<(PointId, usize)> = FastSet::default();
+    for (p, r) in ov.existing_pairs() {
+        already.insert((p, r));
+    }
 
-    // Gather seed pairs from existing edges
-    let seeds: Vec<(PointId, usize)> = ov
-        .base_points()
-        .filter_map(|id| match id {
-            OvlId::Local(p) => Some(p),
-            _ => None,
-        })
-        .flat_map(|p| {
-            ov.cone(local(p)).filter_map(move |(dst, rem)| match dst {
-                OvlId::Part(r) => Some((p, r, rem.rank)),
-                _ => None,
-            })
-        })
-        .map(|(p, r, rr)| {
-            debug_assert_eq!(r, rr);
-            (p, r)
-        })
-        .collect();
-
-    let mut seen: HashSet<(PointId, usize)> = seeds.iter().copied().collect();
-    let mut to_add: Vec<(PointId, usize)> = Vec::new();
-    for (p, r) in seeds {
-        for q in mesh.closure(std::iter::once(p)) {
-            if seen.insert((q, r)) {
-                to_add.push((q, r));
+    let mut new_edges: FastSet<(PointId, usize)> = FastSet::default();
+    for (p, r) in already.iter().copied() {
+        for q in mesh.closure_iter(std::iter::once(p)) {
+            if already.contains(&(q, r)) {
+                continue;
             }
+            new_edges.insert((q, r));
         }
     }
-    ov.add_links_structural_bulk(to_add);
+
+    ov.add_links_structural_bulk(new_edges);
     ov.debug_validate();
 }
 
@@ -654,35 +664,21 @@ pub fn ensure_closure_of_support_from_seeds<M: Sieve<Point = PointId>, I>(
 ) where
     I: IntoIterator<Item = (PointId, usize)>,
 {
-    use std::collections::HashSet;
+    let mut already: FastSet<(PointId, usize)> = FastSet::default();
+    for (p, r) in ov.existing_pairs() {
+        already.insert((p, r));
+    }
 
-    // Build seen from current state
-    let mut seen: HashSet<(PointId, usize)> = ov
-        .base_points()
-        .filter_map(|id| match id {
-            OvlId::Local(p) => Some(p),
-            _ => None,
-        })
-        .flat_map(|p| {
-            ov.cone(local(p)).filter_map(move |(dst, rem)| match dst {
-                OvlId::Part(r) => {
-                    debug_assert_eq!(rem.rank, r);
-                    Some((p, r))
-                }
-                _ => None,
-            })
-        })
-        .collect();
-
-    let mut to_add: Vec<(PointId, usize)> = Vec::new();
+    let mut new_edges: FastSet<(PointId, usize)> = FastSet::default();
     for (p, r) in seeds {
-        for q in mesh.closure(std::iter::once(p)) {
-            if seen.insert((q, r)) {
-                to_add.push((q, r));
+        for q in mesh.closure_iter(std::iter::once(p)) {
+            if already.insert((q, r)) {
+                new_edges.insert((q, r));
             }
         }
     }
-    ov.add_links_structural_bulk(to_add);
+
+    ov.add_links_structural_bulk(new_edges);
     ov.debug_validate();
 }
 

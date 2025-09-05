@@ -53,6 +53,8 @@ sieve_ref_fast_dag = []
 strict-invariants = []
 check-invariants = []
 check-empty-part = []
+fast-hash = ["ahash"]
+deterministic-order = []
 
 
 [build-dependencies]
