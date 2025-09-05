@@ -70,14 +70,28 @@ jobs:
   docs:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - name: Setup Rust
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
-        override: true
-    - name: Build docs
-      run: cargo doc --no-deps
+      - uses: actions/checkout@v4
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+      - name: Build docs
+        run: cargo doc --no-deps
+
+  check-invariants:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+      - name: Build with invariant checks
+        run: cargo build --release --verbose --features "check-invariants"
+      - name: Run tests with invariant checks
+        run: cargo test --release --verbose --features "check-invariants"
 
   # Separate job for benchmarks and integration tests
   benchmarks:

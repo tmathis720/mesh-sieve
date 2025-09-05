@@ -4,9 +4,20 @@
 //! `Local(PointId)` (mesh entities on this rank) and `Part(usize)` (partition nodes).
 //!
 //! **Invariants:**
-//! - Edges are **only** `Local(_) -> Part(r)`.
-//! - No `Local->Local` and no `Part->*` edges.
-//! - For any edge `Local(p) -> Part(r)` with payload [`Remote`], `Remote.rank == r`.
+//! 1. Bipartite direction: every edge is `Local(_) -> Part(r)`.
+//!    No `Local->Local` and no `Part->*` edges.
+//! 2. Rank consistency: for any edge `Local(p) -> Part(r)` with payload [`Remote`],
+//!    `Remote.rank == r`.
+//! 3. Point-set partitioning:
+//!    - All `base_points()` are `Local(_)`.
+//!    - All `cap_points()` are `Part(_)`.
+//! 4. No duplicate edges: per `(src, dst)` there is at most one edge.
+//! 5. *(feature `check-empty-part`)* No dangling `Part` nodes: every `Part(r)`
+//!    must have at least one incoming edge.
+//!
+//! The invariants checker runs in debug builds or when the feature
+//! `check-invariants` is enabled. It performs an `O(V + E)` walk over the graph
+//! without cloning payloads.
 //!
 //! The [`Overlap`] newtype wraps an [`InMemorySieve`] and enforces these
 //! invariants for all mutation routes (`add_arrow`, `set_cone`, etc.).
@@ -140,6 +151,7 @@ impl Overlap {
                 remote_point: Some(remote),
             },
         );
+        self.debug_validate();
     }
 
     #[inline]
@@ -178,6 +190,7 @@ impl Overlap {
                 remote_point: None,
             },
         );
+        self.debug_validate();
         true
     }
 
@@ -241,6 +254,7 @@ impl Overlap {
         }
 
         self.invalidate_cache();
+        self.debug_validate();
 
         to_add.len()
     }
@@ -276,9 +290,13 @@ impl Overlap {
                             }
                         }
                         self.invalidate_cache();
+                        self.debug_validate();
                         return Ok(());
                     }
-                    Some(existing) if existing == remote => return Ok(()),
+                    Some(existing) if existing == remote => {
+                        self.debug_validate();
+                        return Ok(());
+                    }
                     Some(existing) => {
                         return Err(OverlapResolutionConflict {
                             local: local_pt,
@@ -301,47 +319,78 @@ impl Overlap {
         for (p, r, rp) in triples {
             self.resolve_remote_point(p, r, rp)?;
         }
+        self.debug_validate();
         Ok(())
     }
 
     /// Debug/feature-gated invariant checker.
     pub fn validate_invariants(&self) -> Result<(), MeshSieveError> {
+        use std::collections::HashSet;
         use MeshSieveError as E;
-        for src in self.inner.base_points() {
-            if !matches!(src, OvlId::Local(_)) {
-                return Err(E::MeshError(Box::new(E::UnsupportedStackOperation(
-                    "Overlap invariant: base_points must be Local(_)",
-                ))));
+
+        for src in self.inner.adjacency_out.keys() {
+            if let OvlId::Part(_) = src {
+                return Err(E::OverlapPartInBasePoints);
             }
-            for (dst, rem) in self.inner.cone(src) {
+        }
+        for dst in self.inner.adjacency_in.keys() {
+            if let OvlId::Local(_) = dst {
+                return Err(E::OverlapLocalInCapPoints);
+            }
+        }
+
+        for (src, outs) in &self.inner.adjacency_out {
+            let mut seen_dst: HashSet<OvlId> = HashSet::with_capacity(outs.len());
+            for (dst, rem) in outs {
                 match (src, dst) {
                     (OvlId::Local(_), OvlId::Part(r)) => {
-                        if rem.rank != r {
-                            return Err(MeshSieveError::OverlapRankMismatch {
-                                expected: r,
+                        if rem.rank != *r {
+                            return Err(E::OverlapRankMismatch {
+                                expected: *r,
                                 found: rem.rank,
                             });
                         }
-                        if let Some(rp) = rem.remote_point {
-                            let _ = rp; // hook for external validators
-                        }
                     }
                     _ => {
-                        return Err(E::MeshError(Box::new(E::UnsupportedStackOperation(
-                            "Overlap invariant: only Local->Part edges allowed",
-                        ))));
+                        return Err(E::OverlapNonBipartite {
+                            src: *src,
+                            dst: *dst,
+                        });
                     }
+                }
+                if !seen_dst.insert(*dst) {
+                    return Err(E::OverlapDuplicateEdge {
+                        src: *src,
+                        dst: *dst,
+                    });
                 }
             }
         }
-        for q in self.inner.cap_points() {
-            if !matches!(q, OvlId::Part(_)) {
-                return Err(E::MeshError(Box::new(E::UnsupportedStackOperation(
-                    "Overlap invariant: cap_points must be Part(_)",
-                ))));
+
+        #[cfg(feature = "check-empty-part")]
+        for dst in self.inner.adjacency_in.keys() {
+            if let OvlId::Part(r) = dst {
+                if self
+                    .inner
+                    .adjacency_in
+                    .get(dst)
+                    .map_or(true, |v| v.is_empty())
+                {
+                    return Err(E::OverlapEmptyPart { rank: *r });
+                }
             }
         }
+
         Ok(())
+    }
+
+    /// Panics on invariant violations in debug or when feature `check-invariants` is enabled.
+    #[inline]
+    pub fn debug_validate(&self) {
+        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        if let Err(e) = self.validate_invariants() {
+            panic!("Overlap invariant violated: {e}");
+        }
     }
 
     /// Iterator of distinct neighbor ranks present as partition nodes.
@@ -503,6 +552,17 @@ impl Sieve for Overlap {
     // default impls of set_cone/add_support/etc. will call our add_arrow
 }
 
+#[macro_export]
+macro_rules! ovl_debug_validate {
+    ($ovl:expr) => {
+        if cfg!(any(debug_assertions, feature = "check-invariants")) {
+            if let Err(e) = ($ovl).validate_invariants() {
+                panic!("Overlap invariant violated: {e}");
+            }
+        }
+    };
+}
+
 /// One-hop upward support of `seeds`, deduped and returned in deterministic order.
 fn support1<M: Sieve<Point = PointId>>(
     mesh: &M,
@@ -540,7 +600,9 @@ pub fn expand_one_layer_mesh<M: Sieve<Point = PointId>>(
         }
     }
 
-    ov.add_links_structural_bulk(to_add.into_iter().map(|q| (q, neighbor)))
+    let added = ov.add_links_structural_bulk(to_add.into_iter().map(|q| (q, neighbor)));
+    ov.debug_validate();
+    added
 }
 
 /// Ensure closure-of-support: for any `Local(p) -> Part(r)` edge already present,
@@ -578,6 +640,7 @@ pub fn ensure_closure_of_support<M: Sieve<Point = PointId>>(ov: &mut Overlap, me
         }
     }
     ov.add_links_structural_bulk(to_add);
+    ov.debug_validate();
 }
 
 /// Incremental variant: expand closure only from explicit `(point, rank)` seeds.
@@ -620,6 +683,7 @@ pub fn ensure_closure_of_support_from_seeds<M: Sieve<Point = PointId>, I>(
         }
     }
     ov.add_links_structural_bulk(to_add);
+    ov.debug_validate();
 }
 
 #[cfg(test)]
@@ -627,6 +691,19 @@ mod tests {
     use super::*;
     use crate::mesh_error::MeshSieveError;
     use crate::topology::sieve::InMemorySieve as Mesh;
+
+    fn insert_raw_edge(ov: &mut Overlap, src: OvlId, dst: OvlId, rem: Remote) {
+        ov.inner
+            .adjacency_out
+            .entry(src)
+            .or_default()
+            .push((dst, rem));
+        ov.inner
+            .adjacency_in
+            .entry(dst)
+            .or_default()
+            .push((src, rem));
+    }
 
     #[test]
     fn invariants_hold_for_basic_links() {
@@ -895,17 +972,80 @@ mod tests {
     }
 
     #[test]
-    fn invariant_guard_rejects_illegal_edge() {
+    fn invariant_bipartite_violation() {
         let mut ov = Overlap::new();
-        // Force an illegal Part->Local edge
-        ov.inner.add_arrow(
-            part(1),
-            local(PointId::new(1).unwrap()),
+        let src = local(PointId::new(1).unwrap());
+        let dst = local(PointId::new(2).unwrap());
+        ov.inner.adjacency_out.entry(src).or_default().push((
+            dst,
             Remote {
-                rank: 1,
+                rank: 0,
+                remote_point: None,
+            },
+        ));
+        let err = ov.validate_invariants().unwrap_err();
+        assert_eq!(err, MeshSieveError::OverlapNonBipartite { src, dst });
+    }
+
+    #[test]
+    fn invariant_rank_mismatch() {
+        let mut ov = Overlap::new();
+        insert_raw_edge(
+            &mut ov,
+            local(PointId::new(1).unwrap()),
+            part(5),
+            Remote {
+                rank: 4,
                 remote_point: None,
             },
         );
-        assert!(ov.validate_invariants().is_err());
+        let err = ov.validate_invariants().unwrap_err();
+        assert_eq!(
+            err,
+            MeshSieveError::OverlapRankMismatch {
+                expected: 5,
+                found: 4,
+            }
+        );
+    }
+
+    #[test]
+    fn invariant_duplicate_edge() {
+        let mut ov = Overlap::new();
+        let src = local(PointId::new(1).unwrap());
+        let dst = part(3);
+        let rem = Remote {
+            rank: 3,
+            remote_point: None,
+        };
+        insert_raw_edge(&mut ov, src, dst, rem);
+        insert_raw_edge(&mut ov, src, dst, rem);
+        let err = ov.validate_invariants().unwrap_err();
+        assert_eq!(err, MeshSieveError::OverlapDuplicateEdge { src, dst });
+    }
+
+    #[test]
+    fn invariant_part_in_base_points() {
+        let mut ov = Overlap::new();
+        ov.inner.adjacency_out.insert(part(7), Vec::new());
+        let err = ov.validate_invariants().unwrap_err();
+        assert_eq!(err, MeshSieveError::OverlapPartInBasePoints);
+    }
+
+    #[test]
+    fn invariant_local_in_cap_points() {
+        let mut ov = Overlap::new();
+        ov.inner
+            .adjacency_in
+            .insert(local(PointId::new(8).unwrap()), Vec::new());
+        let err = ov.validate_invariants().unwrap_err();
+        assert_eq!(err, MeshSieveError::OverlapLocalInCapPoints);
+    }
+
+    #[test]
+    fn invariant_happy_path() {
+        let mut ov = Overlap::new();
+        ov.add_link_structural_one(PointId::new(1).unwrap(), 2);
+        assert!(ov.validate_invariants().is_ok());
     }
 }
