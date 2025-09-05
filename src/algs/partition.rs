@@ -54,7 +54,7 @@ where
 pub fn partition_replication_factor<G>(graph: &G, pm: &PartitionMap<G::VertexId>) -> f64
 where
     G: PartitionableGraph,
-    G::VertexId: Eq + std::hash::Hash + Copy,
+    G::VertexId: Eq + std::hash::Hash + Copy + Sync + 'static,
 {
     replication_factor(graph, pm)
 }
