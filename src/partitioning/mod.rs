@@ -47,8 +47,8 @@ pub use self::metrics::*;
 #[cfg(feature = "mpi-support")]
 use hashbrown::HashMap;
 use log::debug;
-use std::hash::Hash;
 use rayon::prelude::*;
+use std::hash::Hash;
 
 #[cfg(feature = "mpi-support")]
 pub type PartitionId = usize;
@@ -125,13 +125,15 @@ pub enum PartitionerError {
     Unbalanced {
         max_load: u64,
         min_load: u64,
-        ratio:    f64,
+        ratio: f64,
         tolerance: f64,
     },
     /// Error during vertex cut construction
     VertexCut(crate::partitioning::error::PartitionError),
     /// The `degrees` slice had the wrong length.
     DegreeLengthMismatch { expected: usize, got: usize },
+    /// Other errors
+    Other(String),
 }
 
 impl From<crate::partitioning::error::PartitionError> for PartitionerError {
@@ -149,25 +151,52 @@ where
     G: PartitionableGraph<VertexId = usize> + Sync,
 {
     use crate::partitioning::{
-        binpack::Item,
         binpack::merge_clusters_into_parts,
+        binpack::Item,
         louvain::louvain_cluster,
         metrics::{edge_cut, replication_factor},
         vertex_cut::build_vertex_cuts,
     };
+
+    // ------------- Phase 0: vertices & trivial case -------------
     let verts: Vec<_> = graph.vertices().collect();
     let n = verts.len();
     if n == 0 {
         return Ok(PartitionMap::with_capacity(0));
     }
-    // 1. Louvain clustering
-    let clusters = if cfg.enable_phase1 {
+
+    // Map vertex ID -> dense index [0..n)
+    // (Assume edges() only yields vertices present in vertices(); we debug_assert below.)
+    let vert_idx: HashMap<usize, usize> = verts
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(i, v)| (v, i))
+        .collect();
+
+    // ------------- Phase 1: Louvain (fixed) -------------
+    let clusters: Vec<u32> = if cfg.enable_phase1 {
         louvain_cluster(graph, cfg)
     } else {
-        graph.vertices().map(|u| u as u32).collect()
+        // Dense, contiguous cluster IDs when Phase 1 disabled
+        verts
+            .iter()
+            .enumerate()
+            .map(|(i, _)| (i as u32 % cfg.n_parts as u32))
+            .collect()
     };
-    let n_clusters = clusters.iter().copied().max().unwrap_or(0) as usize + 1;
-    // Phase 1 metrics
+
+    // Defensive checks
+    if clusters.len() != n {
+        return Err(PartitionerError::Other(
+            "louvain_cluster returned wrong length".into(),
+        ));
+    }
+
+    // Dense #clusters (assumes louvain remapped to 0..C-1)
+    let n_clusters: usize = clusters.iter().copied().max().unwrap_or(0) as usize + 1;
+
+    // Phase 1 metrics (same as before)
     let mut pm1 = PartitionMap::with_capacity(n);
     for (v, &cid) in verts.iter().zip(clusters.iter()) {
         pm1.insert(*v, cid as usize);
@@ -179,89 +208,136 @@ where
         n_clusters, cut1, rep1
     );
 
-    // Build a mapping from vertex ID to index in verts
-    let vert_idx: HashMap<usize, usize> = verts.iter().enumerate().map(|(i, &v)| (v, i)).collect();
+    // ------------- Phase 2 prework: loads & inter-cluster adjacency -------------
 
-    // ————————————————————————————————————————————————
-    // 1. Gather all undirected edges u<v
-    // ————————————————————————————————————————————————
-    let all_edges: Vec<(usize, usize)> = graph.edges().collect();
-
-    // ————————————————————————————————————————————————
-    // 2. Build a map (cid_a, cid_b) → number of edges between them
-    // ————————————————————————————————————————————————
-    let mut cluster_adj: HashMap<(u32, u32), u64> =
-        HashMap::with_capacity(all_edges.len());
-    for (u, v) in all_edges {
-        let cu = clusters[*vert_idx.get(&u).expect("vertex not found in vert_idx")] ;
-        let cv = clusters[*vert_idx.get(&v).expect("vertex not found in vert_idx")] ;
-        if cu != cv {
-            // keep key ordered so (2,5) and (5,2) fold together
-            let key = if cu < cv { (cu, cv) } else { (cv, cu) };
-            *cluster_adj.entry(key).or_insert(0) += 1;
-        }
+    // A) per-cluster load: sum of degrees (≥1) — simple, sequential is fine (O(V))
+    //    If you prefer parallel, switch to Vec<AtomicU64> and par_iter over verts.
+    let mut cluster_loads: Vec<u64> = vec![0; n_clusters];
+    for &v in &verts {
+        // Safe: degree() is read-only
+        let deg = graph.degree(v) as u64;
+        let vi = *vert_idx
+            .get(&v)
+            .expect("vertex from vertices() not in index map");
+        let cid = clusters[vi] as usize;
+        // Avoid zero-load clusters (as you did)
+        cluster_loads[cid] += deg.max(1);
     }
 
-    // 3. Build cluster -> vertices map and cluster loads
-    let mut cluster_to_verts: HashMap<u32, Vec<usize>> = HashMap::with_capacity(n_clusters);
-    let mut cluster_loads: HashMap<u32, u64> = HashMap::with_capacity(n_clusters);
-    for (v, &cid) in verts.iter().zip(clusters.iter()) {
-        cluster_to_verts.entry(cid).or_default().push(*v);
-        let deg = graph.degree(*v) as u64;
-        *cluster_loads.entry(cid).or_insert(0) += deg.max(1); // avoid zero-load clusters
+    // B) cluster-to-vertex lists: O(V) and small memory; sequential is robust.
+    let mut cluster_to_verts: Vec<Vec<usize>> = vec![Vec::new(); n_clusters];
+    for &v in &verts {
+        let vi = vert_idx[&v];
+        let cid = clusters[vi] as usize;
+        cluster_to_verts[cid].push(v);
     }
 
-    // 4. Binpack clusters into parts, with adjacency
-    let items: Vec<Item> = cluster_to_verts
-        .iter()
-        .map(|(&cid, _)| {
-            let load = *cluster_loads.get(&cid).unwrap_or(&1);
-            let mut adj = Vec::new();
-            for (&(a, b), &count) in &cluster_adj {
-                if a == cid {
-                    adj.push((b as usize, count));
-                } else if b == cid {
-                    adj.push((a as usize, count));
+    // C) Inter-cluster adjacency via parallel fold/reduce over edges()
+    //    No all_edges allocation; memory proportional to #inter-cluster pairs.
+    //
+    //    Key: (min(cu, cv), max(cu, cv)) → edge count
+    //
+    //    We use `hashbrown::HashMap` if available (imported at top under cfg),
+    //    which is faster and merges cheaply; std::collections::HashMap also works.
+    let cluster_adj: HashMap<(u32, u32), u64> = graph
+        .edges()
+        .fold(
+            || HashMap::<(u32, u32), u64>::new(),
+            |mut local, (u, v)| {
+                // Convert u,v to cluster IDs
+                let iu = match vert_idx.get(&u) {
+                    Some(&i) => i,
+                    None => {
+                        debug_assert!(false, "edges() yielded u not in vertices()");
+                        return local;
+                    }
+                };
+                let iv = match vert_idx.get(&v) {
+                    Some(&i) => i,
+                    None => {
+                        debug_assert!(false, "edges() yielded v not in vertices()");
+                        return local;
+                    }
+                };
+
+                let cu = clusters[iu];
+                let cv = clusters[iv];
+                if cu != cv {
+                    let key = if cu < cv { (cu, cv) } else { (cv, cu) };
+                    *local.entry(key).or_insert(0) += 1;
                 }
-            }
-            Item {
-                cid: cid as usize,
-                load,
-                adj,
-            }
+                local
+            },
+        )
+        .reduce(
+            || HashMap::<(u32, u32), u64>::new(),
+            |mut a, b| {
+                for (k, v) in b {
+                    *a.entry(k).or_insert(0) += v;
+                }
+                a
+            },
+        );
+
+    // D) Build symmetric adjacency lists per cluster (deterministic order)
+    let mut adj_lists: Vec<Vec<(usize, u64)>> = vec![Vec::new(); n_clusters];
+    for (&(a, b), &w) in cluster_adj.iter() {
+        let ai = a as usize;
+        let bi = b as usize;
+        adj_lists[ai].push((bi, w));
+        adj_lists[bi].push((ai, w));
+    }
+    for lst in &mut adj_lists {
+        lst.sort_unstable_by_key(|&(cid, _)| cid); // determinism
+    }
+
+    // E) Build Items in dense cid order (cid == index). Zero-adj clusters get empty vec.
+    let items: Vec<Item> = (0..n_clusters)
+        .map(|cid| Item {
+            cid,
+            load: cluster_loads[cid],
+            adj: adj_lists[cid].clone(),
         })
         .collect();
+
+    // ------------- Phase 2: merge clusters into parts -------------
     let cluster_part = if cfg.enable_phase2 {
         merge_clusters_into_parts(&items, cfg.n_parts, cfg.epsilon)?
     } else {
-        items.iter().map(|it| it.cid % cfg.n_parts).collect()
+        // Deterministic fallback
+        (0..n_clusters).map(|cid| cid % cfg.n_parts).collect()
     };
-    // 5. Assign each vertex to its cluster's part
+
+    // Assign each vertex to its cluster's part
     let mut pm = PartitionMap::with_capacity(n);
-    for (i, (_cid, verts)) in cluster_to_verts.iter().enumerate() {
-        let part = cluster_part[i];
-        for &v in verts {
+    for cid in 0..n_clusters {
+        let part = cluster_part[cid];
+        for &v in &cluster_to_verts[cid] {
             pm.insert(v, part);
         }
     }
+
+    // Phase 2 metrics
     let cut2 = edge_cut(graph, &pm);
     let rep2 = replication_factor(graph, &pm);
     debug!(
         "Phase 2 (Merge): parts={}  edge_cut={}  replication_factor={:.3}",
         cfg.n_parts, cut2, rep2
     );
-    // 6. Vertex cut construction (primary owners, replicas)
-    let (primary, replicas) = if cfg.enable_phase3 {
+
+    // ------------- Phase 3: vertex-cut -------------
+    let (_primary, replicas) = if cfg.enable_phase3 {
         build_vertex_cuts(graph, &pm, cfg.rng_seed)?
     } else {
-        Ok::<_, PartitionerError>((pm.iter().map(|(_v,&p)| p).collect(), vec![Vec::new(); n]))?
+        // keep structure but do nothing
+        (vec![0; n], vec![Vec::new(); n])
     };
     let total_replicas: usize = replicas.iter().map(|r| r.len()).sum();
     debug!(
         "Phase 3 (VertexCut): primary_count={}  total_replicas={}",
-        primary.len(),
-        total_replicas
+        n, total_replicas
     );
+
     Ok(pm)
 }
 
@@ -301,7 +377,7 @@ mod tests {
         };
         match partition(&g, &cfg) {
             Ok(pm) => assert_eq!(pm.len(), 4),
-            Err(PartitionerError::NoPositiveMerge) => {}, // Acceptable for edgeless graph
+            Err(PartitionerError::NoPositiveMerge) => {} // Acceptable for edgeless graph
             Err(e) => panic!("Unexpected error: {:?}", e),
         }
     }
