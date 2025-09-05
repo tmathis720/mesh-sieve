@@ -46,7 +46,9 @@ pub enum MeshSieveError {
     SievedArrayPointNotInAtlas(crate::topology::point::PointId),
 
     /// Mismatch between expected and provided slice length for a point.
-    #[error("Section error: slice length mismatch for {point:?}: expected {expected}, got {found}")]
+    #[error(
+        "Section error: slice length mismatch for {point:?}: expected {expected}, got {found}"
+    )]
     SliceLengthMismatch {
         point: crate::topology::point::PointId,
         expected: usize,
@@ -137,8 +139,24 @@ pub enum MeshSieveError {
     #[error("Overlap link not found for (local={0}, rank={1})")]
     OverlapLinkMissing(crate::topology::point::PointId, usize),
 
-    #[error("Overlap invariant: payload.rank ({found}) != rank node ({expected})")]
+    #[error("Overlap: edge must be Local->Part, found {src:?} -> {dst:?}")]
+    OverlapNonBipartite {
+        src: crate::overlap::overlap::OvlId,
+        dst: crate::overlap::overlap::OvlId,
+    },
+    #[error("Overlap: payload.rank {found} != Part({expected})")]
     OverlapRankMismatch { expected: usize, found: usize },
+    #[error("Overlap: Part node found in base_points()")]
+    OverlapPartInBasePoints,
+    #[error("Overlap: Local node found in cap_points()")]
+    OverlapLocalInCapPoints,
+    #[error("Overlap: duplicate edge {src:?} -> {dst:?}")]
+    OverlapDuplicateEdge {
+        src: crate::overlap::overlap::OvlId,
+        dst: crate::overlap::overlap::OvlId,
+    },
+    #[error("Overlap: empty Part({rank}) node (no incoming edges)")]
+    OverlapEmptyPart { rank: usize },
 
     #[error(
         "Overlap resolution conflict for (local={local}, rank={rank}): existing={existing:?}, new={new:?}"
@@ -269,6 +287,10 @@ impl PartialEq for MeshSieveError {
             (Communication(a), Communication(b)) => a == b,
             (OverlapLinkMissing(a1, b1), OverlapLinkMissing(a2, b2)) => a1 == a2 && b1 == b2,
             (
+                OverlapNonBipartite { src: s1, dst: d1 },
+                OverlapNonBipartite { src: s2, dst: d2 },
+            ) => s1 == s2 && d1 == d2,
+            (
                 OverlapRankMismatch {
                     expected: e1,
                     found: f1,
@@ -278,6 +300,13 @@ impl PartialEq for MeshSieveError {
                     found: f2,
                 },
             ) => e1 == e2 && f1 == f2,
+            (OverlapPartInBasePoints, OverlapPartInBasePoints) => true,
+            (OverlapLocalInCapPoints, OverlapLocalInCapPoints) => true,
+            (
+                OverlapDuplicateEdge { src: s1, dst: d1 },
+                OverlapDuplicateEdge { src: s2, dst: d2 },
+            ) => s1 == s2 && d1 == d2,
+            (OverlapEmptyPart { rank: r1 }, OverlapEmptyPart { rank: r2 }) => r1 == r2,
             (
                 OverlapResolutionConflict {
                     local: l1,

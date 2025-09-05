@@ -52,6 +52,7 @@ metis-support = ["metis", "metis-sys", "libffi-sys","bindgen","pkg-config"]
 sieve_ref_fast_dag = []
 strict-invariants = []
 check-invariants = []
+check-empty-part = []
 
 
 [build-dependencies]
