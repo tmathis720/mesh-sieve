@@ -182,14 +182,7 @@ where
     // ————————————————————————————————————————————————
     // 1. Gather all undirected edges u<v
     // ————————————————————————————————————————————————
-    let all_edges: Vec<(usize, usize)> = graph
-        .vertices()
-        .flat_map(|u| {
-            graph
-                .neighbors(u)
-                .filter_map(move |v| if u < v { Some((u, v)) } else { None })
-        })
-        .collect();
+    let all_edges: Vec<(usize, usize)> = graph.edges().collect();
 
     // ————————————————————————————————————————————————
     // 2. Build a map (cid_a, cid_b) → number of edges between them
@@ -278,14 +271,23 @@ mod tests {
         type VertexId = usize;
         type VertexParIter<'a> = rayon::vec::IntoIter<usize>;
         type NeighParIter<'a> = rayon::vec::IntoIter<usize>;
+        type NeighIter<'a> = std::vec::IntoIter<usize>;
+        type EdgeParIter<'a> = rayon::vec::IntoIter<(usize, usize)>;
+
         fn vertices(&self) -> Self::VertexParIter<'_> {
             vec![0, 1, 2, 3].into_par_iter()
         }
         fn neighbors(&self, _v: Self::VertexId) -> Self::NeighParIter<'_> {
             Vec::new().into_par_iter()
         }
+        fn neighbors_seq(&self, _v: Self::VertexId) -> Self::NeighIter<'_> {
+            Vec::new().into_iter()
+        }
         fn degree(&self, _v: Self::VertexId) -> usize {
             0
+        }
+        fn edges(&self) -> Self::EdgeParIter<'_> {
+            Vec::new().into_par_iter()
         }
     }
     #[test]

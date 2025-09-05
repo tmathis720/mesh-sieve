@@ -32,18 +32,26 @@ impl PartitionableGraph for RandomGraph {
     type VertexId = usize;
     type VertexParIter<'a> = rayon::vec::IntoIter<usize> where Self: 'a;
     type NeighParIter<'a>   = rayon::vec::IntoIter<usize> where Self: 'a;
+    type NeighIter<'a>      = std::vec::IntoIter<usize> where Self: 'a;
+    type EdgeParIter<'a>    = rayon::vec::IntoIter<(usize, usize)> where Self: 'a;
 
     fn vertices(&self) -> Self::VertexParIter<'_> {
         (0..self.n).collect::<Vec<_>>().into_par_iter()
     }
     fn neighbors(&self, u: usize) -> Self::NeighParIter<'_> {
+        self.neighbors_seq(u).collect::<Vec<_>>().into_par_iter()
+    }
+    fn neighbors_seq(&self, u: usize) -> Self::NeighIter<'_> {
         let nbrs: Vec<_> = self.edges.iter()
             .filter_map(|&(a,b)| if a==u { Some(b) } else if b==u { Some(a) } else { None })
             .collect();
-        nbrs.into_par_iter()
+        nbrs.into_iter()
     }
     fn degree(&self, u: usize) -> usize {
-        self.neighbors(u).count()
+        self.neighbors_seq(u).count()
+    }
+    fn edges(&self) -> Self::EdgeParIter<'_> {
+        self.edges.clone().into_par_iter()
     }
 }
 

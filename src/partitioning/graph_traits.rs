@@ -15,40 +15,92 @@ use std::hash::Hash;
 /// This trait is only available when the `partitioning` feature is enabled.
 #[cfg(feature = "mpi-support")]
 pub trait PartitionableGraph: Sync {
-    /// Vertex identifier type (must be copyable, hashable, and thread-safe).
-    type VertexId: Copy + Hash + Eq + Send + Sync;
-    /// Parallel iterator over all vertices.
+    /// Vertex identifier (must be totally ordered to define `u < v`).
+    type VertexId: Copy + Send + Sync + Eq + Ord + Hash;
+    /// Parallel iterator over all vertices (indexable for `.len()`).
     type VertexParIter<'a>: IndexedParallelIterator<Item = Self::VertexId> + 'a
     where
         Self: 'a;
-    /// Parallel iterator over neighbors.
+    /// Parallel iterator over neighbors of a vertex.
     type NeighParIter<'a>: ParallelIterator<Item = Self::VertexId> + 'a
     where
         Self: 'a;
+    /// **Serial** iterator over neighbors of a vertex (no allocation).
+    type NeighIter<'a>: Iterator<Item = Self::VertexId> + 'a
+    where
+        Self: 'a;
+    /// Parallel iterator over undirected edges `(u, v)` with `u < v`.
+    /// Implementors may override for maximum performance.
+    type EdgeParIter<'a>: ParallelIterator<Item = (Self::VertexId, Self::VertexId)> + 'a
+    where
+        Self: 'a;
 
-    /// Returns a parallel, indexable iterator over all vertices.
+    /// All vertices.
     fn vertices(&self) -> Self::VertexParIter<'_>;
 
-    /// Returns a parallel iterator over neighbours of `v`.
+    /// Parallel neighbors of `v` (for algorithms that need parallel expansion).
     fn neighbors(&self, v: Self::VertexId) -> Self::NeighParIter<'_>;
 
-    /// Degree of a vertex (number of neighbors).
+    /// Serial neighbors of `v` (used to build zero-alloc `edges()` by default).
+    fn neighbors_seq(&self, v: Self::VertexId) -> Self::NeighIter<'_>;
+
+    /// Degree of a vertex.
     fn degree(&self, v: Self::VertexId) -> usize;
 
-    /// Returns a parallel iterator over all undirected edges (u, v) with u < v.
+    /// **Default**: parallel undirected edge stream built without per-vertex `Vec`s.
     ///
-    /// The returned iterator yields each undirected edge exactly once.
-    fn edges(&self) -> impl ParallelIterator<Item = (Self::VertexId, Self::VertexId)> + '_
+    /// Contract:
+    /// - Yields each undirected edge exactly once with `u < v`.
+    /// - Thread-safe and read-only.
+    fn edges(&self) -> Self::EdgeParIter<'_>
     where
-        Self::VertexId: PartialOrd,
+        Self: Sized,
     {
         self.vertices().flat_map_iter(move |u| {
-            self.neighbors(u)
+            self.neighbors_seq(u)
                 .filter(move |&v| u < v)
                 .map(move |v| (u, v))
-                .collect::<Vec<_>>()
-                .into_iter()
         })
+    }
+
+    /// Deterministic O(1) helper: count of vertices.
+    fn vertex_count(&self) -> usize {
+        self.vertices().len()
+    }
+
+    /// Deterministic O(E) helper: count of undirected edges.
+    fn edge_count(&self) -> usize
+    where
+        Self::VertexId: 'static,
+    {
+        self.edges().count()
+    }
+}
+
+/// Debug-time verification that `edges()` upholds its contract.
+#[cfg(any(debug_assertions, feature = "check-graph-edges"))]
+pub fn assert_edges_well_formed<G: PartitionableGraph>(g: &G) {
+    use std::collections::HashSet;
+    let mut seen = HashSet::new();
+    g.edges().for_each(|(u, v)| {
+        debug_assert!(u < v, "edges() must yield u < v");
+        let ok = seen.insert((u, v));
+        debug_assert!(ok, "duplicate edge ({u:?}, {v:?}) from edges()");
+    });
+
+    #[cfg(feature = "expensive-checks")]
+    {
+        use std::collections::HashMap;
+        let mut deg = HashMap::<G::VertexId, usize>::new();
+        g.edges().for_each(|(u, v)| {
+            *deg.entry(u).or_default() += 1;
+            *deg.entry(v).or_default() += 1;
+        });
+        g.vertices().for_each(|u| {
+            let e = *deg.get(&u).unwrap_or(&0);
+            let d = g.degree(u);
+            debug_assert_eq!(e, d, "degree mismatch for {u:?}: edges() says {e}, degree() says {d}");
+        });
     }
 }
 
@@ -67,6 +119,9 @@ mod tests {
         type VertexId = usize;
         type VertexParIter<'a> = rayon::vec::IntoIter<usize>;
         type NeighParIter<'a> = rayon::vec::IntoIter<usize>;
+        type NeighIter<'a> = std::iter::Copied<std::slice::Iter<'a, usize>>;
+        type EdgeParIter<'a> = rayon::vec::IntoIter<(usize, usize)>;
+
         fn vertices(&self) -> Self::VertexParIter<'_> {
             let vs: Vec<_> = self.adj.keys().copied().collect();
             vs.into_par_iter()
@@ -75,8 +130,25 @@ mod tests {
             let ns = self.adj.get(&v).cloned().unwrap_or_default();
             ns.into_par_iter()
         }
+        fn neighbors_seq(&self, v: Self::VertexId) -> Self::NeighIter<'_> {
+            self.adj
+                .get(&v)
+                .map(|ns| ns.iter().copied())
+                .unwrap_or_else(|| [].iter().copied())
+        }
         fn degree(&self, v: Self::VertexId) -> usize {
             self.adj.get(&v).map_or(0, |n| n.len())
+        }
+        fn edges(&self) -> Self::EdgeParIter<'_> {
+            let mut es = Vec::new();
+            for (&u, ns) in &self.adj {
+                for &v in ns {
+                    if u < v {
+                        es.push((u, v));
+                    }
+                }
+            }
+            es.into_par_iter()
         }
     }
 
