@@ -13,7 +13,7 @@ use crate::algs::completion::{
     size_exchange::exchange_sizes_symmetric,
 };
 use crate::data::section::Section;
-use crate::overlap::delta::Delta;
+use crate::overlap::delta::ValueDelta;
 use crate::overlap::overlap::Overlap;
 
 pub fn complete_section<V, D, C>(
@@ -26,7 +26,7 @@ pub fn complete_section<V, D, C>(
 ) -> Result<(), MeshSieveError>
 where
     V: Clone + Default + Send + PartialEq + 'static,
-    D: Delta<V> + Send + Sync + 'static,
+    D: ValueDelta<V> + Send + Sync + 'static,
     D::Part: bytemuck::Pod + Default,
     C: Communicator + Sync,
 {

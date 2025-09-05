@@ -10,13 +10,13 @@
 //! # Choosing the right `Delta`
 //! - [`crate::data::refine::delta::SliceDelta`]: transforms one *slice* into another
 //!   (e.g. reverse for orientation).
-//! - [`crate::overlap::delta::Delta`]: describes *communication/merge semantics*
+//! - [`crate::overlap::delta::ValueDelta`]: describes *communication/merge semantics*
 //!   for overlap/exchange between parts.
 //!
 //! ## Disambiguation tip
 //! ```rust
 //! use mesh_sieve::data::refine::delta::SliceDelta;            // slice semantics
-//! use mesh_sieve::overlap::delta::Delta as OverlapDelta;      // communication semantics
+//! use mesh_sieve::overlap::delta::ValueDelta as OverlapDelta; // communication semantics
 //! ```
 
 use crate::mesh_error::MeshSieveError;

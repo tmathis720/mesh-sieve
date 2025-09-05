@@ -15,3 +15,7 @@
 - Old: `data::refine::delta::Delta`.
 - New: `data::refine::delta::SliceDelta` (old `Delta` is a deprecated alias).
 - Behavior unchanged.
+
+- Old: `overlap::delta::Delta`.
+- New: `overlap::delta::ValueDelta` (old `Delta` is a deprecated alias).
+- Behavior unchanged.

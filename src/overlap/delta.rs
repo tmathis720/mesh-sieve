@@ -1,13 +1,15 @@
-//! Delta trait: rules for fusing data across overlaps
+//! Value delta: rules for fusing data across overlaps
 //!
-//! This module defines the [`Delta`] trait and several implementations for
+//! This module defines the [`ValueDelta`] trait and several implementations for
 //! restricting and fusing values across overlaps in distributed mesh computations.
+//! It is distinct from [`crate::data::refine::delta::SliceDelta`], which handles
+//! slice-to-slice transformations during mesh refinement.
 
 /// *Delta* encapsulates restriction & fusion for a section value `V`.
 ///
 /// This trait defines how to extract a part of a value for communication
 /// and how to merge an incoming fragment into the local value.
-pub trait Delta<V>: Sized {
+pub trait ValueDelta<V>: Sized {
     /// What a *restricted* value looks like (often identical to `V`).
     type Part: Send;
 
@@ -25,7 +27,7 @@ pub trait Delta<V>: Sized {
 #[derive(Copy, Clone)]
 pub struct CopyDelta;
 
-impl<V: Clone + Send> Delta<V> for CopyDelta {
+impl<V: Clone + Send> ValueDelta<V> for CopyDelta {
     type Part = V;
     #[inline]
     fn restrict(v: &V) -> V {
@@ -44,7 +46,7 @@ impl<V: Clone + Send> Delta<V> for CopyDelta {
 #[derive(Copy, Clone)]
 pub struct ZeroDelta;
 
-impl<V: Clone + Default + Send> Delta<V> for ZeroDelta {
+impl<V: Clone + Default + Send> ValueDelta<V> for ZeroDelta {
     type Part = V;
     #[inline]
     fn restrict(_v: &V) -> V {
@@ -62,7 +64,7 @@ impl<V: Clone + Default + Send> Delta<V> for ZeroDelta {
 #[derive(Copy, Clone)]
 pub struct AddDelta;
 
-impl<V> Delta<V> for AddDelta
+impl<V> ValueDelta<V> for AddDelta
 where
     V: std::ops::AddAssign + Copy + Send,
 {
@@ -105,4 +107,17 @@ mod tests {
         ZeroDelta::fuse(&mut v, 42);
         assert_eq!(v, 7);
     }
+
+    #[test]
+    fn zero_delta_handles_non_numeric() {
+        let mut v = String::from("hello");
+        let part = ZeroDelta::restrict(&v);
+        assert!(part.is_empty());
+        ZeroDelta::fuse(&mut v, String::from("world"));
+        assert_eq!(v, "hello");
+    }
 }
+
+/// Backward-compatible alias for [`ValueDelta`].
+#[deprecated(note = "Renamed to ValueDelta; Delta will be removed in a future release")]
+pub use ValueDelta as Delta;

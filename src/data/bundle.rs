@@ -94,10 +94,10 @@ where
     }
 }
 
-/// `Bundle<V, D>` packages a mesh‐to‐DOF stack, a data section, and a `Delta`-type.
+/// `Bundle<V, D>` packages a mesh‐to‐DOF stack, a data section, and a `ValueDelta`-type.
 ///
 /// - `V`: underlying data type stored at each DOF (e.g., `f64`, `i32`, …).
-/// - `D`: overlap [`Delta`](crate::overlap::delta::Delta)<V> implementation guiding how
+/// - `D`: overlap [`ValueDelta`](crate::overlap::delta::ValueDelta)<V> implementation guiding how
 ///   values are reduced/merged across parts (defaults to [`CopyDelta`]).
 ///   For per-slice permutation/orientation, see [`crate::data::refine::delta::SliceDelta`].
 ///
@@ -118,7 +118,7 @@ pub struct Bundle<V, D = CopyDelta> {
 impl<V, D> Bundle<V, D>
 where
     V: Clone + Default,
-    D: crate::overlap::delta::Delta<V, Part = V>,
+    D: crate::overlap::delta::ValueDelta<V, Part = V>,
 {
     /// **Refine**: push data *down* the stack (base → cap) using per-arrow orientation.
     ///
