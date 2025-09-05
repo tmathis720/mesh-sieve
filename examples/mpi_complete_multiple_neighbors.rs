@@ -13,7 +13,7 @@ pub fn main() {
     use mesh_sieve::data::atlas::Atlas;
     use mesh_sieve::data::section::Section;
     use mesh_sieve::overlap::delta::CopyDelta;
-    use mesh_sieve::overlap::overlap::{Overlap, Remote};
+    use mesh_sieve::overlap::overlap::{Overlap, Remote, OvlId};
     use mesh_sieve::topology::point::PointId;
     use mesh_sieve::topology::sieve::sieve_trait::Sieve;
     use mpi::topology::Communicator;
@@ -38,8 +38,8 @@ pub fn main() {
             // partition_point(1) = PointId(2), partition_point(2) = PointId(3)
             Sieve::add_arrow(
                 &mut ovlp,
-                PointId::new(1).unwrap(),
-                PointId::new(2).unwrap(), // partition_point(1)
+                OvlId::Local(PointId::new(1).unwrap()),
+                OvlId::Part(1),
                 Remote {
                     rank: 1,
                     remote_point: Some(PointId::new(101).unwrap()),
@@ -47,8 +47,8 @@ pub fn main() {
             );
             Sieve::add_arrow(
                 &mut ovlp,
-                PointId::new(2).unwrap(),
-                PointId::new(3).unwrap(), // partition_point(2)
+                OvlId::Local(PointId::new(2).unwrap()),
+                OvlId::Part(2),
                 Remote {
                     rank: 2,
                     remote_point: Some(PointId::new(201).unwrap()),
@@ -60,8 +60,8 @@ pub fn main() {
             atlas.try_insert(PointId::new(1).unwrap(), 1).unwrap(); // remote (from rank 0)
             Sieve::add_arrow(
                 &mut ovlp,
-                PointId::new(101).unwrap(),
-                PointId::new(1).unwrap(), // partition_point(0)
+                OvlId::Local(PointId::new(101).unwrap()),
+                OvlId::Part(0),
                 Remote {
                     rank: 0,
                     remote_point: Some(PointId::new(1).unwrap()),
@@ -73,8 +73,8 @@ pub fn main() {
             atlas.try_insert(PointId::new(2).unwrap(), 1).unwrap(); // remote (from rank 0)
             Sieve::add_arrow(
                 &mut ovlp,
-                PointId::new(201).unwrap(),
-                PointId::new(1).unwrap(), // partition_point(0)
+                OvlId::Local(PointId::new(201).unwrap()),
+                OvlId::Part(0),
                 Remote {
                     rank: 0,
                     remote_point: Some(PointId::new(2).unwrap()),

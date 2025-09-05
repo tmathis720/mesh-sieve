@@ -13,6 +13,7 @@ fn main() {
     use mesh_sieve::algs::distribute::distribute_mesh;
     use mesh_sieve::topology::point::PointId;
     use mesh_sieve::topology::sieve::{Sieve, InMemorySieve};
+    use mesh_sieve::overlap::overlap::{OvlId, Overlap as OvlGraph};
     let comm = MpiComm::default();
     let size = Communicator::size(&comm);
     let rank = Communicator::rank(&comm);
@@ -44,10 +45,14 @@ fn main() {
     // 4) Each rank should see its submesh plus one overlap arrow
     let my_pts: Vec<_> = local.points().collect();
     println!("[rank {}] local points: {:?}", rank, my_pts);
-    let partition_pt = PointId::new((rank as u64) + 1).unwrap();
-    let ovl_pts: Vec<_> = overlap.cone(partition_pt)
-                                 .map(|(p,_)| p.clone())
-                                 .collect();
+    let partition_pt = OvlGraph::partition_node_id(rank);
+    let ovl_pts: Vec<_> = overlap
+        .support(partition_pt)
+        .filter_map(|(p, _)| match p {
+            OvlId::Local(q) => Some(q),
+            _ => None,
+        })
+        .collect();
     println!("[rank {}] overlap points: {:?}", rank, ovl_pts);
 
     // Assert: rank 0 sees only PointId(1)→PointId(2) locally,
