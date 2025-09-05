@@ -8,48 +8,68 @@
 
 #![cfg(feature = "mpi-support")]
 
-
 use crate::partitioning::PartitionerConfig;
 use crate::partitioning::graph_traits::PartitionableGraph;
-use rayon::iter::ParallelIterator;
+use hashbrown::HashMap as FastMap;
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-/// Internal cluster representation for Louvain clustering.
+/// Cluster statistics maintained during clustering.
 #[derive(Debug, Clone)]
-struct Cluster {
-    /// Cluster ID.
-    id: u32,
-    /// Total volume (sum of degrees) of the cluster.
+struct ClusterInfo {
+    /// Sum of degrees of vertices in this cluster.
     volume: u64,
-    /// Number of internal edges (not currently used).
-    internal_edges: u64,
+    /// Number of vertices in this cluster.
+    size: u32,
+    /// Number of internal edges (for logging/metrics).
+    inner_edges: u64,
 }
 
-impl Cluster {
-    /// Create a new cluster with the given ID and initial volume.
-    fn new(v: u32, deg: u64) -> Self {
-        Cluster {
-            id: v,
-            volume: deg,
-            internal_edges: 0,
-        }
-    }
+#[inline]
+fn delta_q_balanced(e_ij: u64, vol_i: u64, vol_j: u64, m: f64, alpha: f64) -> f64 {
+    // ΔQ merge(i,j) = (E_ij / m) - (vol_i * vol_j) / (2 m^2)
+    let e_ij_f = e_ij as f64;
+    let vol_i_f = vol_i as f64;
+    let vol_j_f = vol_j as f64;
+    let delta_q = (e_ij_f / m) - (vol_i_f * vol_j_f) / (2.0 * m * m);
+
+    // Wakita–Tsurumi balancing using volume ratio
+    let bal = if vol_i == 0 || vol_j == 0 {
+        0.0
+    } else {
+        let (a, b) = if vol_i < vol_j {
+            (vol_i_f, vol_j_f)
+        } else {
+            (vol_j_f, vol_i_f)
+        };
+        (a / b).max(0.0).min(1.0)
+    };
+    alpha * delta_q * bal
 }
 
 /// Perform Louvain-style clustering on a partitionable graph.
 ///
-/// Returns a vector of cluster IDs (one per vertex), with IDs remapped to a contiguous range.
+/// The gain in modularity for merging clusters `i` and `j` is computed as
+///
+/// `ΔQ(i,j) = (E_ij / m) - (vol_i * vol_j) / (2 m^2)`
+///
+/// where `m` is the number of undirected edges returned by [`PartitionableGraph::edges`]
+/// and `vol_*` is the sum of degrees in each cluster.  A balanced variant is then applied:
+///
+/// `ΔQ_bal = α * ΔQ(i,j) * min{vol_i/vol_j, vol_j/vol_i}`
+///
+/// Only merges with positive `ΔQ_bal` are accepted.  The returned vector contains the
+/// final cluster IDs for each vertex (indexed by vertex order in `graph.vertices()`),
+/// remapped to a dense range.
 ///
 /// # Arguments
 /// - `graph`: The input graph.
 /// - `cfg`: Configuration parameters for clustering.
 ///
-/// # Returns
-/// A vector of cluster IDs for each vertex (indexed by vertex order in `graph.vertices()`).
-///
 /// # Parallelism
-/// This implementation is not fully parallel, but is suitable for moderate-sized graphs.
+/// Each iteration performs a parallel fold over `graph.edges()`, making the algorithm
+/// suitable for moderately sized graphs.
 ///
 /// # Features
 /// Only available with the `mpi-support` feature enabled.
@@ -57,102 +77,130 @@ pub fn louvain_cluster<G>(graph: &G, cfg: &PartitionerConfig) -> Vec<u32>
 where
     G: PartitionableGraph<VertexId = usize> + Sync,
 {
-    // Collect all vertex IDs and build an index map
+    // Collect vertices and degrees
     let verts: Vec<usize> = graph.vertices().collect();
     let n = verts.len();
     if n == 0 {
         return Vec::new();
     }
-    let idx_map: HashMap<usize, usize> = verts.iter().copied().enumerate().map(|(i, v)| (v, i)).collect();
+    let idx_map: HashMap<usize, usize> = verts
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(i, v)| (v, i))
+        .collect();
     let degrees: Vec<u64> = verts.iter().map(|&u| graph.degree(u) as u64).collect();
-    // Reconstruct edges from neighbors
-    let mut all_edges = Vec::new();
-    for &u in &verts {
-        for v in graph.neighbors(u).collect::<Vec<_>>() {
-            if u < v {
-                all_edges.push((u, v));
-            }
-        }
+
+    // Number of undirected edges
+    let m: f64 = graph.edges().count() as f64;
+    if m == 0.0 {
+        return (0..n).map(|i| i as u32).collect();
     }
-    let m_f64: f64 = (all_edges.len() as u64 / 2) as f64;
-    let cluster_ids: Vec<AtomicU32> = (0..n).map(|u| AtomicU32::new(u as u32)).collect();
-    let mut clusters: HashMap<u32, Cluster> = HashMap::with_capacity(n);
-    for u in 0..n {
-        let vid = u as u32;
-        clusters.insert(vid, Cluster::new(vid, degrees[u]));
+
+    // Initial cluster assignments
+    let cluster_ids: Vec<AtomicU32> = (0..n).map(|i| AtomicU32::new(i as u32)).collect();
+    let mut clusters: FastMap<u32, ClusterInfo> = FastMap::with_capacity(n);
+    let mut members: FastMap<u32, Vec<usize>> = FastMap::with_capacity(n);
+    for i in 0..n {
+        let vid = i as u32;
+        clusters.insert(
+            vid,
+            ClusterInfo {
+                volume: degrees[i],
+                size: 1,
+                inner_edges: 0,
+            },
+        );
+        members.insert(vid, vec![i]);
     }
+
+    fn make_key(a: u32, b: u32) -> (u32, u32) {
+        if a < b { (a, b) } else { (b, a) }
+    }
+
     for _iter in 0..cfg.max_iters {
-        let mut intercluster_edges: HashMap<(u32, u32), u64> = HashMap::new();
-        for &(u, v) in &all_edges {
-            let iu = idx_map[&u];
-            let iv = idx_map[&v];
-            if iu < iv {
-                let cu = cluster_ids[iu].load(Ordering::Relaxed);
-                let cv = cluster_ids[iv].load(Ordering::Relaxed);
-                if cu != cv {
-                    let key = if cu < cv { (cu, cv) } else { (cv, cu) };
-                    *intercluster_edges.entry(key).or_insert(0) += 1;
-                }
-            }
-        }
-        let mut best_pair: Option<(u32, u32, f64)> = None;
-        for (&(ci, cj), &e_ij) in intercluster_edges.iter() {
-            let cl_i = clusters.get(&ci).unwrap();
-            let cl_j = clusters.get(&cj).unwrap();
-            let vol_i = cl_i.volume as f64;
-            let vol_j = cl_j.volume as f64;
-            let delta_mod = (e_ij as f64 / m_f64) - (vol_i * vol_j) / (2.0 * m_f64 * m_f64);
-            let f_factor = vol_i.min(vol_j) / vol_i.max(vol_j);
-            let delta_bal = cfg.alpha * delta_mod * f_factor;
-            if delta_bal > 0.0 {
-                match best_pair {
-                    Some((_, _, best_val)) if delta_bal <= best_val => {}
-                    _ => {
-                        best_pair = Some((ci, cj, delta_bal));
+        // Build inter-cluster edge counts in parallel
+        let cluster_adj: FastMap<(u32, u32), u64> = graph
+            .edges()
+            .fold(
+                || FastMap::<(u32, u32), u64>::new(),
+                |mut local, (u, v)| {
+                    let iu = *idx_map.get(&u).unwrap();
+                    let iv = *idx_map.get(&v).unwrap();
+                    let cu = cluster_ids[iu].load(Ordering::Relaxed);
+                    let cv = cluster_ids[iv].load(Ordering::Relaxed);
+                    if cu != cv {
+                        *local.entry(make_key(cu, cv)).or_insert(0) += 1;
                     }
+                    local
+                },
+            )
+            .reduce(
+                || FastMap::<(u32, u32), u64>::new(),
+                |mut a, b| {
+                    for (k, w) in b {
+                        *a.entry(k).or_insert(0) += w;
+                    }
+                    a
+                },
+            );
+
+        // Find best positive merge
+        let mut best: Option<(u32, u32, f64, u64)> = None;
+        for (&(ci, cj), &e_ij) in cluster_adj.iter() {
+            let (Some(info_i), Some(info_j)) = (clusters.get(&ci), clusters.get(&cj)) else {
+                continue;
+            };
+            let dq = delta_q_balanced(e_ij, info_i.volume, info_j.volume, m, cfg.alpha);
+            if dq > 0.0 {
+                match best {
+                    Some((_, _, best_dq, _)) if dq <= best_dq => {}
+                    _ => best = Some((ci, cj, dq, e_ij)),
                 }
             }
         }
-        let (merge_i, merge_j) = if let Some((ci, cj, _)) = best_pair {
-            (ci, cj)
-        } else {
+
+        let Some((ci, cj, _dq, e_ij)) = best else {
             break;
         };
-        for u in 0..n {
-            if cluster_ids[u].load(Ordering::Relaxed) == merge_j {
-                cluster_ids[u].store(merge_i, Ordering::Relaxed);
+
+        // Merge cj into ci
+        if let Some(mut vec_j) = members.remove(&cj) {
+            if let Some(vec_i) = members.get_mut(&ci) {
+                for &v in &vec_j {
+                    cluster_ids[v].store(ci, Ordering::Relaxed);
+                }
+                vec_i.append(&mut vec_j);
             }
         }
-        clusters.clear();
-        for u in 0..n {
-            let cid = cluster_ids[u].load(Ordering::Relaxed);
-            let entry = clusters.entry(cid).or_insert_with(|| Cluster {
-                id: cid,
-                volume: 0,
-                internal_edges: 0,
-            });
-            entry.volume += degrees[u];
+
+        if let Some(info_j) = clusters.remove(&cj) {
+            if let Some(info_i) = clusters.get_mut(&ci) {
+                info_i.volume = info_i.volume.saturating_add(info_j.volume);
+                info_i.size = info_i.size.saturating_add(info_j.size);
+                info_i.inner_edges = info_i
+                    .inner_edges
+                    .saturating_add(info_j.inner_edges)
+                    .saturating_add(e_ij);
+            }
         }
-        if clusters.len() as u32 <= ((cfg.seed_factor * cfg.n_parts as f64).ceil() as u32).max(1) {
+
+        if clusters.len() as u32 <= (cfg.seed_factor * cfg.n_parts as f64).ceil() as u32 {
             break;
         }
     }
-    let unique_ids: Vec<u32> = {
-        let mut tmp: Vec<u32> = (0..n)
-            .map(|u| cluster_ids[u].load(Ordering::Relaxed))
-            .collect();
-        tmp.sort_unstable();
-        tmp.dedup();
-        tmp
-    };
-    let mut remap: HashMap<u32, u32> = HashMap::with_capacity(unique_ids.len());
-    for (new_id, &old_id) in unique_ids.iter().enumerate() {
-        remap.insert(old_id, new_id as u32);
+
+    // Remap cluster IDs to dense range
+    let mut unique: Vec<u32> = clusters.keys().copied().collect();
+    unique.sort_unstable();
+    let mut remap: FastMap<u32, u32> = FastMap::with_capacity(unique.len());
+    for (new_id, old_id) in unique.iter().enumerate() {
+        remap.insert(*old_id, new_id as u32);
     }
     let final_clusters: Vec<u32> = (0..n)
-        .map(|u| {
-            let old = cluster_ids[u].load(Ordering::Relaxed);
-            *remap.get(&old).unwrap()
+        .map(|i| {
+            let old = cluster_ids[i].load(Ordering::Relaxed);
+            *remap.get(&old).expect("stale cluster id")
         })
         .collect();
     final_clusters
@@ -261,5 +309,43 @@ mod tests {
             tmp
         };
         assert_eq!(unique.len(), 5);
+    }
+
+    struct EmptyGraph {
+        n: usize,
+    }
+
+    impl PartitionableGraph for EmptyGraph {
+        type VertexId = usize;
+        type VertexParIter<'a> = rayon::vec::IntoIter<usize>;
+        type NeighParIter<'a> = rayon::vec::IntoIter<usize>;
+        fn vertices(&self) -> Self::VertexParIter<'_> {
+            (0..self.n).collect::<Vec<_>>().into_par_iter()
+        }
+        fn neighbors(&self, _v: usize) -> Self::NeighParIter<'_> {
+            Vec::new().into_par_iter()
+        }
+        fn degree(&self, _v: usize) -> usize {
+            0
+        }
+    }
+
+    #[test]
+    fn test_edgeless_graph_identity() {
+        let g = EmptyGraph { n: 4 };
+        let cfg = PartitionerConfig {
+            n_parts: 2,
+            alpha: 0.5,
+            seed_factor: 1.0,
+            rng_seed: 0,
+            max_iters: 5,
+            epsilon: 0.05,
+            enable_phase1: true,
+            enable_phase2: true,
+            enable_phase3: true,
+        };
+        let clustering = louvain_cluster(&g, &cfg);
+        let expected: Vec<u32> = (0..g.n).map(|i| i as u32).collect();
+        assert_eq!(clustering, expected);
     }
 }
