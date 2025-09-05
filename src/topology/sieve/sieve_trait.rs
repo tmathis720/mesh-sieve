@@ -171,7 +171,6 @@ where
     /// If you only require point IDs during traversal, implement
     /// [`SieveRef`](crate::topology::sieve::SieveRef) and use the `_ref`
     /// variants which borrow payloads and avoid cloning.
-
     /// Concrete iterator over the transitive closure (downward) from `seeds`.
     /// Prefer this over [`closure`] for zero-alloc traversal.
     ///
@@ -384,7 +383,7 @@ where
     /// if some *higher* candidate’s closure contains `x` (equivalently, if `x`
     /// appears in another candidate's cone). See Knepley–Karpeev: Table 1/2
     /// (meet).  // refs: SPR-2009 Table 1,2
-
+    ///
     /// ## Complexity
     /// - Let `G_s` be the subgraph reachable from `{a}` and `{b}` in the downward
     ///   direction.
@@ -392,11 +391,11 @@ where
     ///   sort/dedup candidates (`k = |C|`) +
     ///   **O(\sum_{x∈C} degree_up(x))** for the dominance filter.
     /// - Space: **O(|V_s|)** for visited sets.
-
+    ///
     /// ## Determinism
     /// Deterministic if neighbor order is deterministic (e.g., CSR with sorted
     /// neighbors, or if you use the “sorted neighbor” traversal variants).
-
+    ///
     /// ```rust
     /// use mesh_sieve::topology::sieve::{Sieve, InMemorySieve};
     ///
@@ -476,7 +475,7 @@ where
     /// elements **maximal with respect to upward reachability**: drop `x` if
     /// `star(x)` contains another candidate above it. See Knepley–Karpeev:
     /// Table 1/2 (join).  // refs: SPR-2009 Table 1,2
-
+    ///
     /// ## Complexity
     /// - Let `G_s` be the subgraph reachable from `{a}` and `{b}` in the upward
     ///   direction.
@@ -484,11 +483,11 @@ where
     ///   sort/dedup candidates (`k = |C|`) +
     ///   **O(\sum_{x∈C} degree_down(x))** for the dominance filter.
     /// - Space: **O(|V_s|)** for visited sets.
-
+    ///
     /// ## Determinism
     /// Deterministic under deterministic neighbor order (e.g., CSR with sorted
     /// neighbors or using sorted traversal variants).
-
+    ///
     /// ```rust
     /// use mesh_sieve::topology::sieve::{Sieve, InMemorySieve};
     ///
@@ -865,7 +864,7 @@ where
         for &p in &seeds {
             Sieve::add_base_point(&mut out, p);
         }
-        for (&q, _) in &in_counts {
+        for &q in in_counts.keys() {
             Sieve::add_cap_point(&mut out, q);
         }
 
@@ -914,7 +913,7 @@ where
         for &q in &seeds {
             Sieve::add_cap_point(&mut out, q);
         }
-        for (&p, _) in &out_counts {
+        for &p in out_counts.keys() {
             Sieve::add_base_point(&mut out, p);
         }
 

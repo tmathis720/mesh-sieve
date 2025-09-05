@@ -4,7 +4,7 @@
 //! thread-safe interface for graph structures used in partitioning algorithms. All methods must
 //! be safe for concurrent use and must not mutate the graph.
 
-use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+use rayon::prelude::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use std::hash::Hash;
 
 /// Trait for graphs that can be partitioned in parallel.
@@ -29,12 +29,6 @@ pub trait PartitionableGraph: Sync {
     type NeighIter<'a>: Iterator<Item = Self::VertexId> + 'a
     where
         Self: 'a;
-    /// Parallel iterator over undirected edges `(u, v)` with `u < v`.
-    /// Implementors may override for maximum performance.
-    type EdgeParIter<'a>: ParallelIterator<Item = (Self::VertexId, Self::VertexId)> + 'a
-    where
-        Self: 'a;
-
     /// All vertices.
     fn vertices(&self) -> Self::VertexParIter<'_>;
 
@@ -52,15 +46,20 @@ pub trait PartitionableGraph: Sync {
     /// Contract:
     /// - Yields each undirected edge exactly once with `u < v`.
     /// - Thread-safe and read-only.
-    fn edges(&self) -> Self::EdgeParIter<'_>
+    fn edges(&self) -> rayon::vec::IntoIter<(Self::VertexId, Self::VertexId)>
     where
-        Self::VertexId: 'static, Self: Sized,
+        Self::VertexId: 'static,
+        Self: Sized,
     {
-        self.vertices().flat_map_iter(move |u| {
-            self.neighbors_seq(u)
-                .filter(move |&v| u < v)
-                .map(move |v| (u, v))
-        })
+        self
+            .vertices()
+            .flat_map_iter(move |u| {
+                self.neighbors_seq(u)
+                    .filter(move |&v| u < v)
+                    .map(move |v| (u, v))
+            })
+            .collect::<Vec<_>>()
+            .into_par_iter()
     }
 
     /// Deterministic O(1) helper: count of vertices.
@@ -79,23 +78,26 @@ pub trait PartitionableGraph: Sync {
 
 /// Debug-time verification that `edges()` upholds its contract.
 #[cfg(any(debug_assertions, feature = "check-graph-edges"))]
-pub fn assert_edges_well_formed<G: PartitionableGraph>(g: &G) where <G as partitioning::graph_traits::PartitionableGraph>::VertexId: std::fmt::Debug {
+pub fn assert_edges_well_formed<G: PartitionableGraph>(g: &G)
+where
+    <G as PartitionableGraph>::VertexId: std::fmt::Debug + 'static,
+{
     use std::collections::HashSet;
     let mut seen = HashSet::new();
-    g.edges().for_each(|(u, v)| {
+    for (u, v) in g.edges().collect::<Vec<_>>() {
         debug_assert!(u < v, "edges() must yield u < v");
         let ok = seen.insert((u, v));
         debug_assert!(ok, "duplicate edge ({u:?}, {v:?}) from edges()");
-    });
+    }
 
     #[cfg(feature = "expensive-checks")]
     {
         use std::collections::HashMap;
         let mut deg = HashMap::<G::VertexId, usize>::new();
-        g.edges().for_each(|(u, v)| {
+        for (u, v) in g.edges().collect::<Vec<_>>() {
             *deg.entry(u).or_default() += 1;
             *deg.entry(v).or_default() += 1;
-        });
+        }
         g.vertices().for_each(|u| {
             let e = *deg.get(&u).unwrap_or(&0);
             let d = g.degree(u);
@@ -120,7 +122,6 @@ mod tests {
         type VertexParIter<'a> = rayon::vec::IntoIter<usize>;
         type NeighParIter<'a> = rayon::vec::IntoIter<usize>;
         type NeighIter<'a> = std::iter::Copied<std::slice::Iter<'a, usize>>;
-        type EdgeParIter<'a> = rayon::vec::IntoIter<(usize, usize)>;
 
         fn vertices(&self) -> Self::VertexParIter<'_> {
             let vs: Vec<_> = self.adj.keys().copied().collect();
@@ -139,7 +140,7 @@ mod tests {
         fn degree(&self, v: Self::VertexId) -> usize {
             self.adj.get(&v).map_or(0, |n| n.len())
         }
-        fn edges(&self) -> Self::EdgeParIter<'_> {
+        fn edges(&self) -> rayon::vec::IntoIter<(usize, usize)> {
             let mut es = Vec::new();
             for (&u, ns) in &self.adj {
                 for &v in ns {

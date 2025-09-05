@@ -66,6 +66,12 @@ impl<P: PointLike> StrataCache<P> {
     }
 }
 
+impl<P: PointLike> Default for StrataCache<P> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Compute strata information on-the-fly (no cache).
 ///
 /// Returns a [`StrataCache`] containing height, depth, strata, and diameter information for all points.

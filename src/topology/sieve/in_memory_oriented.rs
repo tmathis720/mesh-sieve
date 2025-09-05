@@ -152,7 +152,7 @@ where
     pub fn has_arrow(&self, src: P, dst: P) -> bool {
         self.adjacency_out
             .get(&src)
-            .map_or(false, |v| v.iter().any(|(d, _, _)| *d == dst))
+            .is_some_and(|v| v.iter().any(|(d, _, _)| *d == dst))
     }
 
     #[cfg(debug_assertions)]
@@ -341,15 +341,15 @@ where
 
     fn remove_arrow(&mut self, src: P, dst: P) -> Option<T> {
         let mut removed = None;
-        if let Some(v) = self.adjacency_out.get_mut(&src) {
-            if let Some(pos) = v.iter().position(|(d, _, _)| *d == dst) {
-                removed = Some(v.remove(pos).1);
-            }
+        if let Some(v) = self.adjacency_out.get_mut(&src)
+            && let Some(pos) = v.iter().position(|(d, _, _)| *d == dst)
+        {
+            removed = Some(v.remove(pos).1);
         }
-        if let Some(v) = self.adjacency_in.get_mut(&dst) {
-            if let Some(pos) = v.iter().position(|(s, _, _)| *s == src) {
-                v.remove(pos);
-            }
+        if let Some(v) = self.adjacency_in.get_mut(&dst)
+            && let Some(pos) = v.iter().position(|(s, _, _)| *s == src)
+        {
+            v.remove(pos);
         }
         self.invalidate_cache();
         debug_invariants!(self);

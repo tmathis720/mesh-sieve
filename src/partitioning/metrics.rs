@@ -4,7 +4,6 @@
 //! including edge cut and replication factor metrics. These are intended for debugging,
 //! testing, and CI validation of partitioning algorithms.
 
-#![cfg(feature = "mpi-support")]
 
 use super::{PartitionMap, PartitionableGraph};
 use rayon::iter::ParallelIterator;
@@ -35,7 +34,7 @@ impl<V: Eq + Hash + Copy> PartitionMap<V> {
 pub fn edge_cut<G>(g: &G, pm: &PartitionMap<G::VertexId>) -> usize
 where
     G: PartitionableGraph,
-    G::VertexId: Eq + Hash + Copy, <G as graph_traits::PartitionableGraph>::VertexId: 'static,
+    G::VertexId: Eq + Hash + Copy + 'static,
 {
     g.edges()
         .filter(|&(u, v)| pm.part_of(u) != pm.part_of(v))
@@ -113,7 +112,6 @@ mod tests {
         type VertexParIter<'a> = rayon::vec::IntoIter<usize>;
         type NeighParIter<'a> = rayon::vec::IntoIter<usize>;
         type NeighIter<'a> = std::vec::IntoIter<usize>;
-        type EdgeParIter<'a> = rayon::vec::IntoIter<(usize, usize)>;
 
         fn vertices(&self) -> Self::VertexParIter<'_> {
             (0..self.n).collect::<Vec<_>>().into_par_iter()
@@ -140,7 +138,7 @@ mod tests {
         fn degree(&self, v: usize) -> usize {
             self.neighbors_seq(v).count()
         }
-        fn edges(&self) -> Self::EdgeParIter<'_> {
+        fn edges(&self) -> rayon::vec::IntoIter<(usize, usize)> {
             self.edges.clone().into_par_iter()
         }
     }

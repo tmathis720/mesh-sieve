@@ -133,7 +133,7 @@ where
                 let load = part_owner_load[p].load(Ordering::Relaxed);
                 let key = salted_key(salt, v, p);
                 let t = (load, usize::MAX - deg as usize, key, p);
-                if best.map_or(true, |b| t < (b.0, b.1, b.2, b.3)) {
+                if best.is_none_or(|b| t < (b.0, b.1, b.2, b.3)) {
                     best = Some(t);
                 }
             }
@@ -155,7 +155,7 @@ where
             for (&p, &deg) in &cand {
                 let key = salted_key(salt, v, p);
                 let t = (loads[p], usize::MAX - deg as usize, key, p);
-                if best.map_or(true, |b| t < (b.0, b.1, b.2, b.3)) {
+                if best.is_none_or(|b| t < (b.0, b.1, b.2, b.3)) {
                     best = Some(t);
                 }
             }
@@ -200,7 +200,7 @@ where
             },
             |mut a, b| {
                 for (vx, mut list) in b.map {
-                    a.map.entry(vx).or_default().extend(list.drain(..));
+                    a.map.entry(vx).or_default().append(&mut list);
                 }
                 a
             },
@@ -249,10 +249,6 @@ mod tests {
             = std::vec::IntoIter<usize>
         where
             Self: 'a;
-        type EdgeParIter<'a>
-            = rayon::vec::IntoIter<(usize, usize)>
-        where
-            Self: 'a;
 
         fn vertices(&self) -> Self::VertexParIter<'_> {
             (0..self.n).collect::<Vec<_>>().into_par_iter()
@@ -279,7 +275,7 @@ mod tests {
         fn degree(&self, v: usize) -> usize {
             self.neighbors_seq(v).count()
         }
-        fn edges(&self) -> Self::EdgeParIter<'_> {
+        fn edges(&self) -> rayon::vec::IntoIter<(usize, usize)> {
             self.edges.clone().into_par_iter()
         }
     }

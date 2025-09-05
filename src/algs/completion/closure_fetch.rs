@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 #[repr(u8)]
 #[derive(Copy, Clone)]
-pub(crate) enum ReqKind {
+pub enum ReqKind {
     Cone = 1,
     Support = 2,
 }
@@ -62,7 +62,7 @@ pub fn fetch_adjacency<C: Communicator>(
     let mut _keep_alive: Vec<Vec<WirePoint>> = Vec::new();
     let mut _keep_hdrs: Vec<Vec<u8>> = Vec::new();
     for (&rank, pts) in requests {
-        let mut body: Vec<WirePoint> = pts.iter().map(|p| WirePoint { id: p.get() }).collect();
+        let body: Vec<WirePoint> = pts.iter().map(|p| WirePoint { id: p.get() }).collect();
         let hdr_bytes = cast_slice(&[hdr]).to_vec();
         let bytes_pts = cast_slice(&body);
         pending_sends.push(comm.isend(rank, base_tag, &hdr_bytes));
