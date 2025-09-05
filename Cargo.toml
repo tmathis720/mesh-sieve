@@ -55,6 +55,7 @@ check-invariants = []
 check-empty-part = []
 fast-hash = ["ahash"]
 deterministic-order = []
+deterministic-owners = []
 
 
 [build-dependencies]

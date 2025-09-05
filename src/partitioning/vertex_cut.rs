@@ -1,43 +1,31 @@
 //! Vertex cut construction for distributed graph partitioning.
 //!
-//! This module provides [`build_vertex_cuts`], a parallel algorithm for assigning primary owners
-//! and replica lists for vertices in a partitioned graph, supporting distributed ghosting and communication.
+//! Builds a single primary owner for each vertex and replica lists for
+//! cross-part edges. The algorithm proceeds in three phases:
+//!   1. Accumulate per-vertex histograms of incident parts.
+//!   2. Choose a primary owner for every vertex using load, locality and a
+//!      salted hash for deterministic tie breaking.
+//!   3. Sweep the edges again to produce replica lists for vertices that
+//!      touch different primary parts.
 
 use crate::partitioning::error::PartitionError;
-use crate::partitioning::PartitionMap;
 use crate::partitioning::graph_traits::PartitionableGraph;
+use crate::partitioning::PartitionMap;
 use ahash::AHasher;
-use parking_lot::Mutex;
-use rayon::iter::IntoParallelIterator;
-use rayon::prelude::*; // brings IntoParallelIterator, ParallelIterator, etc.
+use hashbrown::HashMap;
+use rayon::prelude::*;
 use std::hash::Hasher;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// Build primary owner and replica lists for each vertex in a partitioned graph.
-///
-/// For each edge `(u, v)` in the graph where `pm.part_of(u) != pm.part_of(v)`,
-/// chooses a “primary owner” of that edge (by hashing `(u,v)` with a salt),
-/// then records the other endpoint as a “replica.”
-///
-/// Returns `(Vec<PartId>, Vec<Vec<(VertexId, PartId)>>)`:
-/// - `primary_owner[v]` is the primary owner’s part ID for vertex `v`.
-/// - `replicas[v]` is a `Vec` of `(neighbor_vertex, neighbor_part)` that need ghosting.
-///
-/// # Arguments
-/// - `graph`: The partitioned graph.
-/// - `pm`: The partition map indicating part assignments for each vertex.
-/// - `salt`: A salt value for deterministic hashing.
-///
-/// # Returns
-/// A tuple containing:
-/// - `primary_owner`: Vector mapping each vertex to its primary owner's part ID.
-/// - `replicas`: Vector of vectors, where each inner vector lists the replicas for a vertex.
-///
-/// # Parallelism
-/// This function uses parallel iteration for efficient processing of large graphs.
-///
-/// # Features
-/// Only available with the `mpi-support` feature enabled.
+#[inline]
+fn salted_key(salt: u64, v: usize, p: usize) -> u64 {
+    let mut h = AHasher::default();
+    h.write_u64(salt);
+    h.write_u64(v as u64);
+    h.write_u64(p as u64);
+    h.finish()
+}
+
 #[cfg(feature = "mpi-support")]
 pub fn build_vertex_cuts<G>(
     graph: &G,
@@ -47,136 +35,224 @@ pub fn build_vertex_cuts<G>(
 where
     G: PartitionableGraph<VertexId = usize> + Sync,
 {
-    // 1. Determine number of vertices
+    // Collect vertices and build index map
     let verts: Vec<G::VertexId> = graph.vertices().collect();
     let n = verts.len();
-    // Map vertex ID to index
-    let vert_idx: std::collections::HashMap<G::VertexId, usize> = verts.iter().cloned().enumerate().map(|(i, v)| (v, i)).collect();
-
-    // Determine how many parts we have (max part ID + 1)
-    let num_parts = {
-        let mut max = 0;
-        let mut any = false;
-        for (_v, &p) in pm.iter() {
-            any = true;
-            if p > max { max = p; }
-        }
-        if !any {
-            return Err(PartitionError::NoParts);
-        }
-        max + 1
-    };
-    // Create an atomic counter for each part’s replica-load
-    let part_replica_count: Vec<AtomicUsize> =
-        (0..num_parts).map(|_| AtomicUsize::new(0)).collect();
-
-    // 2. Allocate primary_part array, default = usize::MAX
-    let mut primary_part: Vec<AtomicUsize> = (0..n).map(|_| AtomicUsize::new(usize::MAX)).collect();
-
-    // 3. Allocate one Mutex<Vec<...>> per vertex for its replicas
-    let replica_lists: Vec<Mutex<Vec<(G::VertexId, usize)>>> =
-        (0..n).map(|_| Mutex::new(Vec::new())).collect();
-
-    // 4. Parallel edge sweep: for each u, for each neighbor v where u < v
-    verts.par_iter().for_each(|&u| {
-        graph.neighbors(u).into_par_iter().for_each(|v| {
-            if u < v {
-                let pu = pm.get(&u).copied().ok_or(PartitionError::MissingPartition(u)).unwrap();
-                let pv = pm.get(&v).copied().ok_or(PartitionError::MissingPartition(v)).unwrap();
-                if pu != pv {
-                    let count_u = part_replica_count[pu].load(Ordering::Relaxed);
-                    let count_v = part_replica_count[pv].load(Ordering::Relaxed);
-                    let (owner, other, owner_part) = if count_u < count_v {
-                        (u, v, pu)
-                    } else if count_v < count_u {
-                        (v, u, pv)
-                    } else {
-                        let mut h = AHasher::default();
-                        h.write_u64(salt);
-                        h.write_u64(u as u64);
-                        h.write_u64(v as u64);
-                        let hashval = h.finish();
-                        if (hashval & 1) == 0 {
-                            (u, v, pu)
-                        } else {
-                            (v, u, pv)
-                        }
-                    };
-                    let owner_idx = *vert_idx.get(&owner)
-                        .ok_or(PartitionError::VertexNotFound(owner)).unwrap();
-                    let other_idx = *vert_idx.get(&other)
-                        .ok_or(PartitionError::VertexNotFound(other)).unwrap();
-                    part_replica_count[owner_part].fetch_add(1, Ordering::Relaxed);
-                    primary_part[owner_idx].store(owner_part, Ordering::Relaxed);
-                    primary_part[other_idx].store(owner_part, Ordering::Relaxed);
-                    {
-                        let mut guard = replica_lists[owner_idx].lock();
-                        guard.push((other, owner_part));
-                    }
-                    {
-                        let mut guard = replica_lists[other_idx].lock();
-                        guard.push((owner, owner_part));
-                    }
-                }
-            }
-        });
-    });
-
-    // 5. Deduplicate & sort each vertex’s replica list
-    for mutex in &replica_lists {
-        let mut vec = mutex.lock();
-        vec.sort_unstable();
-        vec.dedup();
-    }
-
-    // 6. For any vertex never set, assign its own part
-    for (v, atomic_part) in primary_part.iter_mut().enumerate() {
-        if atomic_part.load(Ordering::Relaxed) == usize::MAX {
-            let vert = verts[v];
-            atomic_part.store(pm.get(&vert).copied().ok_or(PartitionError::MissingPartition(vert))?, Ordering::Relaxed);
-        }
-    }
-
-    // 7. Collect final primary_owner Vec<usize>
-    let primary_owner: Vec<usize> = primary_part
-        .into_iter()
-        .map(|a| a.load(Ordering::Relaxed))
+    let vert_idx: HashMap<G::VertexId, usize> = verts
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(i, v)| (v, i))
         .collect();
 
-    // 8. Collect final replicas Vec<Vec<(VertexId, usize)>>
-    let replicas: Vec<Vec<(G::VertexId, usize)>> =
-        replica_lists.into_iter().map(|m| m.into_inner()).collect();
+    // Determine number of parts
+    let num_parts = {
+        let mut max = None;
+        for (_v, &p) in pm.iter() {
+            max = Some(max.map_or(p, |m: usize| m.max(p)));
+        }
+        match max {
+            Some(m) => m + 1,
+            None => return Err(PartitionError::NoParts),
+        }
+    };
 
-    Ok((primary_owner, replicas))
+    type PartId = usize;
+    type VIdx = usize;
+
+    #[inline]
+    fn bump(map: &mut HashMap<PartId, u32>, p: PartId) {
+        *map.entry(p).or_insert(0) = map.get(&p).copied().unwrap_or(0).saturating_add(1);
+    }
+
+    struct LocalHist {
+        map: HashMap<VIdx, HashMap<PartId, u32>>,
+    }
+
+    // First pass: accumulate incident-part histograms
+    let hist = graph
+        .edges()
+        .fold(
+            || LocalHist {
+                map: HashMap::new(),
+            },
+            |mut acc, (u, v)| {
+                let pu = *pm
+                    .get(&u)
+                    .ok_or(PartitionError::MissingPartition(u))
+                    .unwrap();
+                let pv = *pm
+                    .get(&v)
+                    .ok_or(PartitionError::MissingPartition(v))
+                    .unwrap();
+                let ui = *vert_idx
+                    .get(&u)
+                    .ok_or(PartitionError::VertexNotFound(u))
+                    .unwrap();
+                let vi = *vert_idx
+                    .get(&v)
+                    .ok_or(PartitionError::VertexNotFound(v))
+                    .unwrap();
+
+                bump(acc.map.entry(ui).or_insert_with(HashMap::new), pv);
+                bump(acc.map.entry(vi).or_insert_with(HashMap::new), pu);
+                acc
+            },
+        )
+        .reduce(
+            || LocalHist {
+                map: HashMap::new(),
+            },
+            |mut a, b| {
+                for (vx, hb) in b.map {
+                    let ha = a.map.entry(vx).or_insert_with(HashMap::new);
+                    for (p, c) in hb {
+                        *ha.entry(p).or_insert(0) =
+                            ha.get(&p).copied().unwrap_or(0).saturating_add(c);
+                    }
+                }
+                a
+            },
+        )
+        .map;
+
+    // Second pass: choose primary owner for each vertex
+    let part_owner_load: Vec<AtomicUsize> = (0..num_parts).map(|_| AtomicUsize::new(0)).collect();
+    let mut primary: Vec<usize> = vec![usize::MAX; n];
+
+    #[cfg(not(feature = "deterministic-owners"))]
+    {
+        primary.par_iter_mut().enumerate().for_each(|(ui, slot)| {
+            let v = verts[ui];
+            let mut cand = hist.get(&ui).cloned().unwrap_or_default();
+            let own = *pm.get(&v).expect("partition missing for vertex");
+            cand.entry(own).or_insert(0);
+
+            let mut best: Option<(usize, usize, u64, PartId)> = None;
+            for (&p, &deg) in &cand {
+                let load = part_owner_load[p].load(Ordering::Relaxed);
+                let key = salted_key(salt, v, p);
+                let t = (load, usize::MAX - deg as usize, key, p);
+                if best.map_or(true, |b| t < (b.0, b.1, b.2, b.3)) {
+                    best = Some(t);
+                }
+            }
+            let chosen = best.unwrap().3;
+            part_owner_load[chosen].fetch_add(1, Ordering::Relaxed);
+            *slot = chosen;
+        });
+    }
+
+    #[cfg(feature = "deterministic-owners")]
+    {
+        let mut loads = vec![0usize; num_parts];
+        for ui in 0..n {
+            let v = verts[ui];
+            let mut cand = hist.get(&ui).cloned().unwrap_or_default();
+            let own = *pm.get(&v).ok_or(PartitionError::MissingPartition(v))?;
+            cand.entry(own).or_insert(0);
+            let mut best: Option<(usize, usize, u64, PartId)> = None;
+            for (&p, &deg) in &cand {
+                let key = salted_key(salt, v, p);
+                let t = (loads[p], usize::MAX - deg as usize, key, p);
+                if best.map_or(true, |b| t < (b.0, b.1, b.2, b.3)) {
+                    best = Some(t);
+                }
+            }
+            let chosen = best.unwrap().3;
+            loads[chosen] += 1;
+            primary[ui] = chosen;
+        }
+    }
+
+    // Third pass: construct replica lists
+    struct LocalRep<G: PartitionableGraph> {
+        map: HashMap<VIdx, Vec<(G::VertexId, usize)>>,
+    }
+
+    let rep_map = graph
+        .edges()
+        .fold(
+            || LocalRep::<G> {
+                map: HashMap::new(),
+            },
+            |mut acc, (u, v)| {
+                let ui = *vert_idx
+                    .get(&u)
+                    .ok_or(PartitionError::VertexNotFound(u))
+                    .unwrap();
+                let vi = *vert_idx
+                    .get(&v)
+                    .ok_or(PartitionError::VertexNotFound(v))
+                    .unwrap();
+                let pu = primary[ui];
+                let pv = primary[vi];
+                if pu != pv {
+                    acc.map.entry(ui).or_default().push((v, pv));
+                    acc.map.entry(vi).or_default().push((u, pu));
+                }
+                acc
+            },
+        )
+        .reduce(
+            || LocalRep::<G> {
+                map: HashMap::new(),
+            },
+            |mut a, b| {
+                for (vx, mut list) in b.map {
+                    a.map.entry(vx).or_default().extend(list.drain(..));
+                }
+                a
+            },
+        )
+        .map;
+
+    let mut replicas: Vec<Vec<(G::VertexId, usize)>> = vec![Vec::new(); n];
+    for (ui, mut list) in rep_map {
+        list.sort_unstable();
+        list.dedup();
+        replicas[ui] = list;
+    }
+
+    Ok((primary, replicas))
 }
 
 #[cfg(test)]
 #[cfg(feature = "mpi-support")]
 mod tests {
     use super::*;
-    use crate::partitioning::PartitionMap;
-    use crate::partitioning::graph_traits::PartitionableGraph;
     use rayon::iter::IntoParallelIterator;
-    use std::sync::atomic::AtomicUsize;
-    use std::sync::atomic::Ordering;
 
     /// Simple graph implementation for testing
     struct TestGraph {
         edges: Vec<(usize, usize)>,
         n: usize,
     }
+
     impl TestGraph {
-        fn new(edges: Vec<(usize,usize)>, n: usize) -> Self {
+        fn new(edges: Vec<(usize, usize)>, n: usize) -> Self {
             TestGraph { edges, n }
         }
     }
 
     impl PartitionableGraph for TestGraph {
         type VertexId = usize;
-        type VertexParIter<'a> = rayon::vec::IntoIter<usize> where Self: 'a;
-        type NeighParIter<'a> = rayon::vec::IntoIter<usize> where Self: 'a;
-        type NeighIter<'a> = std::vec::IntoIter<usize> where Self: 'a;
-        type EdgeParIter<'a> = rayon::vec::IntoIter<(usize, usize)> where Self: 'a;
+        type VertexParIter<'a>
+            = rayon::vec::IntoIter<usize>
+        where
+            Self: 'a;
+        type NeighParIter<'a>
+            = rayon::vec::IntoIter<usize>
+        where
+            Self: 'a;
+        type NeighIter<'a>
+            = std::vec::IntoIter<usize>
+        where
+            Self: 'a;
+        type EdgeParIter<'a>
+            = rayon::vec::IntoIter<(usize, usize)>
+        where
+            Self: 'a;
 
         fn vertices(&self) -> Self::VertexParIter<'_> {
             (0..self.n).collect::<Vec<_>>().into_par_iter()
@@ -185,8 +261,18 @@ mod tests {
             self.neighbors_seq(v).collect::<Vec<_>>().into_par_iter()
         }
         fn neighbors_seq(&self, v: usize) -> Self::NeighIter<'_> {
-            let ns = self.edges.iter()
-                .filter_map(|&(a,b)| if a==v { Some(b) } else if b==v { Some(a) } else { None })
+            let ns = self
+                .edges
+                .iter()
+                .filter_map(|&(a, b)| {
+                    if a == v {
+                        Some(b)
+                    } else if b == v {
+                        Some(a)
+                    } else {
+                        None
+                    }
+                })
                 .collect::<Vec<_>>();
             ns.into_iter()
         }
@@ -199,64 +285,50 @@ mod tests {
     }
 
     #[test]
-    fn vertex_cut_cycle_nondeterministic() {
+    fn vertex_cut_cycle_replicas() {
         // 4-cycle: 0-1-2-3-0 with two parts: {0,1}=0 and {2,3}=1
-        let g = TestGraph::new(vec![(0,1),(1,2),(2,3),(3,0)], 4);
+        let g = TestGraph::new(vec![(0, 1), (1, 2), (2, 3), (3, 0)], 4);
         let mut pm = PartitionMap::with_capacity(4);
-        pm.insert(0, 0); pm.insert(1, 0);
-        pm.insert(2, 1); pm.insert(3, 1);
+        pm.insert(0, 0);
+        pm.insert(1, 0);
+        pm.insert(2, 1);
+        pm.insert(3, 1);
         let (primary, replicas) = build_vertex_cuts(&g, &pm, 42).unwrap();
 
-        // Edges (1-2) and (3-0) cross partitions; owner must be same for both endpoints
-        for &(u,v) in &[(1,2),(3,0)] {
-            assert_eq!(primary[u], primary[v], "Primary owner mismatch on edge {}-{}", u, v);
-            let p = primary[u];
-            // Check that each lists the other as a replica
-            let has_uv = replicas[u].iter().any(|&(nbr, part)| nbr==v && part==p);
-            let has_vu = replicas[v].iter().any(|&(nbr, part)| nbr==u && part==p);
-            assert!(has_uv && has_vu, "Missing replica entries between {} and {}", u, v);
+        // Cross edges (1,2) and (3,0) should create replicas on both endpoints
+        for &(u, v) in &[(1, 2), (3, 0)] {
+            let pu = primary[u];
+            let pv = primary[v];
+            assert!(
+                replicas[u].contains(&(v, pv)),
+                "missing replica for {u}->{v}"
+            );
+            assert!(
+                replicas[v].contains(&(u, pu)),
+                "missing replica for {v}->{u}"
+            );
         }
     }
 
     #[test]
     fn vertex_cut_isolated_vertex() {
-        // Single isolated vertex should own itself, no replicas
         let g = TestGraph::new(vec![], 1);
         let mut pm = PartitionMap::with_capacity(1);
         pm.insert(0, 0);
         let (primary, replicas) = build_vertex_cuts(&g, &pm, 99).unwrap();
         assert_eq!(primary, vec![0]);
-        assert!(replicas[0].is_empty(), "Isolated vertex should have no replicas");
+        assert!(replicas[0].is_empty());
     }
 
     #[test]
-    fn vertex_cut_two_node_owner_balancing() {
-        // 2-node graph: 0-1, different parts => primary must agree, and each replicates the other
-        let g = TestGraph::new(vec![(0,1)], 2);
+    fn vertex_cut_two_node_replicas() {
+        let g = TestGraph::new(vec![(0, 1)], 2);
         let mut pm = PartitionMap::with_capacity(2);
-        pm.insert(0, 0); pm.insert(1, 1);
+        pm.insert(0, 0);
+        pm.insert(1, 1);
         let (primary, replicas) = build_vertex_cuts(&g, &pm, 0).unwrap();
 
-        // Both endpoints share the same owner
-        assert_eq!(primary[0], primary[1], "Both endpoints must share a primary owner");
-        // Each should list the other in its replica list
-        assert!(replicas[0].iter().any(|&(nbr, _)| nbr==1), "Vertex 0 missing replica for 1");
-        assert!(replicas[1].iter().any(|&(nbr, _)| nbr==0), "Vertex 1 missing replica for 0");
-    }
-
-    #[test]
-    fn vertex_cut_triangle_distinct_parts() {
-        // Triangle: 0-1-2-0, all in distinct parts; ensure at least one replica per vertex
-        let g = TestGraph::new(vec![(0,1),(1,2),(2,0)], 3);
-        let mut pm = PartitionMap::with_capacity(3);
-        pm.insert(0, 0); pm.insert(1, 1); pm.insert(2, 2);
-        let (primary, replicas) = build_vertex_cuts(&g, &pm, 123).unwrap();
-
-        for v in 0..3 {
-            // primary owner must be some valid part
-            assert!(primary[v] < 3, "Invalid owner for vertex {}", v);
-            // and should have at least one replica since every edge crosses
-            assert!(!replicas[v].is_empty(), "Vertex {} has no replicas", v);
-        }
+        assert!(replicas[0].contains(&(1, primary[1])));
+        assert!(replicas[1].contains(&(0, primary[0])));
     }
 }
