@@ -11,26 +11,15 @@
 use crate::partitioning::error::PartitionError;
 use crate::partitioning::graph_traits::PartitionableGraph;
 use crate::partitioning::PartitionMap;
-use ahash::AHasher;
 use hashbrown::HashMap;
 use rayon::prelude::*;
-use std::hash::Hasher;
 use std::sync::atomic::{AtomicUsize, Ordering};
-
-#[inline]
-fn salted_key(salt: u64, v: usize, p: usize) -> u64 {
-    let mut h = AHasher::default();
-    h.write_u64(salt);
-    h.write_u64(v as u64);
-    h.write_u64(p as u64);
-    h.finish()
-}
 
 #[cfg(feature = "mpi-support")]
 pub fn build_vertex_cuts<G>(
     graph: &G,
     pm: &PartitionMap<G::VertexId>,
-    salt: u64,
+    _salt: u64,
 ) -> Result<(Vec<usize>, Vec<Vec<(G::VertexId, usize)>>), PartitionError>
 where
     G: PartitionableGraph<VertexId = usize> + Sync,
@@ -128,16 +117,15 @@ where
             let own = *pm.get(&v).expect("partition missing for vertex");
             cand.entry(own).or_insert(0);
 
-            let mut best: Option<(usize, usize, u64, PartId)> = None;
+            let mut best: Option<(usize, usize, PartId)> = None;
             for (&p, &deg) in &cand {
                 let load = part_owner_load[p].load(Ordering::Relaxed);
-                let key = salted_key(salt, v, p);
-                let t = (load, usize::MAX - deg as usize, key, p);
-                if best.is_none_or(|b| t < (b.0, b.1, b.2, b.3)) {
+                let t = (load, usize::MAX - deg as usize, p);
+                if best.map_or(true, |b| t < b) {
                     best = Some(t);
                 }
             }
-            let chosen = best.unwrap().3;
+            let chosen = best.unwrap().2;
             part_owner_load[chosen].fetch_add(1, Ordering::Relaxed);
             *slot = chosen;
         });
@@ -151,15 +139,14 @@ where
             let mut cand = hist.get(&ui).cloned().unwrap_or_default();
             let own = *pm.get(&v).ok_or(PartitionError::MissingPartition(v))?;
             cand.entry(own).or_insert(0);
-            let mut best: Option<(usize, usize, u64, PartId)> = None;
+            let mut best: Option<(usize, usize, PartId)> = None;
             for (&p, &deg) in &cand {
-                let key = salted_key(salt, v, p);
-                let t = (loads[p], usize::MAX - deg as usize, key, p);
-                if best.is_none_or(|b| t < (b.0, b.1, b.2, b.3)) {
+                let t = (loads[p], usize::MAX - deg as usize, p);
+                if best.map_or(true, |b| t < b) {
                     best = Some(t);
                 }
             }
-            let chosen = best.unwrap().3;
+            let chosen = best.unwrap().2;
             loads[chosen] += 1;
             primary[ui] = chosen;
         }
