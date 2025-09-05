@@ -14,3 +14,5 @@
   averaging via `AverageReducer`.
 - Renamed `data::refine::delta::Delta` to `SliceDelta`; `Delta` remains as a
   deprecated alias.
+- Renamed `overlap::delta::Delta` to `ValueDelta`; `Delta` remains as a
+  deprecated alias.

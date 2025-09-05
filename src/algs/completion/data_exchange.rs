@@ -18,7 +18,7 @@ pub fn exchange_data<V, D, C>(
 ) -> Result<(), MeshSieveError>
 where
     V: Clone + Default + Send + 'static,
-    D: crate::overlap::delta::Delta<V> + Send + Sync + 'static,
+    D: crate::overlap::delta::ValueDelta<V> + Send + Sync + 'static,
     D::Part: bytemuck::Pod + Default,
     C: crate::algs::communicator::Communicator + Sync,
 {
@@ -113,7 +113,7 @@ pub fn exchange_data_symmetric<V, D, C>(
 ) -> Result<(), MeshSieveError>
 where
     V: Clone + Default + Send + 'static,
-    D: crate::overlap::delta::Delta<V> + Send + Sync + 'static,
+    D: crate::overlap::delta::ValueDelta<V> + Send + Sync + 'static,
     D::Part: bytemuck::Pod + Default,
     C: crate::algs::communicator::Communicator + Sync,
 {
@@ -221,7 +221,7 @@ mod tests {
 
     // Dummy Delta implementation
     struct DummyDelta;
-    impl crate::overlap::delta::Delta<DummyValue> for DummyDelta {
+    impl crate::overlap::delta::ValueDelta<DummyValue> for DummyDelta {
         type Part = i32;
         fn restrict(v: &DummyValue) -> i32 {
             v.0

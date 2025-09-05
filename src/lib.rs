@@ -65,7 +65,7 @@ pub mod prelude {
     pub use crate::topology::bounds::{PointLike, PayloadLike};
     pub use crate::data::atlas::Atlas;
     pub use crate::data::section::{Section, Map};
-    pub use crate::overlap::delta::{Delta, CopyDelta, AddDelta};
+    pub use crate::overlap::delta::{ValueDelta, CopyDelta, AddDelta};
     pub use crate::overlap::overlap::Overlap;
     pub use crate::algs::communicator::Communicator;
     #[cfg(feature="mpi-support")]
