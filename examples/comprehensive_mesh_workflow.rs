@@ -620,7 +620,7 @@ fn test_sieved_array_operations(rank: usize) {
 fn test_error_handling_robustness(rank: usize) {
     use mesh_sieve::{
         overlap::delta::ZeroDelta,
-        prelude::{Atlas, Delta, Section, Sieve},
+        prelude::{Atlas, ValueDelta, Section, Sieve},
     };
 
     println!("[rank {}] Testing error handling robustness...", rank);
@@ -677,9 +677,9 @@ fn test_error_handling_robustness(rank: usize) {
 
     // 5. Test Delta trait behavior
     let mut val = 42;
-    let part = <ZeroDelta as ValueDelta<i32>>::restrict(&val);
+    let part = <ZeroDelta as mesh_sieve::prelude::ValueDelta<i32>>::restrict(&val);
     assert_eq!(part, 0, "ZeroDelta restrict should return 0");
-    <ZeroDelta as ValueDelta<i32>>::fuse(&mut val, 999);
+    <ZeroDelta as mesh_sieve::prelude::ValueDelta<i32>>::fuse(&mut val, 999);
     assert_eq!(val, 42, "ZeroDelta fuse should not change value");
 
     println!("[rank {}] Error handling robustness test passed", rank);
