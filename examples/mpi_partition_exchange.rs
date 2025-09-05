@@ -3,28 +3,24 @@
 //! Version 1.2.0: Passing
 // This example demonstrates how to partition and exchange data in a 4-rank MPI environment.
 #[cfg(feature = "mpi-support")]
+use mesh_sieve::data::atlas::Atlas;
+#[cfg(feature = "mpi-support")]
+use mesh_sieve::data::section::Section;
+#[cfg(feature = "mpi-support")]
+use mesh_sieve::topology::point::PointId;
+#[cfg(feature = "mpi-support")]
+use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
+#[cfg(feature = "mpi-support")]
 use mpi::traits::*;
 #[cfg(feature = "mpi-support")]
 use rayon::iter::IntoParallelIterator;
 #[cfg(feature = "mpi-support")]
 use rayon::iter::ParallelIterator;
-#[cfg(feature = "mpi-support")]
-use mesh_sieve::algs::complete_section;
-#[cfg(feature = "mpi-support")]
-use mesh_sieve::algs::partition;
-#[cfg(feature = "mpi-support")]
-use mesh_sieve::data::atlas::Atlas;
-#[cfg(feature = "mpi-support")]
-use mesh_sieve::data::section::{Map, Section};
-#[cfg(feature = "mpi-support")]
-use mesh_sieve::topology::point::PointId;
-#[cfg(feature = "mpi-support")]
-use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
 
 #[cfg(feature = "mpi-support")]
-use mesh_sieve::partitioning::{partition, PartitionerConfig};
-#[cfg(feature = "mpi-support")]
 use mesh_sieve::partitioning::graph_traits::PartitionableGraph;
+#[cfg(feature = "mpi-support")]
+use mesh_sieve::partitioning::{partition, PartitionerConfig};
 
 /// Build a 2×2 structured grid of points (IDs 0..8).
 #[cfg(feature = "mpi-support")]
@@ -53,8 +49,18 @@ struct GridGraph<'a> {
 #[cfg(feature = "mpi-support")]
 impl<'a> PartitionableGraph for GridGraph<'a> {
     type VertexId = usize;
-    type VertexParIter<'b> = rayon::vec::IntoIter<usize> where Self: 'b;
-    type NeighParIter<'b> = rayon::vec::IntoIter<usize> where Self: 'b;
+    type VertexParIter<'b>
+        = rayon::vec::IntoIter<usize>
+    where
+        Self: 'b;
+    type NeighParIter<'b>
+        = rayon::vec::IntoIter<usize>
+    where
+        Self: 'b;
+    type NeighIter<'b>
+        = std::vec::IntoIter<usize>
+    where
+        Self: 'b;
     fn vertices(&self) -> <Self as PartitionableGraph>::VertexParIter<'_> {
         (1..=9).collect::<Vec<_>>().into_par_iter()
     }
@@ -62,11 +68,37 @@ impl<'a> PartitionableGraph for GridGraph<'a> {
         let mut nbrs = Vec::new();
         let row = (v - 1) / 3;
         let col = (v - 1) % 3;
-        if row > 0 { nbrs.push(v - 3); }
-        if row < 2 { nbrs.push(v + 3); }
-        if col > 0 { nbrs.push(v - 1); }
-        if col < 2 { nbrs.push(v + 1); }
+        if row > 0 {
+            nbrs.push(v - 3);
+        }
+        if row < 2 {
+            nbrs.push(v + 3);
+        }
+        if col > 0 {
+            nbrs.push(v - 1);
+        }
+        if col < 2 {
+            nbrs.push(v + 1);
+        }
         nbrs.into_par_iter()
+    }
+    fn neighbors_seq(&self, v: usize) -> <Self as PartitionableGraph>::NeighIter<'_> {
+        let mut nbrs = Vec::new();
+        let row = (v - 1) / 3;
+        let col = (v - 1) % 3;
+        if row > 0 {
+            nbrs.push(v - 3);
+        }
+        if row < 2 {
+            nbrs.push(v + 3);
+        }
+        if col > 0 {
+            nbrs.push(v - 1);
+        }
+        if col < 2 {
+            nbrs.push(v + 1);
+        }
+        nbrs.into_iter()
     }
     fn degree(&self, v: usize) -> usize {
         self.neighbors(v).count()
@@ -102,7 +134,9 @@ fn main() {
         }
         // Now send counts + data to each *other* rank
         for (&r, pids) in by_rank.iter() {
-            if r == 0 { continue; } // skip yourself
+            if r == 0 {
+                continue;
+            } // skip yourself
             let proc = world.process_at_rank(r);
             // 1) send how many points this rank owns
             let count = pids.len();

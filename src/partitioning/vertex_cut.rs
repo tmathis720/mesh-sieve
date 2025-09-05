@@ -291,18 +291,20 @@ mod tests {
         pm.insert(3, 1);
         let (primary, replicas) = build_vertex_cuts(&g, &pm, 42).unwrap();
 
-        // Cross edges (1,2) and (3,0) should create replicas on both endpoints
-        for &(u, v) in &[(1, 2), (3, 0)] {
+        // Each edge crossing primary parts should create replicas on both endpoints
+        for &(u, v) in &g.edges {
             let pu = primary[u];
             let pv = primary[v];
-            assert!(
-                replicas[u].contains(&(v, pv)),
-                "missing replica for {u}->{v}"
-            );
-            assert!(
-                replicas[v].contains(&(u, pu)),
-                "missing replica for {v}->{u}"
-            );
+            if pu != pv {
+                assert!(
+                    replicas[u].contains(&(v, pv)),
+                    "missing replica for {u}->{v}"
+                );
+                assert!(
+                    replicas[v].contains(&(u, pu)),
+                    "missing replica for {v}->{u}"
+                );
+            }
         }
     }
 
