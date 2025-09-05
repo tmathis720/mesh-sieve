@@ -399,7 +399,7 @@ impl Overlap {
                     .inner
                     .adjacency_in
                     .get(dst)
-                    .map_or(true, |v| v.is_empty())
+                    .is_none_or(|v| v.is_empty())
                 {
                     return Err(E::OverlapEmptyPart { rank: *r });
                 }

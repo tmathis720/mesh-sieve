@@ -46,13 +46,9 @@ pub trait Orientation: Copy + Default + std::fmt::Debug + 'static {
 /// Trivial orientation (no-op)
 impl Orientation for () {
     #[inline]
-    fn compose(_: (), _: ()) -> () {
-        ()
-    }
+    fn compose(_: (), _: ()) {}
     #[inline]
-    fn inverse(_: ()) -> () {
-        ()
-    }
+    fn inverse(_: ()) {}
 }
 
 /// Legacy integer orientation (additive). Prefer explicit types from
@@ -102,7 +98,7 @@ pub trait OrientedSieve: Sieve {
     /// Transitive closure with accumulated orientations (downward).
     ///
     /// Returns a **stable, point-sorted** `Vec<(point, orientation_from_seed)>`.
-    fn closure_o<'s, I>(&'s self, seeds: I) -> Vec<(Self::Point, Self::Orient)>
+    fn closure_o<I>(&self, seeds: I) -> Vec<(Self::Point, Self::Orient)>
     where
         I: IntoIterator<Item = Self::Point>,
     {
@@ -137,7 +133,7 @@ pub trait OrientedSieve: Sieve {
     /// Because `support_o` reports the orientation of the forward arrow
     /// (`src -> dst`), following the arrow in reverse requires composing
     /// with its inverse at each step.
-    fn star_o<'s, I>(&'s self, seeds: I) -> Vec<(Self::Point, Self::Orient)>
+    fn star_o<I>(&self, seeds: I) -> Vec<(Self::Point, Self::Orient)>
     where
         I: IntoIterator<Item = Self::Point>,
     {

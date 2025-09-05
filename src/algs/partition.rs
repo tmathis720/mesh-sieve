@@ -42,7 +42,7 @@ where
 pub fn partition_edge_cut<G>(graph: &G, pm: &PartitionMap<G::VertexId>) -> usize
 where
     G: PartitionableGraph,
-    G::VertexId: PartialOrd + Eq + std::hash::Hash + Copy,
+    G::VertexId: PartialOrd + Eq + std::hash::Hash + Copy + 'static,
 {
     edge_cut(graph, pm)
 }

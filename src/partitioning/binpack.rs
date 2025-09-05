@@ -146,7 +146,7 @@ pub fn merge_clusters_into_parts(
             for &cid in members {
                 for &(nbr, w) in &items[cid].adj {
                     if unassigned.contains(&nbr) {
-                        if best.as_ref().map_or(true, |&(_,_,bw)| w > bw) {
+                        if best.as_ref().is_none_or(|&(_, _, bw)| w > bw) {
                             best = Some((s, nbr, w));
                         }
                     }

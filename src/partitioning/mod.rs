@@ -103,6 +103,9 @@ impl<V: Eq + Hash + Copy> PartitionMap<V> {
     pub fn len(&self) -> usize {
         self.0.len()
     }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
     pub fn iter(&self) -> impl Iterator<Item = (&V, &PartitionId)> {
         self.0.iter()
     }
@@ -272,7 +275,6 @@ mod tests {
         type VertexParIter<'a> = rayon::vec::IntoIter<usize>;
         type NeighParIter<'a> = rayon::vec::IntoIter<usize>;
         type NeighIter<'a> = std::vec::IntoIter<usize>;
-        type EdgeParIter<'a> = rayon::vec::IntoIter<(usize, usize)>;
 
         fn vertices(&self) -> Self::VertexParIter<'_> {
             vec![0, 1, 2, 3].into_par_iter()
@@ -286,7 +288,7 @@ mod tests {
         fn degree(&self, _v: Self::VertexId) -> usize {
             0
         }
-        fn edges(&self) -> Self::EdgeParIter<'_> {
+        fn edges(&self) -> rayon::vec::IntoIter<(usize, usize)> {
             Vec::new().into_par_iter()
         }
     }

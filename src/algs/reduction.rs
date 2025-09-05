@@ -37,7 +37,6 @@ where
     }
     let mut to_remove = Vec::new();
     for &u in &chart {
-        let ui = idx[&u];
         let neigh: Vec<_> = SieveRef::cone_points(s, u).collect();
         for &v in &neigh {
             let vi = idx[&v];

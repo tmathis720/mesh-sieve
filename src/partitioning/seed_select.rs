@@ -95,7 +95,6 @@ mod tests {
         type VertexParIter<'a> = rayon::vec::IntoIter<usize>;
         type NeighParIter<'a> = rayon::vec::IntoIter<usize>;
         type NeighIter<'a> = std::vec::IntoIter<usize>;
-        type EdgeParIter<'a> = rayon::vec::IntoIter<(usize, usize)>;
 
         fn vertices(&self) -> Self::VertexParIter<'_> {
             (0..self.n).collect::<Vec<_>>().into_par_iter()
@@ -116,7 +115,7 @@ mod tests {
         fn degree(&self, v: usize) -> usize {
             self.neighbors_seq(v).count()
         }
-        fn edges(&self) -> Self::EdgeParIter<'_> {
+        fn edges(&self) -> rayon::vec::IntoIter<(usize, usize)> {
             (0..self.n.saturating_sub(1))
                 .map(|i| (i, i + 1))
                 .collect::<Vec<_>>()
@@ -194,7 +193,6 @@ mod onizuka_partitioning {
         type VertexParIter<'a> = rayon::vec::IntoIter<usize>;
         type NeighParIter<'a> = rayon::vec::IntoIter<usize>;
         type NeighIter<'a> = std::vec::IntoIter<usize>;
-        type EdgeParIter<'a> = rayon::vec::IntoIter<(usize, usize)>;
 
         fn vertices(&self) -> Self::VertexParIter<'_> {
             (0..self.n).collect::<Vec<_>>().into_par_iter()
@@ -210,7 +208,7 @@ mod onizuka_partitioning {
         fn degree(&self, _v: usize) -> usize {
             self.n - 1
         }
-        fn edges(&self) -> Self::EdgeParIter<'_> {
+        fn edges(&self) -> rayon::vec::IntoIter<(usize, usize)> {
             let mut es = Vec::new();
             for u in 0..self.n {
                 for v in (u + 1)..self.n {

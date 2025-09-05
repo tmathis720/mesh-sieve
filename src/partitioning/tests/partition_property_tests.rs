@@ -19,7 +19,6 @@ fn e2e_cycle_4_nodes_k2() {
         type VertexParIter<'a> = rayon::vec::IntoIter<usize> where Self: 'a;
         type NeighParIter<'a>   = rayon::vec::IntoIter<usize> where Self: 'a;
         type NeighIter<'a>      = std::vec::IntoIter<usize> where Self: 'a;
-        type EdgeParIter<'a>    = rayon::vec::IntoIter<(usize, usize)> where Self: 'a;
 
         fn vertices(&self) -> Self::VertexParIter<'_> {
             (0..4).collect::<Vec<_>>().into_par_iter()
@@ -40,7 +39,7 @@ fn e2e_cycle_4_nodes_k2() {
         fn degree(&self, v: usize) -> usize {
             self.neighbors_seq(v).count()
         }
-        fn edges(&self) -> Self::EdgeParIter<'_> {
+        fn edges(&self) -> rayon::vec::IntoIter<(usize, usize)> {
             vec![(0,1),(1,2),(2,3),(0,3)].into_par_iter()
         }
     }
@@ -116,7 +115,6 @@ proptest! {
             type VertexParIter<'a> = rayon::vec::IntoIter<usize> where Self: 'a;
             type NeighParIter<'a>   = rayon::vec::IntoIter<usize> where Self: 'a;
             type NeighIter<'a>      = std::vec::IntoIter<usize> where Self: 'a;
-            type EdgeParIter<'a>    = rayon::vec::IntoIter<(usize, usize)> where Self: 'a;
             fn vertices(&self)->Self::VertexParIter<'_> {
                 (0..self.n).collect::<Vec<_>>().into_par_iter()
             }
@@ -132,7 +130,7 @@ proptest! {
             fn degree(&self, u: usize) -> usize {
                 self.neighbors_seq(u).count()
             }
-            fn edges(&self) -> Self::EdgeParIter<'_> {
+            fn edges(&self) -> rayon::vec::IntoIter<(usize, usize)> {
                 self.edges.clone().into_par_iter()
             }
         }

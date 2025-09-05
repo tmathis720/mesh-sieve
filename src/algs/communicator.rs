@@ -175,6 +175,9 @@ mod mpi_backend {
         pub rank: usize,
     }
 
+    unsafe impl Send for MpiComm {}
+    unsafe impl Sync for MpiComm {}
+
     impl Default for MpiComm {
         fn default() -> Self {
             Self::from_universe(mpi::initialize().unwrap())

@@ -299,7 +299,7 @@ where
     // collect the incoming iterator so we can iterate it multiple times
     let seed_vec: Vec<Point> = seeds.into_iter().collect();
 
-    let mut fuse = |s: &mut S, adj: &HashMap<Point, Vec<Point>>| {
+    let fuse = |s: &mut S, adj: &HashMap<Point, Vec<Point>>| {
         for (&src, dsts) in adj {
             for &dst in dsts {
                 s.add_arrow(src, dst, Default::default());
@@ -318,7 +318,7 @@ where
             if !seen.insert(p) {
                 continue;
             }
-            if policy.depth_limit.map_or(true, |L| d < L) {
+            if policy.depth_limit.map_or(true, |limit| d < limit) {
                 for (qpt, _) in sieve.cone(p) {
                     q.push_back((qpt, d + 1));
                 }
