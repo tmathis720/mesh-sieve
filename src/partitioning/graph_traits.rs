@@ -2,7 +2,9 @@
 //!
 //! This module defines the [`PartitionableGraph`] trait, which provides a parallel, read-only,
 //! thread-safe interface for graph structures used in partitioning algorithms. All methods must
-//! be safe for concurrent use and must not mutate the graph.
+//! be safe for concurrent use and must not mutate the graph. Implementations **must** provide
+//! iterators that stream without materializing global structures; in distributed variants, memory
+//! per rank should remain `O(n/p)` for vertices and `O(m/p)` for edges.
 
 use rayon::prelude::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use std::hash::Hash;

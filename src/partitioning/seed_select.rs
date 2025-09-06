@@ -10,7 +10,8 @@
 //! results across runs.
 
 use crate::partitioning::{graph_traits::PartitionableGraph, PartitionerConfig, PartitionerError};
-use rand::{rngs::SmallRng, seq::SliceRandom, Rng, SeedableRng};
+use rand::{rngs::SmallRng, seq::SliceRandom, Rng, RngCore, SeedableRng};
+use rayon::iter::ParallelIterator;
 
 /// Returns an error if `degrees.len()` doesn’t match the number of vertices.
 pub fn pick_seeds<G>(

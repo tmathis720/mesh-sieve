@@ -1,11 +1,36 @@
 //! Louvain-style clustering for distributed graph partitioning.
 //!
+//! ## Objective (Newman modularity with balance factor)
+//!
+//! We maximize the *balanced modularity gain* when merging clusters `i` and `j`:
+//!
+//! Let
+//! - `m` = number of *undirected* edges in the graph (unit: edges).
+//! - `vol_c` = sum of degrees of vertices in cluster `c` (unit: stubs; `∑_c vol_c = 2m`).
+//! - `e_rs` = number of undirected edges with one endpoint in cluster `r` and the other in cluster `s` (unit: edges).
+//!
+//! Define the *fractional* quantities:
+//! - `E_rs = e_rs / (2m)`,
+//! - `a_c = vol_c / (2m)`.
+//!
+//! Classical modularity can be written as `Q = ∑_c (E_cc - a_c^2)`.
+//! The modularity *gain* from merging clusters `i` and `j` is:
+//!
+//!     ΔQ_ij = 2 * (E_ij - a_i * a_j)
+//!
+//! In terms of raw counts, this is equivalently:
+//!
+//!     ΔQ_ij = (e_ij / m) - (vol_i * vol_j) / (2 m^2)
+//!
+//! We then apply a *size-balance factor* `f_ij = min(vol_i, vol_j) / max(vol_i, vol_j)`
+//! and maximize `ΔQ'_ij = α * ΔQ_ij * f_ij`, where `α ∈ [0,1]` is a configuration parameter
+//! controlling the strength of balance vs. modularity improvement.
+//!
 //! This module provides a simple Louvain-style community detection algorithm for use in
 //! parallel and distributed partitioning. The clustering is controlled by [`PartitionerConfig`]
 //! and is intended for use with graphs implementing [`PartitionableGraph`].
 //!
 //! The main entry point is [`louvain_cluster`], which returns a vector of cluster IDs for each vertex.
-
 
 use crate::partitioning::PartitionerConfig;
 use crate::partitioning::graph_traits::PartitionableGraph;
@@ -13,6 +38,8 @@ use hashbrown::HashMap as FastMap;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
+
+pub mod counters;
 
 /// Cluster statistics maintained during clustering.
 #[derive(Debug, Clone)]
@@ -25,27 +52,44 @@ struct ClusterInfo {
     inner_edges: u64,
 }
 
+#[cfg(feature = "exact-metrics")]
 #[inline]
-fn delta_q_balanced(e_ij: u64, vol_i: u64, vol_j: u64, m: f64, alpha: f64) -> f64 {
-    // ΔQ merge(i,j) = (E_ij / m) - (vol_i * vol_j) / (2 m^2)
-    let e_ij_f = e_ij as f64;
-    let vol_i_f = vol_i as f64;
-    let vol_j_f = vol_j as f64;
-    let delta_q = (e_ij_f / m) - (vol_i_f * vol_j_f) / (2.0 * m * m);
-
-    // Wakita–Tsurumi balancing using volume ratio
-    let bal = if vol_i == 0 || vol_j == 0 {
-        0.0
-    } else {
-        let (a, b) = if vol_i < vol_j {
-            (vol_i_f, vol_j_f)
-        } else {
-            (vol_j_f, vol_i_f)
-        };
-        (a / b).max(0.0).min(1.0)
-    };
-    alpha * delta_q * bal
+pub fn delta_q_pair(e_ij: u64, vol_i: u64, vol_j: u64, m_edges: u64, alpha: f64) -> (f64, f64) {
+    if m_edges == 0 {
+        return (0.0, 0.0);
+    }
+    let m = m_edges as f64;
+    let e_term = (e_ij as f64) / m;
+    let a_term = (vol_i as f64) * (vol_j as f64) / (2.0 * m * m);
+    let dq = e_term - a_term;
+    let f = (vol_i.min(vol_j) as f64) / (vol_i.max(vol_j).max(1) as f64);
+    let dq_bal = alpha * dq * f;
+    (dq, dq_bal)
 }
+
+#[cfg(not(feature = "exact-metrics"))]
+#[inline]
+pub(crate) fn delta_q_pair(
+    e_ij: u64,
+    vol_i: u64,
+    vol_j: u64,
+    m_edges: u64,
+    alpha: f64,
+) -> (f64, f64) {
+    if m_edges == 0 {
+        return (0.0, 0.0);
+    }
+    let m = m_edges as f64;
+    let e_term = (e_ij as f64) / m;
+    let a_term = (vol_i as f64) * (vol_j as f64) / (2.0 * m * m);
+    let dq = e_term - a_term;
+    let f = (vol_i.min(vol_j) as f64) / (vol_i.max(vol_j).max(1) as f64);
+    let dq_bal = alpha * dq * f;
+    (dq, dq_bal)
+}
+
+#[cfg(feature = "exact-metrics")]
+pub use delta_q_pair as delta_q_pair_public;
 
 /// Perform Louvain-style clustering on a partitionable graph.
 ///
@@ -91,8 +135,8 @@ where
     let degrees: Vec<u64> = verts.iter().map(|&u| graph.degree(u) as u64).collect();
 
     // Number of undirected edges
-    let m: f64 = graph.edges().count() as f64;
-    if m == 0.0 {
+    let m_edges: u64 = graph.edges().count() as u64;
+    if m_edges == 0 {
         return (0..n).map(|i| i as u32).collect();
     }
 
@@ -150,11 +194,11 @@ where
             let (Some(info_i), Some(info_j)) = (clusters.get(&ci), clusters.get(&cj)) else {
                 continue;
             };
-            let dq = delta_q_balanced(e_ij, info_i.volume, info_j.volume, m, cfg.alpha);
-            if dq > 0.0 {
+            let (_, dq_bal) = delta_q_pair(e_ij, info_i.volume, info_j.volume, m_edges, cfg.alpha);
+            if dq_bal > 0.0 {
                 match best {
-                    Some((_, _, best_dq, _)) if dq <= best_dq => {}
-                    _ => best = Some((ci, cj, dq, e_ij)),
+                    Some((_, _, best_dq, _)) if dq_bal <= best_dq => {}
+                    _ => best = Some((ci, cj, dq_bal, e_ij)),
                 }
             }
         }

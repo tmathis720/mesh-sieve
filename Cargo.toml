@@ -60,6 +60,8 @@ check-graph-edges = []
 expensive-checks = []
 binpack-retry = []
 log = []
+exact-metrics = []
+mem-snapshot = []
 
 
 [build-dependencies]

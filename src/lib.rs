@@ -10,6 +10,11 @@
 //! - MPI integration for distributed mesh and data exchange
 //! - Extensive serial, parallel, and property-based testing
 //!
+//! ## Determinism
+//!
+//! All randomized decisions use `SmallRng` seeds drawn from configuration so runs are
+//! reproducible. Unit tests fix seeds explicitly to ensure deterministic behavior.
+//!
 //! ## Usage
 //! Add `mesh-sieve` as a dependency in your `Cargo.toml` and enable features as needed:
 //!
@@ -44,34 +49,34 @@
 //! All Sieve implementations provide `points()`, `base_points()`, and `cap_points()` iterators for global point set access.
 
 // Re-export our major subsystems:
-pub mod topology;
-pub mod data;
-pub mod overlap;
 pub mod algs;
+pub mod data;
 pub mod mesh_error;
-pub mod section;
+pub mod overlap;
 #[cfg(feature = "mpi-support")]
 pub mod partitioning;
+pub mod section;
+pub mod topology;
 
 /// A convenient prelude to import the most-used traits & types:
 pub mod prelude {
+    pub use crate::algs::communicator::Communicator;
+    #[cfg(feature = "mpi-support")]
+    pub use crate::algs::communicator::MpiComm;
+    #[cfg(feature = "rayon")]
+    pub use crate::algs::communicator::RayonComm;
+    pub use crate::algs::completion::{complete_section, complete_sieve, complete_stack};
+    pub use crate::algs::rcm::distributed_rcm;
+    pub use crate::data::atlas::Atlas;
+    pub use crate::data::section::{Map, Section};
+    pub use crate::overlap::delta::{AddDelta, CopyDelta, ValueDelta};
+    pub use crate::overlap::overlap::Overlap;
+    pub use crate::topology::bounds::{PayloadLike, PointLike};
+    pub use crate::topology::point::PointId;
     pub use crate::topology::sieve::{
-        Sieve, MutableSieve, OrientedSieve, Orientation, InMemoryOrientedSieve,
-        InMemoryOrientedSieveArc, InMemorySieve, InMemorySieveArc, InMemoryStackArc,
-        SieveQueryExt, SieveBuildExt, InMemorySieveDeterministic,
+        InMemoryOrientedSieve, InMemoryOrientedSieveArc, InMemorySieve, InMemorySieveArc,
+        InMemorySieveDeterministic, InMemoryStackArc, MutableSieve, Orientation, OrientedSieve,
+        Sieve, SieveBuildExt, SieveQueryExt,
     };
     pub use crate::topology::stack::{InMemoryStack, Stack};
-    pub use crate::topology::point::PointId;
-    pub use crate::topology::bounds::{PointLike, PayloadLike};
-    pub use crate::data::atlas::Atlas;
-    pub use crate::data::section::{Section, Map};
-    pub use crate::overlap::delta::{ValueDelta, CopyDelta, AddDelta};
-    pub use crate::overlap::overlap::Overlap;
-    pub use crate::algs::communicator::Communicator;
-    #[cfg(feature="mpi-support")]
-    pub use crate::algs::communicator::MpiComm;
-    #[cfg(feature="rayon")]
-    pub use crate::algs::communicator::RayonComm;
-    pub use crate::algs::completion::{complete_sieve, complete_section, complete_stack};
-    pub use crate::algs::rcm::distributed_rcm;
 }

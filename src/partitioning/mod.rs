@@ -3,6 +3,11 @@
 //! This module provides a three-phase, native Rust implementation of the
 //! balanced graph‐partitioning strategy described in Onizuka _et al._ [2017].
 //!
+//! We avoid iterative, color-based many-to-many collectives; communication is
+//! batched per coarse phase. Each phase exposes a single boundary where an
+//! all-to-all (or sparse all-to-all) could be inserted in a distributed
+//! setting.
+//!
 //! ## Phase 1: Balanced Modularity Clustering
 //!
 //! We first run a **Louvain-style** clustering with a Wakita–Tsurumi adjustment
@@ -20,6 +25,14 @@
 //! Finally, we convert the edge-cut partition into a vertex-cut assignment,
 //! choosing owners to minimize per-part replica load.  See:
 //! - [`vertex_cut::build_vertex_cuts`]
+//!
+//! ## Future Work: Distributed Execution
+//!
+//! On coarse levels, the active rank set should shrink so each rank maintains
+//! `O(n/p)` vertices and `O(m/p)` edges. After Phase 1, exchange cluster IDs for
+//! boundary vertices once, then continue locally. After Phase 2, exchange only
+//! cluster→part assignments. Phase 3 requires exchanging owner decisions for cut
+//! edges. These boundaries act as fold points for future graph redistribution.
 //!
 //! [2017]: https://doi.org/10.1145/3126908.3126929
 #![cfg_attr(not(feature = "mpi-support"), allow(dead_code, unused_imports))]
@@ -136,6 +149,17 @@ pub enum PartitionerError {
     Other(String),
 }
 
+/// Wire format for sparse adjacency summaries (future distributed use).
+#[cfg(feature = "mpi-support")]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct ClusterSummary {
+    pub cid: u32,
+    pub load: u64,
+    /// neighbors stored as parallel arrays
+    pub nbr_cids: Vec<u32>,
+    pub nbr_wts: Vec<u64>,
+}
+
 impl From<crate::partitioning::error::PartitionError> for PartitionerError {
     fn from(e: crate::partitioning::error::PartitionError) -> Self {
         PartitionerError::VertexCut(e)
@@ -151,8 +175,8 @@ where
     G: PartitionableGraph<VertexId = usize> + Sync,
 {
     use crate::partitioning::{
-        binpack::merge_clusters_into_parts,
         binpack::Item,
+        binpack::merge_clusters_into_parts,
         louvain::louvain_cluster,
         metrics::{edge_cut, replication_factor},
         vertex_cut::build_vertex_cuts,
@@ -185,6 +209,7 @@ where
             .map(|(i, _)| (i as u32 % cfg.n_parts as u32))
             .collect()
     };
+    // TODO: exchange cluster IDs for boundary vertices here in distributed setting
 
     // Defensive checks
     if clusters.len() != n {
@@ -307,6 +332,7 @@ where
         // Deterministic fallback
         (0..n_clusters).map(|cid| cid % cfg.n_parts).collect()
     };
+    // TODO: exchange cluster→part assignments here in distributed setting
 
     // Assign each vertex to its cluster's part
     let mut pm = PartitionMap::with_capacity(n);
@@ -332,6 +358,7 @@ where
         // keep structure but do nothing
         (vec![0; n], vec![Vec::new(); n])
     };
+    // TODO: exchange owner decisions for cut edges here
     let total_replicas: usize = replicas.iter().map(|r| r.len()).sum();
     debug!(
         "Phase 3 (VertexCut): primary_count={}  total_replicas={}",
