@@ -204,6 +204,47 @@ where
     Ok((primary, replicas))
 }
 
+/// Deterministic vertex-cut builder that preserves the provided partition map.
+///
+/// This helper is intended for tests and `exact-metrics` feature usage where the
+/// goal is to evaluate replication factor without the load-balancing heuristics
+/// of [`build_vertex_cuts`]. It assigns each vertex to its existing part in the
+/// partition map and creates replica lists for edges that cross parts.
+#[cfg(any(test, feature = "exact-metrics"))]
+pub fn build_vertex_cuts_fixed<G>(
+    graph: &G,
+    pm: &PartitionMap<G::VertexId>,
+) -> (Vec<usize>, Vec<Vec<(G::VertexId, usize)>>)
+where
+    G: PartitionableGraph<VertexId = usize> + Sync,
+{
+    use hashbrown::HashMap;
+    let verts: Vec<_> = graph.vertices().collect();
+    let vert_idx: HashMap<usize, usize> =
+        verts.iter().copied().enumerate().map(|(i, v)| (v, i)).collect();
+    let mut primary = vec![0usize; verts.len()];
+    for (i, &v) in verts.iter().enumerate() {
+        primary[i] = pm.part_of(v);
+    }
+    let mut replicas: Vec<Vec<(G::VertexId, usize)>> = vec![Vec::new(); verts.len()];
+    let edges: Vec<_> = graph.edges().collect();
+    for (u, v) in edges {
+        let ui = vert_idx[&u];
+        let vi = vert_idx[&v];
+        let pu = primary[ui];
+        let pv = primary[vi];
+        if pu != pv {
+            replicas[ui].push((v, pv));
+            replicas[vi].push((u, pu));
+        }
+    }
+    for list in &mut replicas {
+        list.sort_unstable();
+        list.dedup();
+    }
+    (primary, replicas)
+}
+
 #[cfg(test)]
 #[cfg(feature = "mpi-support")]
 mod tests {

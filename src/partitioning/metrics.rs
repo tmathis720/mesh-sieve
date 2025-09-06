@@ -1,9 +1,27 @@
-//! Partitioning metrics utilities.
+//! ## Replication Factor (RF) and Load Balance
+//!
+//! - RF: average number of parts each vertex appears in. If `P(v)` is the set of parts
+//!   containing vertex `v` (primary or replica), then
+//!
+//!       RF = (1 / |V|) * ∑_{v∈V} |P(v)|
+//!
+//!   In unit tests we compute RF exactly from `(primary_owner, replicas)` returned by
+//!   `vertex_cut::build_vertex_cuts`. The debug/CI `RF(g, pm)` helper approximates RF
+//!   by marking neighbor‐induced presence (adequate for sanity checks).
+//!
+//! - Load balance factor (LB): if `L_p` is the load of part `p` (default: sum of degrees
+//!   of vertices owned by `p`), then
+//!
+//!       LB = max_p L_p / (min_p L_p + ε)
+//!
+//!   We enforce `LB ≤ 1 + epsilon` in bin-packing; see `PartitionerConfig::epsilon`.
 //!
 //! This module provides functions for evaluating the quality of graph
-//! partitionings, including edge cut and replication factor.  These are
-//! intended for debugging, testing and CI validation of partitioning
-//! algorithms.
+//! partitionings, including edge cut and replication factor. These are
+//! intended for debugging, testing and CI validation of partitioning algorithms.
+//!
+//! With the `mem-snapshot` feature enabled, [`memory_snapshot_bytes`] returns the
+//! current resident set size (RSS) for detecting memory regressions in benches.
 
 use super::{PartitionMap, PartitionableGraph};
 use rayon::iter::ParallelIterator;
@@ -49,7 +67,9 @@ impl AtomicBitset {
         for _ in 0..n_words {
             v.push(AtomicUsize::new(0));
         }
-        Self { words: v.into_boxed_slice() }
+        Self {
+            words: v.into_boxed_slice(),
+        }
     }
 
     #[inline]
@@ -145,6 +165,80 @@ where
     total_owned as f64 / n as f64
 }
 
+/// Compute the exact replication factor from explicit primary owners and replica lists.
+#[allow(dead_code)]
+pub fn rf_exact<V>(primary: &[usize], replicas: &[Vec<(V, usize)>]) -> f64 {
+    use std::collections::HashSet;
+    let n = primary.len();
+    assert_eq!(n, replicas.len(), "length mismatch");
+    if n == 0 {
+        return 0.0;
+    }
+    let mut total = 0usize;
+    for (p, reps) in primary.iter().zip(replicas.iter()) {
+        let mut parts: HashSet<usize> = HashSet::new();
+        parts.insert(*p);
+        for &(_, part) in reps {
+            parts.insert(part);
+        }
+        total += parts.len();
+    }
+    total as f64 / n as f64
+}
+
+/// Compute min/max part load (sum of vertex degrees) and their ratio.
+#[allow(dead_code)]
+pub fn load_balance_parts<G>(pm: &PartitionMap<G::VertexId>, g: &G) -> (u64, u64, f64)
+where
+    G: PartitionableGraph,
+    G::VertexId: Eq + Hash + Copy + Sync,
+{
+    let num_parts = match num_parts_in_pm(pm) {
+        Some(n) if n > 0 => n,
+        _ => return (0, 0, 1.0),
+    };
+    let mut loads = vec![0u64; num_parts];
+    let verts: Vec<G::VertexId> = g.vertices().collect();
+    for v in verts {
+        let part = pm.part_of(v);
+        loads[part] += g.degree(v) as u64;
+    }
+    let min = *loads.iter().min().unwrap_or(&0);
+    let max = *loads.iter().max().unwrap_or(&0);
+    let ratio = if min == 0 {
+        f64::INFINITY
+    } else {
+        max as f64 / (min as f64 + f64::EPSILON)
+    };
+    (min, max, ratio)
+}
+
+/// Snapshot the current resident set size in bytes (Linux only).
+#[cfg(feature = "mem-snapshot")]
+pub fn memory_snapshot_bytes() -> Option<u64> {
+    use std::fs::File;
+    use std::io::Read;
+    let mut buf = String::new();
+    if File::open("/proc/self/statm")
+        .and_then(|mut f| f.read_to_string(&mut buf))
+        .is_ok()
+    {
+        if let Some(rss_pages) = buf.split_whitespace().nth(1) {
+            if let Ok(pages) = rss_pages.parse::<u64>() {
+                // Assume 4 KiB pages
+                return Some(pages * 4096);
+            }
+        }
+    }
+    None
+}
+
+/// Stub when `mem-snapshot` feature is disabled.
+#[cfg(not(feature = "mem-snapshot"))]
+pub fn memory_snapshot_bytes() -> Option<u64> {
+    None
+}
+
 // -----------------------------------------------------------------------------
 // Tests
 
@@ -180,7 +274,13 @@ mod tests {
                 .edges
                 .iter()
                 .filter_map(|&(a, b)| {
-                    if a == v { Some(b) } else if b == v { Some(a) } else { None }
+                    if a == v {
+                        Some(b)
+                    } else if b == v {
+                        Some(a)
+                    } else {
+                        None
+                    }
                 })
                 .collect();
             ns.into_iter()
@@ -197,7 +297,10 @@ mod tests {
 
     #[test]
     fn triangle_same_part() {
-        let g = TestGraph { edges: vec![(0, 1), (1, 2), (0, 2)], n: 3 };
+        let g = TestGraph {
+            edges: vec![(0, 1), (1, 2), (0, 2)],
+            n: 3,
+        };
         let mut pm = PartitionMap::with_capacity(3);
         for v in 0..3 {
             pm.insert(v, 0);
@@ -209,7 +312,10 @@ mod tests {
 
     #[test]
     fn two_vertices_different_parts() {
-        let g = TestGraph { edges: vec![(0, 1)], n: 2 };
+        let g = TestGraph {
+            edges: vec![(0, 1)],
+            n: 2,
+        };
         let mut pm = PartitionMap::with_capacity(2);
         pm.insert(0, 0);
         pm.insert(1, 1);
@@ -237,7 +343,10 @@ mod tests {
 
     #[test]
     fn isolated_vertex() {
-        let g = TestGraph { edges: vec![], n: 1 };
+        let g = TestGraph {
+            edges: vec![],
+            n: 1,
+        };
         let mut pm = PartitionMap::with_capacity(1);
         pm.insert(0, 0);
         assert_eq!(edge_cut(&g, &pm), 0);
@@ -264,7 +373,10 @@ mod tests {
 
     #[test]
     fn replication_factor_deterministic() {
-        let g = TestGraph { edges: vec![(0, 1), (1, 2)], n: 3 };
+        let g = TestGraph {
+            edges: vec![(0, 1), (1, 2)],
+            n: 3,
+        };
         let mut pm = PartitionMap::with_capacity(3);
         pm.insert(0, 0);
         pm.insert(1, 1);
@@ -274,4 +386,3 @@ mod tests {
         assert!((rf1 - rf2).abs() < 1e-12);
     }
 }
-
