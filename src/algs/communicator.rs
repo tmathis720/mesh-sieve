@@ -16,6 +16,12 @@ pub trait Wait {
     fn wait(self) -> Option<Vec<u8>>;
 }
 
+/// Non-blocking completion test.
+pub trait PollWait {
+    /// Return `Some(bytes)` if the operation has completed, otherwise `None`.
+    fn try_wait(&mut self) -> Option<Vec<u8>>;
+}
+
 /// Non-blocking communication interface (minimal by design).
 ///
 /// Implementors provide asynchronous send/receive operations and waitable handles.
@@ -62,6 +68,12 @@ pub struct NoComm;
 
 impl Wait for () {
     fn wait(self) -> Option<Vec<u8>> {
+        None
+    }
+}
+
+impl PollWait for () {
+    fn try_wait(&mut self) -> Option<Vec<u8>> {
         None
     }
 }
@@ -119,6 +131,12 @@ impl Wait for LocalSendHandle {
     }
 }
 
+impl PollWait for LocalSendHandle {
+    fn try_wait(&mut self) -> Option<Vec<u8>> {
+        None
+    }
+}
+
 pub struct LocalRecvHandle {
     cell: Arc<(Mutex<Slot>, Condvar)>,
     want_len: usize,
@@ -134,6 +152,20 @@ impl Wait for LocalRecvHandle {
         let mut msg = slot.q.pop_front().expect("q non-empty");
         msg.truncate(self.want_len.min(msg.len()));
         Some(msg)
+    }
+}
+
+impl PollWait for LocalRecvHandle {
+    fn try_wait(&mut self) -> Option<Vec<u8>> {
+        let (lock, _cv) = &*self.cell;
+        let mut slot = lock.lock().expect("Slot poisoned");
+        if slot.q.is_empty() {
+            None
+        } else {
+            let mut msg = slot.q.pop_front().expect("q non-empty");
+            msg.truncate(self.want_len.min(msg.len()));
+            Some(msg)
+        }
     }
 }
 
