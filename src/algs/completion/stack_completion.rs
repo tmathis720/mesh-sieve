@@ -1,70 +1,95 @@
 //! Complete the vertical‐stack arrows (mirror of section completion).
 //!
 //! This module provides routines for completing stack arrows in a distributed mesh,
-//! mirroring section completion logic. It handles symmetric communication of stack
-//! data between ranks using the [`Communicator`] trait.
+//! mirroring section completion logic. Communication uses explicit [`CommTag`]s and
+//! drains all send/receive handles before returning. Neighbor ranks are derived from
+//! the provided overlap graph, ensuring only true neighbors participate in the exchange.
 
-use crate::algs::communicator::Wait;
-use crate::algs::wire::{WIRE_PAYLOAD_MAX, WireCount, WireStackTriple};
+use std::collections::{BTreeSet, HashMap, HashSet};
+
+use bytemuck::{cast_slice, cast_slice_mut, Pod, Zeroable};
+
+use crate::algs::communicator::{CommTag, StackCommTags, Wait};
+use crate::algs::completion::size_exchange::exchange_sizes_symmetric;
+use crate::mesh_error::MeshSieveError;
 use crate::topology::sieve::sieve_trait::Sieve;
-use std::collections::HashMap;
 
 /// Trait for extracting rank from overlap payloads.
 pub trait HasRank {
-    /// Returns the MPI rank associated with this payload.
-    fn rank(&self) -> usize;
+    /// Returns the MPI rank associated with this payload as a 32‑bit value.
+    fn rank_u32(&self) -> u32;
 }
 
 impl HasRank for crate::overlap::overlap::Remote {
-    fn rank(&self) -> usize {
-        self.rank
+    #[inline]
+    fn rank_u32(&self) -> u32 {
+        u32::try_from(self.rank)
+            .expect("rank does not fit in u32; increase wire width or cap n_ranks")
     }
 }
 
-/// Complete the stack by exchanging arrows with all neighbor ranks.
-///
-/// This function performs symmetric communication of stack data, exchanging
-/// arrow counts and payloads with all ranks except `my_rank`. It uses the
-/// provided communicator for non-blocking send/receive operations.
-///
-/// # Type Parameters
-/// - `P`: Base point type (must be POD, hashable, etc.).
-/// - `Q`: Cap point type (must be POD, hashable, etc.).
-/// - `Pay`: Payload type (must be POD).
-/// - `C`: Communicator type.
-/// - `S`: Stack type.
-/// - `O`: Overlap sieve type.
-/// - `R`: Overlap payload type (must implement [`HasRank`]).
-///
-/// # Arguments
-/// - `stack`: The stack to complete.
-/// - `overlap`: The overlap sieve describing sharing relationships.
-/// - `comm`: The communicator for message passing.
-/// - `my_rank`: The current MPI rank.
-/// - `n_ranks`: Total number of ranks.
-pub fn complete_stack<P, Q, Pay, C, S, O, R>(
+/// Bridge for converting point types to and from wire‐encoded `u64`s.
+pub trait WirePoint: Copy {
+    fn to_wire(self) -> u64;
+    fn from_wire(w: u64) -> Self;
+}
+
+impl WirePoint for crate::topology::point::PointId {
+    #[inline]
+    fn to_wire(self) -> u64 { self.get() }
+    #[inline]
+    fn from_wire(w: u64) -> Self {
+        Self::new(w).expect("invalid PointId on wire")
+    }
+}
+
+/// Fixed width `(base, cap, payload)` triple used on the wire.
+#[repr(C)]
+#[derive(Copy, Clone, Zeroable)]
+struct WireTriple64<Pay>
+where
+    Pay: Copy + Pod + Zeroable,
+{
+    base_le: u64,
+    cap_le: u64,
+    pay: Pay,
+}
+
+impl<Pay: Copy + Pod + Zeroable> WireTriple64<Pay> {
+    fn new(base: u64, cap: u64, pay: Pay) -> Self {
+        Self { base_le: base.to_le(), cap_le: cap.to_le(), pay }
+    }
+}
+
+unsafe impl<Pay: Copy + Pod + Zeroable> Pod for WireTriple64<Pay> {}
+
+/// Complete the stack by exchanging arrows with all true neighbor ranks.
+pub fn complete_stack_with_tags<P, Q, Pay, C, S, O, R>(
     stack: &mut S,
     overlap: &O,
     comm: &C,
     my_rank: usize,
     n_ranks: usize,
-) -> Result<(), crate::mesh_error::MeshSieveError>
+    tags: StackCommTags,
+) -> Result<(), MeshSieveError>
 where
-    P: Copy + bytemuck::Pod + bytemuck::Zeroable + Default + Eq + std::hash::Hash + Send + 'static,
-    Q: Copy + bytemuck::Pod + bytemuck::Zeroable + Default + Eq + std::hash::Hash + Send + 'static,
-    Pay: Copy + bytemuck::Pod + bytemuck::Zeroable + Default + PartialEq + Send + 'static,
+    P: WirePoint + Default + Eq + std::hash::Hash + Copy + Send + 'static,
+    Q: WirePoint + Default + Eq + std::hash::Hash + Copy + Send + 'static,
+    Pay: Copy + Pod + Zeroable + Default + PartialEq + Send + 'static,
     C: crate::algs::communicator::Communicator + Sync,
     S: crate::topology::stack::Stack<Point = P, CapPt = Q, Payload = Pay>,
-    O: crate::topology::sieve::Sieve<Point = P, Payload = R> + Sync,
+    O: Sieve<Point = P, Payload = R> + Sync,
     R: HasRank + Copy + Send + 'static,
 {
-    const BASE_TAG: u16 = 0xC0DE;
-    assert!(std::mem::size_of::<P>() == 8);
-    assert!(std::mem::size_of::<Q>() == 8);
-    assert!(std::mem::size_of::<Pay>() <= WIRE_PAYLOAD_MAX);
-    // 1. Find all neighbors (ranks) to communicate with
+    if n_ranks == 0 {
+        return Err(MeshSieveError::CommError {
+            neighbor: my_rank,
+            source: "n_ranks must be > 0".into(),
+        });
+    }
+
+    // 1. Build owned links per neighbor
     let mut nb_links: HashMap<usize, Vec<(P, Q, Pay)>> = HashMap::new();
-    // Only treat as owned if the base point has at least one non-default payload
     for base in stack.base().base_points() {
         let mut has_owned = false;
         let mut owned_caps = Vec::new();
@@ -79,97 +104,132 @@ where
         }
         for (cap, pay) in owned_caps {
             for (_dst, rem) in overlap.cone(base) {
-                if rem.rank() != my_rank {
-                    nb_links
-                        .entry(rem.rank())
-                        .or_default()
-                        .push((base, cap, pay));
+                let r = rem.rank_u32() as usize;
+                if r != my_rank {
+                    nb_links.entry(r).or_default().push((base, cap, pay));
                 }
             }
         }
     }
-    // --- DEADLOCK FIX: ensure symmetric communication ---
-    // Use all ranks except my_rank as neighbors
-    let all_neighbors: std::collections::HashSet<usize> =
-        (0..n_ranks).filter(|&r| r != my_rank).collect();
-    // 2. Exchange sizes (always post send/recv for all neighbors)
-    let mut recv_size = HashMap::new();
-    for &nbr in &all_neighbors {
-        let mut cnt = WireCount::new(0);
-        let h = comm.irecv(
-            nbr,
-            BASE_TAG,
-            bytemuck::cast_slice_mut(std::slice::from_mut(&mut cnt)),
-        );
-        recv_size.insert(nbr, (h, cnt));
-    }
-    let mut pending_size_sends = Vec::with_capacity(all_neighbors.len());
-    let mut size_send_bufs = Vec::with_capacity(all_neighbors.len());
-    for &nbr in &all_neighbors {
-        let count = WireCount::new(nb_links.get(&nbr).map_or(0, |v| v.len()));
-        let h = comm.isend(
-            nbr,
-            BASE_TAG,
-            bytemuck::cast_slice(std::slice::from_ref(&count)),
-        );
-        pending_size_sends.push(h);
-        size_send_bufs.push(count);
-    }
-    let mut sizes_in = HashMap::new();
-    for (nbr, (h, mut cnt)) in recv_size {
-        let data = h.wait().ok_or_else(|| {
-            crate::mesh_error::CommError(format!("failed to receive size from rank {nbr}"))
-        })?;
-        let bytes = bytemuck::cast_slice_mut(std::slice::from_mut(&mut cnt));
-        bytes.copy_from_slice(&data);
-        sizes_in.insert(nbr, cnt.get());
-    }
-    for send_h in pending_size_sends {
-        let _ = send_h.wait();
-    }
-    // 3. Exchange data (always post send/recv for all neighbors)
-    use bytemuck::{Zeroable, bytes_of, bytes_of_mut, cast_slice, cast_slice_mut};
-    let mut recv_data = HashMap::new();
-    for &nbr in &all_neighbors {
-        let n_items = sizes_in.get(&nbr).copied().unwrap_or(0);
-        let mut buf = vec![WireStackTriple::zeroed(); n_items];
-        let h = comm.irecv(nbr, BASE_TAG + 1, cast_slice_mut(buf.as_mut_slice()));
-        recv_data.insert(nbr, (h, buf));
-    }
-    let mut pending_data_sends = Vec::with_capacity(all_neighbors.len());
-    let mut data_send_bufs = Vec::with_capacity(all_neighbors.len());
-    for &nbr in &all_neighbors {
-        let triples = nb_links.get(&nbr).map_or(&[][..], |v| &v[..]);
-        let wire: Vec<WireStackTriple> = triples
-            .iter()
-            .map(|&(b, c, p)| {
-                let base_u64: u64 = bytemuck::cast(b);
-                let cap_u64: u64 = bytemuck::cast(c);
-                WireStackTriple::new(base_u64, cap_u64, bytes_of(&p))
-            })
-            .collect();
-        let bytes = cast_slice(&wire);
-        let h = comm.isend(nbr, BASE_TAG + 1, bytes);
-        pending_data_sends.push(h);
-        data_send_bufs.push(wire);
-    }
-    for (_nbr, (h, mut buf)) in recv_data {
-        let raw = h.wait().ok_or_else(|| {
-            crate::mesh_error::CommError("failed to receive stack data".to_string())
-        })?;
-        let buf_bytes = cast_slice_mut(buf.as_mut_slice());
-        buf_bytes.copy_from_slice(&raw);
-        for w in &buf {
-            let base: P = bytemuck::cast(w.base());
-            let cap: Q = bytemuck::cast(w.cap());
-            let mut pay = Pay::zeroed();
-            let pay_slice = bytes_of_mut(&mut pay);
-            pay_slice.copy_from_slice(&w.pay[..pay_slice.len()]);
-            let _ = stack.add_arrow(base, cap, pay);
+
+    // 2. Determine neighbor set from overlap (exclude self)
+    let mut nb: BTreeSet<usize> = BTreeSet::new();
+    for p in overlap.base_points() {
+        for (_dst, rem) in overlap.cone(p) {
+            nb.insert(rem.rank_u32() as usize);
         }
     }
-    for send_h in pending_data_sends {
-        let _ = send_h.wait();
+    nb.remove(&my_rank);
+    for &r in &nb {
+        if r >= n_ranks {
+            return Err(MeshSieveError::CommError {
+                neighbor: r,
+                source: format!("rank {r} ≥ n_ranks {n_ranks}").into(),
+            });
+        }
     }
-    Ok(())
+    if nb.is_empty() {
+        return Ok(());
+    }
+    let neighbors: Vec<usize> = nb.iter().copied().collect();
+    let all_neighbors: HashSet<usize> = neighbors.iter().copied().collect();
+
+    // 3. Build wire buffers per neighbor
+    let mut wires: HashMap<usize, Vec<WireTriple64<Pay>>> = HashMap::new();
+    for (&nbr, triples) in nb_links.iter() {
+        let mut buf = Vec::with_capacity(triples.len());
+        for &(b, c, p) in triples {
+            buf.push(WireTriple64::new(b.to_wire(), c.to_wire(), p));
+        }
+        wires.insert(nbr, buf);
+    }
+
+    // 4. Symmetric exchange of counts
+    let counts = exchange_sizes_symmetric(&wires, comm, tags.sizes, &all_neighbors)?;
+
+    // 5. Exchange payloads
+    let mut recv_data = Vec::new();
+    for &nbr in &neighbors {
+        let n = counts.get(&nbr).copied().unwrap_or(0) as usize;
+        let mut buf = vec![WireTriple64::<Pay>::zeroed(); n];
+        let h = comm.irecv(nbr, tags.data.as_u16(), cast_slice_mut(&mut buf));
+        recv_data.push((nbr, h, buf));
+    }
+
+    let mut pending_sends = Vec::new();
+    for &nbr in &neighbors {
+        let out = wires.get(&nbr).map_or(&[][..], |v| &v[..]);
+        pending_sends.push(comm.isend(nbr, tags.data.as_u16(), cast_slice(out)));
+    }
+
+    let mut maybe_err: Option<MeshSieveError> = None;
+    for (nbr, h, mut buf) in recv_data {
+        match h.wait() {
+            Some(raw)
+                if raw.len() == buf.len() * std::mem::size_of::<WireTriple64<Pay>>() =>
+            {
+                if maybe_err.is_none() {
+                    cast_slice_mut(&mut buf).copy_from_slice(&raw);
+                    for w in &buf {
+                        let b = P::from_wire(u64::from_le(w.base_le));
+                        let c = Q::from_wire(u64::from_le(w.cap_le));
+                        let _ = stack.add_arrow(b, c, w.pay);
+                    }
+                }
+            }
+            Some(raw) if maybe_err.is_none() => {
+                maybe_err = Some(MeshSieveError::CommError {
+                    neighbor: nbr,
+                    source: format!(
+                        "payload size mismatch: expected {}B, got {}B",
+                        buf.len() * std::mem::size_of::<WireTriple64<Pay>>(),
+                        raw.len()
+                    )
+                    .into(),
+                });
+            }
+            None if maybe_err.is_none() => {
+                maybe_err = Some(MeshSieveError::CommError {
+                    neighbor: nbr,
+                    source: "recv returned None".into(),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    for s in pending_sends {
+        let _ = s.wait();
+    }
+
+    if let Some(e) = maybe_err { Err(e) } else { Ok(()) }
 }
+
+/// Convenience wrapper using a legacy default base tag (0xC0DE).
+pub fn complete_stack<P, Q, Pay, C, S, O, R>(
+    stack: &mut S,
+    overlap: &O,
+    comm: &C,
+    my_rank: usize,
+    n_ranks: usize,
+) -> Result<(), MeshSieveError>
+where
+    P: WirePoint + Default + Eq + std::hash::Hash + Copy + Send + 'static,
+    Q: WirePoint + Default + Eq + std::hash::Hash + Copy + Send + 'static,
+    Pay: Copy + Pod + Zeroable + Default + PartialEq + Send + 'static,
+    C: crate::algs::communicator::Communicator + Sync,
+    S: crate::topology::stack::Stack<Point = P, CapPt = Q, Payload = Pay>,
+    O: Sieve<Point = P, Payload = R> + Sync,
+    R: HasRank + Copy + Send + 'static,
+{
+    let tags = StackCommTags::from_base(CommTag::new(0xC0DE));
+    complete_stack_with_tags::<P, Q, Pay, C, S, O, R>(
+        stack,
+        overlap,
+        comm,
+        my_rank,
+        n_ranks,
+        tags,
+    )
+}
+
