@@ -11,7 +11,7 @@ fn face_neighbors_only() {
     s.add_arrow(v(1), v(3), ()); s.add_arrow(v(1), v(4), ()); s.add_arrow(v(1), v(5), ());
     s.add_arrow(v(2), v(5), ()); s.add_arrow(v(2), v(6), ()); s.add_arrow(v(2), v(7), ());
     s.add_arrow(v(5), v(8), ()); s.add_arrow(v(5), v(9), ());
-    let neigh = adjacent_with(&s, v(1), AdjacencyOpts { max_down_depth: Some(1) });
+    let neigh = adjacent_with(&s, v(1), AdjacencyOpts { max_down_depth: Some(1), same_stratum_only: true });
     assert_eq!(neigh, vec![v(2)]); // share edge 5
 }
 
@@ -22,6 +22,6 @@ fn through_vertices_too() {
     // two cells sharing only a vertex
     s.add_arrow(v(1), v(3), ()); s.add_arrow(v(1), v(4), ());
     s.add_arrow(v(2), v(4), ()); s.add_arrow(v(2), v(5), ());
-    let neigh = adjacent_with(&s, v(1), AdjacencyOpts { max_down_depth: Some(2) });
+    let neigh = adjacent_with(&s, v(1), AdjacencyOpts { max_down_depth: Some(2), same_stratum_only: true });
     assert_eq!(neigh, vec![v(2)]);
 }

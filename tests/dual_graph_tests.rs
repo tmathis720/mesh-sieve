@@ -73,6 +73,7 @@ fn widened_boundary_includes_vertices() {
     let opts = DualGraphOpts {
         boundary: AdjacencyOpts {
             max_down_depth: Some(2),
+            same_stratum_only: true,
         },
         symmetrize: true,
     };

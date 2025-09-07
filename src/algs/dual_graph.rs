@@ -28,7 +28,7 @@
 //!
 //! // Custom boundary depth and weights
 //! fn w(p: PointId) -> i32 { p.get() as i32 }
-//! let opts = DualGraphOpts { boundary: AdjacencyOpts { max_down_depth: Some(2) }, symmetrize: true };
+//! let opts = DualGraphOpts { boundary: AdjacencyOpts { max_down_depth: Some(2), same_stratum_only: true }, symmetrize: true };
 //! let _dg2 = build_dual_with_opts(&s, vec![c0, c1], opts, Some(w));
 //! ```
 //!
