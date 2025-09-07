@@ -216,7 +216,7 @@ where
             + std::ops::AddAssign
             + std::ops::Div<Output = V>,
     {
-        self.assemble_with(bases, &AverageReducer::default())
+        self.assemble_with(bases, &AverageReducer)
     }
 
     /// Iterate over `(cap_point, &[V])` pairs for all DOFs attached to base `p`.

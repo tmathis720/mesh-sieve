@@ -162,7 +162,7 @@ impl Overlap {
         self.inner
             .adjacency_out
             .get(&src)
-            .map_or(false, |v| v.iter().any(|(q, _)| *q == dst))
+            .is_some_and(|v| v.iter().any(|(q, _)| *q == dst))
     }
 
     #[inline]
@@ -242,7 +242,7 @@ impl Overlap {
                 .inner
                 .adjacency_out
                 .get(&src)
-                .map_or(false, |outs| outs.iter().any(|(q, _)| *q == dst));
+                .is_some_and(|outs| outs.iter().any(|(q, _)| *q == dst));
             if exists {
                 continue;
             }
@@ -298,8 +298,8 @@ impl Overlap {
         let src = local(local_pt);
         let dst = part(rank);
 
-        if let Some(vec) = self.inner.adjacency_out.get_mut(&src) {
-            if let Some((_, rem)) = vec.iter_mut().find(|(d, _)| *d == dst) {
+        if let Some(vec) = self.inner.adjacency_out.get_mut(&src)
+            && let Some((_, rem)) = vec.iter_mut().find(|(d, _)| *d == dst) {
                 if rem.rank != rank {
                     return Err(OverlapRankMismatch {
                         expected: rank,
@@ -309,11 +309,10 @@ impl Overlap {
                 match rem.remote_point {
                     None => {
                         rem.remote_point = Some(remote);
-                        if let Some(vec_in) = self.inner.adjacency_in.get_mut(&dst) {
-                            if let Some((_, rem_in)) = vec_in.iter_mut().find(|(s, _)| *s == src) {
+                        if let Some(vec_in) = self.inner.adjacency_in.get_mut(&dst)
+                            && let Some((_, rem_in)) = vec_in.iter_mut().find(|(s, _)| *s == src) {
                                 rem_in.remote_point = Some(remote);
                             }
-                        }
                         self.invalidate_cache();
                         self.debug_validate();
                         return Ok(());
@@ -332,7 +331,6 @@ impl Overlap {
                     }
                 }
             }
-        }
         Err(OverlapLinkMissing(local_pt, rank))
     }
 
@@ -550,7 +548,7 @@ impl Sieve for Overlap {
             .inner
             .adjacency_out
             .get(&src)
-            .map_or(false, |v| v.iter().any(|(q, _)| *q == dst))
+            .is_some_and(|v| v.iter().any(|(q, _)| *q == dst))
         {
             return;
         }

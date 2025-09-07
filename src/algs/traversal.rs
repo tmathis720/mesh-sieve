@@ -117,12 +117,11 @@ where
         let mut stack: Vec<(S::Point, u32)> = seed_vec.into_iter().map(|p| (p, 0)).collect();
 
         while let Some((p, d)) = stack.pop() {
-            if let Some(f) = early_stop {
-                if f(p) {
+            if let Some(f) = early_stop
+                && f(p) {
                     break;
                 }
-            }
-            if max_depth.map_or(false, |md| d >= md) {
+            if max_depth.is_some_and(|md| d >= md) {
                 continue;
             }
             for q in step_neighbors(sieve, dir, p) {
@@ -151,12 +150,11 @@ where
         let mut q: VecDeque<(S::Point, u32)> = seed_vec.into_iter().map(|p| (p, 0)).collect();
 
         while let Some((p, d)) = q.pop_front() {
-            if let Some(f) = early_stop {
-                if f(p) {
+            if let Some(f) = early_stop
+                && f(p) {
                     break;
                 }
-            }
-            if max_depth.map_or(false, |md| d >= md) {
+            if max_depth.is_some_and(|md| d >= md) {
                 continue;
             }
             for qn in step_neighbors(sieve, dir, p) {
@@ -249,12 +247,11 @@ where
         let mut stack: Vec<usize> = Vec::new();
         stack.reserve(seeds.len().saturating_mul(2));
         for p in seeds {
-            if let Some(i) = index.get(&p).copied() {
-                if !seen[i] {
+            if let Some(i) = index.get(&p).copied()
+                && !seen[i] {
                     seen[i] = true;
                     stack.push(i);
                 }
-            }
         }
 
         while let Some(i) = stack.pop() {
@@ -305,12 +302,11 @@ where
         let mut q: VecDeque<usize> = VecDeque::new();
         q.reserve(seeds.len().saturating_mul(2));
         for p in seeds {
-            if let Some(i) = index.get(&p).copied() {
-                if !seen[i] {
+            if let Some(i) = index.get(&p).copied()
+                && !seen[i] {
                     seen[i] = true;
                     q.push_back(i);
                 }
-            }
         }
 
         while let Some(i) = q.pop_front() {
@@ -543,22 +539,20 @@ where
             if !seen.insert(p) {
                 continue;
             }
-            if policy.depth_limit.map_or(true, |limit| d < limit) {
+            if policy.depth_limit.is_none_or(|limit| d < limit) {
                 for (qpt, _) in sieve.cone(p) {
                     q.push_back((qpt, d + 1));
                 }
             }
-            if let Some(owner) = overlap.cone(local(p)).find_map(|(_, r)| Some(r.rank)) {
-                if owner != my_rank {
+            if let Some(owner) = overlap.cone(local(p)).find_map(|(_, r)| Some(r.rank))
+                && owner != my_rank {
                     by_owner.entry(owner).or_default().push(p);
                 }
-            }
         }
-        if !by_owner.is_empty() {
-            if let Ok(adj) = fetch_adjacency(&by_owner, ReqKind::Cone, comm, TAG) {
+        if !by_owner.is_empty()
+            && let Ok(adj) = fetch_adjacency(&by_owner, ReqKind::Cone, comm, TAG) {
                 fuse(sieve, &adj);
             }
-        }
     }
 
     let mut stack: Vec<Point> = seed_vec.clone();
@@ -574,16 +568,14 @@ where
             }
         }
 
-        if !advanced && matches!(policy.kind, CompletionKind::Cone | CompletionKind::Both) {
-            if let Some(owner) = overlap.cone(local(p)).find_map(|(_, r)| Some(r.rank)) {
-                if owner != my_rank {
+        if !advanced && matches!(policy.kind, CompletionKind::Cone | CompletionKind::Both)
+            && let Some(owner) = overlap.cone(local(p)).find_map(|(_, r)| Some(r.rank))
+                && owner != my_rank {
                     let e = batch.entry(owner).or_default();
-                    if !e.iter().any(|&x| x == p) {
+                    if !e.contains(&p) {
                         e.push(p);
                     }
                 }
-            }
-        }
 
         if policy.batch > 0 {
             let total: usize = batch.values().map(|v| v.len()).sum();
@@ -596,13 +588,12 @@ where
         }
     }
 
-    if !batch.is_empty() {
-        if let Ok(adj) = fetch_adjacency(&batch, ReqKind::Cone, comm, TAG) {
+    if !batch.is_empty()
+        && let Ok(adj) = fetch_adjacency(&batch, ReqKind::Cone, comm, TAG) {
             fuse(sieve, &adj);
         }
-    }
 
-    closure_local(sieve, seen.into_iter())
+    closure_local(sieve, seen)
 }
 
 // --- ordered traversals using strata chart ---

@@ -108,7 +108,7 @@ where
         for (q, _) in s.cone(p) {
             let d = in_deg
                 .get_mut(&q)
-                .ok_or_else(|| MeshSieveError::MissingPointInCone(format!("{:?}", q)))?;
+                .ok_or_else(|| MeshSieveError::MissingPointInCone(format!("{q:?}")))?;
             *d -= 1;
             if *d == 0 {
                 stack.push(q);

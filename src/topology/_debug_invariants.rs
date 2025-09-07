@@ -23,7 +23,7 @@ where
         let mut seen = HashSet::with_capacity(vec.len());
         for (dst, _) in vec {
             let fresh = seen.insert(*dst);
-            debug_assert!(fresh, "duplicate edge detected: src={:?} dst={:?}", src, dst);
+            debug_assert!(fresh, "duplicate edge detected: src={src:?} dst={dst:?}");
         }
     }
 }
@@ -40,30 +40,20 @@ pub fn counts_equal<P>(
     debug_assert_eq!(
         a.len(),
         b.len(),
-        "edge multiset cardinality mismatch ({} vs {})",
-        label_a,
-        label_b,
+        "edge multiset cardinality mismatch ({label_a} vs {label_b})",
     );
     for (k, va) in a {
         let Some(vb) = b.get(k) else {
             debug_assert!(
                 false,
-                "edge present in {} but missing in {}: {:?}",
-                label_a,
-                label_b,
-                k
+                "edge present in {label_a} but missing in {label_b}: {k:?}"
             );
             continue;
         };
         debug_assert_eq!(
             va,
             vb,
-            "edge multiplicity mismatch for {:?}: {}={}, {}={}",
-            k,
-            label_a,
-            va,
-            label_b,
-            vb
+            "edge multiplicity mismatch for {k:?}: {label_a}={va}, {label_b}={vb}"
         );
     }
 }

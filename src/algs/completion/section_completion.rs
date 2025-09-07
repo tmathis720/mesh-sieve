@@ -36,7 +36,7 @@ where
     // 1) discover which points each neighbor needs
     let links = neighbour_links::<V>(section, overlap, my_rank).map_err(|e| MeshSieveError::CommError {
         neighbor: my_rank,
-        source: format!("neighbour_links failed: {}", e).into(),
+        source: format!("neighbour_links failed: {e}").into(),
     })?;
 
     // 2) Build true neighbor set (both outgoing and incoming), deterministically ordered
@@ -49,7 +49,7 @@ where
     let counts = exchange_sizes_symmetric(&links, comm, tags.sizes.as_u16(), &all_neighbors).map_err(|e| {
         MeshSieveError::CommError {
             neighbor: my_rank,
-            source: format!("exchange_sizes_symmetric failed: {}", e).into(),
+            source: format!("exchange_sizes_symmetric failed: {e}").into(),
         }
     })?;
 

@@ -62,7 +62,7 @@ where
             None => {
                 maybe_err = Some(MeshSieveError::CommError {
                     neighbor: nbr,
-                    source: format!("failed to receive size from rank {}", nbr).into(),
+                    source: format!("failed to receive size from rank {nbr}").into(),
                 });
                 break;
             }
@@ -138,7 +138,7 @@ where
             None => {
                 maybe_err = Some(MeshSieveError::CommError {
                     neighbor: nbr,
-                    source: format!("failed to receive size from rank {}", nbr).into(),
+                    source: format!("failed to receive size from rank {nbr}").into(),
                 });
                 break;
             }

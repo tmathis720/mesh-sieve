@@ -27,7 +27,7 @@ impl ReachRow for DenseRow {
     #[inline]
     fn with_size(n: usize) -> Self {
         Self {
-            words: vec![0; (n + 63) / 64],
+            words: vec![0; n.div_ceil(64)],
         }
     }
     #[inline]

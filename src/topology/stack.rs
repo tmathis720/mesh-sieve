@@ -320,13 +320,13 @@ where
         for (b, v) in &self.up {
             let mut seen = HashSet::new();
             for (c, _) in v {
-                debug_assert!(seen.insert(*c), "duplicate vertical arrow base={:?} cap={:?}", b, c);
+                debug_assert!(seen.insert(*c), "duplicate vertical arrow base={b:?} cap={c:?}");
             }
         }
         for (c, v) in &self.down {
             let mut seen = HashSet::new();
             for (b, _) in v {
-                debug_assert!(seen.insert(*b), "duplicate vertical arrow cap={:?} base={:?}", c, b);
+                debug_assert!(seen.insert(*b), "duplicate vertical arrow cap={c:?} base={b:?}");
             }
         }
 
@@ -336,14 +336,14 @@ where
 
         for (b, ups) in &self.up {
             for (c, _) in ups {
-                let has = self.down.get(c).map_or(false, |v| v.iter().any(|(bb, _)| *bb == *b));
-                debug_assert!(has, "stack mirror missing: up {:?}->{:?} has no down", b, c);
+                let has = self.down.get(c).is_some_and(|v| v.iter().any(|(bb, _)| *bb == *b));
+                debug_assert!(has, "stack mirror missing: up {b:?}->{c:?} has no down");
             }
         }
         for (c, downs) in &self.down {
             for (b, _) in downs {
-                let has = self.up.get(b).map_or(false, |v| v.iter().any(|(cc, _)| *cc == *c));
-                debug_assert!(has, "stack mirror missing: down {:?}->{:?} has no up", b, c);
+                let has = self.up.get(b).is_some_and(|v| v.iter().any(|(cc, _)| *cc == *c));
+                debug_assert!(has, "stack mirror missing: down {b:?}->{c:?} has no up");
             }
         }
     }

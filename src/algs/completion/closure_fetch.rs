@@ -28,7 +28,7 @@ pub fn fetch_adjacency<C: Communicator>(
 
     // 0) Post receives for reply header + counts
     let mut recv_counts = Vec::new();
-    for (&rank, _) in requests {
+    for &rank in requests.keys() {
         let mut hdr = WireHdr::new(0);
         let mut cnt = WireCount::new(0);
         let h_hdr = comm.irecv(

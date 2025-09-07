@@ -140,11 +140,10 @@ where
             if cell == p {
                 continue;
             }
-            if let (Some(hp), Some(ref hm)) = (seed_height, height_map.as_ref()) {
-                if hm.get(&cell).copied() != Some(hp) {
+            if let (Some(hp), Some(hm)) = (seed_height, height_map.as_ref())
+                && hm.get(&cell).copied() != Some(hp) {
                     continue;
                 }
-            }
             neigh.insert(cell);
         }
     }

@@ -53,14 +53,13 @@ pub fn complete_sieve<C: Communicator>(
     if nb_links.is_empty() {
         let me_pt = Overlap::partition_node_id(my_rank);
         for (src, rem) in overlap.support(me_pt) {
-            if rem.rank != my_rank {
-                if let OvlId::Local(src_pt) = src {
+            if rem.rank != my_rank
+                && let OvlId::Local(src_pt) = src {
                     nb_links
                         .entry(rem.rank)
                         .or_default()
                         .push((rem.remote_point.expect("overlap unresolved"), src_pt));
                 }
-            }
         }
     }
 
@@ -110,8 +109,7 @@ pub fn complete_sieve<C: Communicator>(
                 maybe_err.get_or_insert_with(|| MeshSieveError::CommError {
                     neighbor: peer,
                     source: Box::new(crate::mesh_error::CommError(format!(
-                        "failed to recv size from {}",
-                        peer
+                        "failed to recv size from {peer}"
                     ))),
                 });
             }
@@ -206,8 +204,7 @@ pub fn complete_sieve<C: Communicator>(
                 maybe_err.get_or_insert_with(|| MeshSieveError::CommError {
                     neighbor: peer,
                     source: Box::new(crate::mesh_error::CommError(format!(
-                        "failed to recv triples from {}",
-                        peer
+                        "failed to recv triples from {peer}"
                     ))),
                 });
             }

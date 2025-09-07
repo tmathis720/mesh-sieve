@@ -170,7 +170,7 @@ impl<P: PointLike, T: PayloadLike> InMemorySieve<P, T> {
     pub fn has_arrow(&self, src: P, dst: P) -> bool {
         self.adjacency_out
             .get(&src)
-            .map_or(false, |v| v.iter().any(|(d, _)| *d == dst))
+            .is_some_and(|v| v.iter().any(|(d, _)| *d == dst))
     }
 
     /// Pre-size cone/support capacities from `(src, dst, count)` tuples.
@@ -354,16 +354,14 @@ impl<P: PointLike, T: PayloadLike> Sieve for InMemorySieve<P, T>
     /// ```
     fn remove_arrow(&mut self, src: P, dst: P) -> Option<T> {
         let mut removed = None;
-        if let Some(v) = self.adjacency_out.get_mut(&src) {
-            if let Some(pos) = v.iter().position(|(d, _)| *d == dst) {
+        if let Some(v) = self.adjacency_out.get_mut(&src)
+            && let Some(pos) = v.iter().position(|(d, _)| *d == dst) {
                 removed = Some(v.remove(pos).1);
             }
-        }
-        if let Some(v) = self.adjacency_in.get_mut(&dst) {
-            if let Some(pos) = v.iter().position(|(s, _)| *s == src) {
+        if let Some(v) = self.adjacency_in.get_mut(&dst)
+            && let Some(pos) = v.iter().position(|(s, _)| *s == src) {
                 v.remove(pos);
             }
-        }
         self.invalidate_cache();
         debug_invariants!(self);
         removed
@@ -475,8 +473,8 @@ where
         for (s, d, pay) in edges {
             by_src.entry(s).or_default().insert(d, pay);
         }
-        for (_s, m) in &by_src {
-            for (&d, _) in m {
+        for m in by_src.values() {
+            for &d in m.keys() {
                 *by_dst.entry(d).or_default() += 1;
             }
         }
@@ -491,11 +489,10 @@ where
             for (d, pay) in m {
                 if let Some(pos) = out.iter().position(|(dd, _)| *dd == d) {
                     out[pos].1 = pay.clone();
-                    if let Some(ins) = self.adjacency_in.get_mut(&d) {
-                        if let Some(pos2) = ins.iter().position(|(ss, _)| *ss == s) {
+                    if let Some(ins) = self.adjacency_in.get_mut(&d)
+                        && let Some(pos2) = ins.iter().position(|(ss, _)| *ss == s) {
                             ins[pos2].1 = pay;
                         }
-                    }
                 } else {
                     out.push((d, pay.clone()));
                     self.adjacency_in.entry(d).or_default().push((s, pay));
@@ -534,11 +531,10 @@ where
             for (d, pay) in m {
                 if let Some(pos) = out.iter().position(|(dd, _)| *dd == d) {
                     out[pos].1 = pay.clone();
-                    if let Some(ins) = self.adjacency_in.get_mut(&d) {
-                        if let Some(pos2) = ins.iter().position(|(ss, _)| *ss == s) {
+                    if let Some(ins) = self.adjacency_in.get_mut(&d)
+                        && let Some(pos2) = ins.iter().position(|(ss, _)| *ss == s) {
                             ins[pos2].1 = pay;
                         }
-                    }
                 } else {
                     out.push((d, pay.clone()));
                     self.adjacency_in.entry(d).or_default().push((s, pay));

@@ -105,7 +105,7 @@ where
     }
     let mut sizes_in = HashMap::new();
     for (nbr, (h, mut cnt)) in recv_size {
-        let data = h.wait().ok_or_else(|| crate::mesh_error::CommError(format!("failed to receive size from rank {}", nbr)))?;
+        let data = h.wait().ok_or_else(|| crate::mesh_error::CommError(format!("failed to receive size from rank {nbr}")))?;
         let bytes = bytemuck::cast_slice_mut(std::slice::from_mut(&mut cnt));
         bytes.copy_from_slice(&data);
         sizes_in.insert(nbr, cnt.get());

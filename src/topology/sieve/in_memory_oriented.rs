@@ -127,7 +127,7 @@ where
                 let ok = self
                     .adjacency_in
                     .get(dst)
-                    .map_or(false, |ins| ins.iter().any(|(s, _, _)| s == src));
+                    .is_some_and(|ins| ins.iter().any(|(s, _, _)| s == src));
                 debug_assert!(
                     ok,
                     "Missing mirror in[{dst:?}] for out edge ({src:?} -> {dst:?})"
@@ -139,7 +139,7 @@ where
                 let ok = self
                     .adjacency_out
                     .get(src)
-                    .map_or(false, |outs| outs.iter().any(|(d, _, _)| d == dst));
+                    .is_some_and(|outs| outs.iter().any(|(d, _, _)| d == dst));
                 debug_assert!(
                     ok,
                     "Missing mirror out[{src:?}] for in edge ({src:?} -> {dst:?})"
@@ -163,9 +163,7 @@ where
             for (dst, _, _) in v {
                 assert!(
                     seen.insert(*dst),
-                    "duplicate edges out of {:?} to {:?}",
-                    src,
-                    dst
+                    "duplicate edges out of {src:?} to {dst:?}"
                 );
             }
         }
@@ -179,9 +177,7 @@ where
             for (src, _, _) in v {
                 assert!(
                     seen.insert(*src),
-                    "duplicate edges into {:?} from {:?}",
-                    dst,
-                    src
+                    "duplicate edges into {dst:?} from {src:?}"
                 );
             }
         }
@@ -225,13 +221,12 @@ where
             for (&dst, v) in &s.adjacency_in {
                 for (src, _, o_in) in v {
                     let Some(o_out) = out_map.get(&(*src, dst)) else {
-                        debug_assert!(false, "in mirror without out entry: ({:?}->{:?})", src, dst);
+                        debug_assert!(false, "in mirror without out entry: ({src:?}->{dst:?})");
                         continue;
                     };
                     debug_assert_eq!(
                         o_in, o_out,
-                        "orientation mismatch for ({:?}->{:?}): in={:?}, out={:?}",
-                        src, dst, o_in, o_out
+                        "orientation mismatch for ({src:?}->{dst:?}): in={o_in:?}, out={o_out:?}"
                     );
                 }
             }

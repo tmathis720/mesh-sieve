@@ -68,7 +68,7 @@ where
     // If we still have no links at all, something’s wrong with the Overlap
     if out.is_empty() {
         return Err(MeshSieveError::MissingOverlap {
-            source: format!("rank {} has no neighbour links", my_rank).into(),
+            source: format!("rank {my_rank} has no neighbour links").into(),
         });
     }
 
