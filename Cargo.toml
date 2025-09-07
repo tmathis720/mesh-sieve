@@ -64,6 +64,7 @@ log = []
 exact-metrics = []
 mem-snapshot = []
 rayon = ["dep:rayon"]
+sparse-bitset = []
 
 
 [build-dependencies]
