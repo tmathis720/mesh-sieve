@@ -16,19 +16,33 @@ pub fn compute_counters<G>(g: &G, clusters: &[u32]) -> ClusterCounters
 where
     G: PartitionableGraph<VertexId = usize>,
 {
+    // Map vertex ID -> dense index
+    let verts: Vec<usize> = g.vertices().collect();
+    assert_eq!(verts.len(), clusters.len(), "clusters length mismatch");
+    let idx_map: HashMap<usize, usize> = verts
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(i, v)| (v, i))
+        .collect();
+
     let m_edges = g.edges().count() as u64;
     let n_clusters = clusters.iter().max().map(|c| *c as usize + 1).unwrap_or(0);
     let mut vol = vec![0u64; n_clusters];
     let mut e_cc = vec![0u64; n_clusters];
     let mut e_ij: HashMap<(u32, u32), u64> = HashMap::new();
 
-    for (v, &cid) in clusters.iter().enumerate() {
-        vol[cid as usize] += g.degree(v) as u64;
+    for &u in &verts {
+        let ui = idx_map[&u];
+        let cid = clusters[ui];
+        vol[cid as usize] += g.degree(u) as u64;
     }
 
     for (u, v) in g.edges().collect::<Vec<_>>() {
-        let cu = clusters[u as usize];
-        let cv = clusters[v as usize];
+        let ui = idx_map[&u];
+        let vi = idx_map[&v];
+        let cu = clusters[ui];
+        let cv = clusters[vi];
         if cu == cv {
             e_cc[cu as usize] += 1;
         } else {
