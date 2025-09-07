@@ -7,7 +7,9 @@ pub mod size_exchange;
 pub mod stack_completion;
 
 pub use section_completion::{complete_section, complete_section_with_tags};
-pub use sieve_completion::complete_sieve;
+pub use sieve_completion::{
+    complete_sieve, complete_sieve_until_converged, complete_sieve_with_tags,
+};
 pub use stack_completion::complete_stack;
 
 pub fn partition_point(rank: usize) -> crate::topology::point::PointId {

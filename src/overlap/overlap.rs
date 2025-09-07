@@ -115,6 +115,15 @@ pub struct Remote {
     pub remote_point: Option<PointId>,
 }
 
+impl Default for Remote {
+    fn default() -> Self {
+        Self {
+            rank: 0,
+            remote_point: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Overlap {
     inner: InMemorySieve<OvlId, Remote>,
