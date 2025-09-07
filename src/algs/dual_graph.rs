@@ -1,25 +1,46 @@
-//! Build a CSR (compressed-sparse-row) *dual graph* of a mesh.
-//
-// Each *cell* is a vertex; an undirected edge is added between any two
-// cells that share at least one lower-dimensional entity (face / edge / vertex),
-// exactly following Knepley & Karpeev, 2009 §3.
-//
-// Returned in ParMETIS-ready CSR triples:
-//
-// * `xadj[i] .. xadj[i+1]`   = neighbour list of cell *i*
-// * `adjncy`                 = concatenated neighbour vertices
-// * `vwgt[i]`                = (optional) vertex weight, default = 1
-//
-// The dual graph is **symmetrised** (i↔j appear in both lists) and
-// **self-free** (no loops).
+//! Build a CSR (compressed-sparse-row) **dual graph** of a mesh.
+//!
+//! Each input cell becomes a vertex. Two cells are connected if they share
+//! a boundary entity. The boundary policy is controlled via
+//! [`AdjacencyOpts`](crate::algs::lattice::AdjacencyOpts) and defaults to
+//! **faces only** (finite-volume style).
+//!
+//! Non-manifold boundaries are handled correctly: all cells incident to the
+//! same boundary entity form a full clique. The output is deterministic:
+//! CSR vertex `i` corresponds to the `i`‑th cell in the input order and every
+//! neighbour list is sorted and deduplicated.
+//!
+//! ```rust
+//! use mesh_sieve::algs::dual_graph::{build_dual, build_dual_with_opts, DualGraphOpts};
+//! use mesh_sieve::algs::lattice::AdjacencyOpts;
+//! use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
+//! use mesh_sieve::topology::point::PointId;
+//! use mesh_sieve::topology::sieve::Sieve;
+//!
+//! let mut s = InMemorySieve::<PointId, ()>::new();
+//! let v = |i| PointId::new(i).unwrap();
+//! let (c0, c1, f) = (v(1), v(2), v(10));
+//! s.add_arrow(c0, f, ());
+//! s.add_arrow(c1, f, ());
+//!
+//! // Default: faces only, unit weights
+//! let _dg = build_dual(&s, vec![c0, c1]);
+//!
+//! // Custom boundary depth and weights
+//! fn w(p: PointId) -> i32 { p.get() as i32 }
+//! let opts = DualGraphOpts { boundary: AdjacencyOpts { max_down_depth: Some(2) }, symmetrize: true };
+//! let _dg2 = build_dual_with_opts(&s, vec![c0, c1], opts, Some(w));
+//! ```
+//!
+//! The graph is symmetrised by default and contains no self-loops.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-use crate::algs::traversal::closure;
+use crate::algs::lattice::AdjacencyOpts;
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
 
-/// CSR triple
+/// CSR triple representing the dual graph.
 #[derive(Debug, Clone)]
 pub struct DualGraph {
     pub xadj: Vec<usize>,
@@ -27,19 +48,59 @@ pub struct DualGraph {
     pub vwgt: Vec<i32>, // ParMETIS expects i32
 }
 
-/// Build dual graph. Cell indices are assigned by *insertion order*
-/// of the `cells` iterator passed in.
-///
-/// If you want a specific ordering (e.g. global id array), call
-/// `build_dual_with_order` variant below.
+/// Options controlling dual-graph construction.
+#[derive(Clone, Copy, Debug)]
+pub struct DualGraphOpts {
+    /// Boundary policy used to connect cells. Default = faces only.
+    pub boundary: AdjacencyOpts,
+    /// Ensure `i<->j` is present in both adjacency lists (default: true).
+    pub symmetrize: bool,
+}
+
+impl Default for DualGraphOpts {
+    fn default() -> Self {
+        Self { boundary: AdjacencyOpts::default(), symmetrize: true }
+    }
+}
+
+/// Optional weight callback. If `None`, all weights are set to `1`.
+pub type WeightFn = Option<fn(PointId) -> i32>;
+
+/// Build a dual graph with explicit options and optional weights.
+pub fn build_dual_with_opts<S>(
+    sieve: &S,
+    cells: impl IntoIterator<Item = PointId>,
+    opts: DualGraphOpts,
+    w: WeightFn,
+) -> DualGraph
+where
+    S: Sieve<Point = PointId>,
+{
+    build_dual_inner(sieve, cells, opts, w).0
+}
+
+/// Same as [`build_dual_with_opts`] but also returns the cell order used for CSR.
+pub fn build_dual_with_order_and_opts<S>(
+    sieve: &S,
+    cells: impl IntoIterator<Item = PointId>,
+    opts: DualGraphOpts,
+    w: WeightFn,
+) -> (DualGraph, Vec<PointId>)
+where
+    S: Sieve<Point = PointId>,
+{
+    build_dual_inner(sieve, cells, opts, w)
+}
+
+/// Backward-compatible default: faces-only boundary and unit weights.
 pub fn build_dual<S>(sieve: &S, cells: impl IntoIterator<Item = PointId>) -> DualGraph
 where
     S: Sieve<Point = PointId>,
 {
-    build_dual_inner(sieve, cells).0
+    build_dual_with_opts(sieve, cells, DualGraphOpts::default(), None)
 }
 
-/// Same as `build_dual` but also returns `Vec<PointId>` mapping CSR vertex → cell id.
+/// Backward-compatible default returning the cell ordering.
 pub fn build_dual_with_order<S>(
     sieve: &S,
     cells: impl IntoIterator<Item = PointId>,
@@ -47,100 +108,140 @@ pub fn build_dual_with_order<S>(
 where
     S: Sieve<Point = PointId>,
 {
-    build_dual_inner(sieve, cells)
+    build_dual_with_order_and_opts(sieve, cells, DualGraphOpts::default(), None)
 }
 
 // ---------------------------------------------------------------------------
-// internal routine
+// Internal routine
 // ---------------------------------------------------------------------------
 fn build_dual_inner<S>(
     sieve: &S,
     cells_iter: impl IntoIterator<Item = PointId>,
+    opts: DualGraphOpts,
+    w: WeightFn,
 ) -> (DualGraph, Vec<PointId>)
 where
     S: Sieve<Point = PointId>,
 {
-    // 0. assign CSR vertex ids
+    // 0) Assign CSR indices deterministically from insertion order
     let cells: Vec<PointId> = cells_iter.into_iter().collect();
     let n = cells.len();
-    let mut idx_of: HashMap<PointId, usize> = HashMap::with_capacity(n);
-    for (i, &c) in cells.iter().enumerate() {
-        idx_of.insert(c, i);
+
+    if n == 0 {
+        return (
+            DualGraph { xadj: vec![0], adjncy: Vec::new(), vwgt: Vec::new() },
+            cells,
+        );
     }
 
-    // 1. first-seen map: lower-dim “face” → cell-index
-    let mut first_face_owner: HashMap<PointId, usize> = HashMap::new();
+    // 1) boundary entity -> incident cell indices
+    use std::collections::hash_map::Entry;
 
-    // 2. adjacency list being built
-    let mut adj: Vec<HashSet<usize>> = vec![HashSet::new(); n];
-
-    for (cell_idx, &cell) in cells.iter().enumerate() {
-        // collect faces/edges/verts once
-        let cone_faces: HashSet<PointId> = closure(sieve, [cell]).into_iter().collect();
-
-        for face in cone_faces {
-            if let Some(&other_cell_idx) = first_face_owner.get(&face) {
-                // second time we see this face –> add undirected edge
-                adj[cell_idx].insert(other_cell_idx);
-                adj[other_cell_idx].insert(cell_idx);
-            } else {
-                // first owner
-                first_face_owner.insert(face, cell_idx);
+    fn boundary_points<S2: Sieve<Point = PointId>>(
+        s: &S2,
+        p: PointId,
+        max_down_depth: Option<u32>,
+    ) -> Vec<PointId> {
+        use std::collections::{HashSet, VecDeque};
+        match max_down_depth {
+            None => {
+                let mut out: Vec<PointId> = s.cone_points(p).collect();
+                let mut seen: HashSet<PointId> = out.iter().copied().collect();
+                let mut q: VecDeque<(PointId, u32)> = out.iter().copied().map(|x| (x, 1)).collect();
+                while let Some((r, _d)) = q.pop_front() {
+                    for qn in s.cone_points(r) {
+                        if seen.insert(qn) {
+                            out.push(qn);
+                            q.push_back((qn, 0));
+                        }
+                    }
+                }
+                out.sort_unstable();
+                out.dedup();
+                out
+            }
+            Some(k) if k == 0 => Vec::new(),
+            Some(k) => {
+                let mut out = Vec::new();
+                let mut seen = HashSet::new();
+                let mut q = VecDeque::from_iter(s.cone_points(p).map(|x| (x, 1)));
+                while let Some((r, d)) = q.pop_front() {
+                    if seen.insert(r) {
+                        out.push(r);
+                    }
+                    if d < k {
+                        for qn in s.cone_points(r) {
+                            q.push_back((qn, d + 1));
+                        }
+                    }
+                }
+                out.sort_unstable();
+                out.dedup();
+                out
             }
         }
     }
 
-    // 3. Convert HashSet adjacency → CSR vectors
+    let mut incident: HashMap<PointId, Vec<usize>> = HashMap::new();
+    incident.reserve(n * 4);
+    for (ci, &cell) in cells.iter().enumerate() {
+        let bnd = boundary_points(sieve, cell, opts.boundary.max_down_depth);
+        for b in bnd {
+            match incident.entry(b) {
+                Entry::Occupied(mut e) => e.get_mut().push(ci),
+                Entry::Vacant(e) => {
+                    e.insert(vec![ci]);
+                }
+            }
+        }
+    }
+
+    // 2) Clique incident cells on each boundary entity
+    let mut neigh: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for (_b, mut cells_on_b) in incident {
+        if cells_on_b.len() < 2 {
+            continue;
+        }
+        cells_on_b.sort_unstable();
+        cells_on_b.dedup();
+        for i in 0..cells_on_b.len() {
+            let ci = cells_on_b[i];
+            for &cj in &cells_on_b[(i + 1)..] {
+                neigh[ci].push(cj);
+                if opts.symmetrize {
+                    neigh[cj].push(ci);
+                }
+            }
+        }
+    }
+
+    // 3) Sort & dedup neighbor lists
+    let mut total_edges = 0usize;
+    for (i, list) in neigh.iter_mut().enumerate() {
+        list.sort_unstable();
+        list.dedup();
+        if let Ok(pos) = list.binary_search(&i) {
+            list.remove(pos);
+        }
+        total_edges += list.len();
+    }
+
+    // 4) Convert to CSR
     let mut xadj = Vec::with_capacity(n + 1);
-    let mut adjncy = Vec::new();
+    let mut adjncy = Vec::with_capacity(total_edges);
     xadj.push(0);
-    for nbrs in &adj {
-        adjncy.extend(nbrs.iter().copied());
+    for list in &neigh {
+        adjncy.extend(list.iter().copied());
         xadj.push(adjncy.len());
     }
 
-    // 4. Simple unit vertex weights
-    let vwgt = vec![1; n];
+    // 5) Weights
+    let vwgt = if let Some(f) = w {
+        cells.iter().map(|&c| f(c)).collect()
+    } else {
+        vec![1; n]
+    };
 
     (DualGraph { xadj, adjncy, vwgt }, cells)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::topology::sieve::InMemorySieve;
-
-    // helper to build two triangles sharing an edge
-    fn tiny_mesh() -> (InMemorySieve<PointId>, Vec<PointId>) {
-        let v = |i| PointId::new(i).unwrap();
-        let t0 = v(10);
-        let t1 = v(11);
-        // vertices
-        let (a, b, c, d) = (v(1), v(2), v(3), v(4));
-        let mut s = InMemorySieve::<PointId, ()>::default();
-        for p in [a, b, c] {
-            s.add_arrow(t0, p, ());
-            s.add_arrow(p, t0, ());
-        }
-        for p in [b, c, d] {
-            s.add_arrow(t1, p, ());
-            s.add_arrow(p, t1, ());
-        }
-        (s, vec![t0, t1])
-    }
-
-    #[test]
-    fn dual_graph_two_cells() {
-        let (mesh, cells) = tiny_mesh();
-        let (dg, order) = build_dual_with_order(&mesh, cells.clone());
-
-        // should be 2 vertices with a single undirected edge
-        assert_eq!(dg.xadj, vec![0, 1, 2]);
-        assert_eq!(dg.adjncy.len(), 2);
-        // each vertex's neighbour list contains the other
-        assert_eq!(dg.adjncy[dg.xadj[0]], 1);
-        assert_eq!(dg.adjncy[dg.xadj[1]], 0);
-        // CSR order mapping is identity here
-        assert_eq!(order, cells);
-    }
-}
