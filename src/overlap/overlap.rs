@@ -109,7 +109,9 @@ pub fn part(r: usize) -> OvlId {
 /// the mapping is known.  This mirrors PETSc’s SF: build structure first, then
 /// resolve remote IDs after an exchange.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
 pub struct Remote {
     pub rank: usize,
     pub remote_point: Option<PointId>,

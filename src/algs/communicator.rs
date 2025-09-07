@@ -92,6 +92,26 @@ impl SectionCommTags {
     }
 }
 
+/// Convenience bundle of tags for sieve completion.
+#[derive(Copy, Clone, Debug)]
+pub struct SieveCommTags {
+    /// Tag used during the size exchange phase.
+    pub sizes: CommTag,
+    /// Tag used during the data exchange phase.
+    pub data: CommTag,
+}
+
+impl SieveCommTags {
+    /// Construct tags from a base, assigning deterministic offsets per phase.
+    #[inline]
+    pub const fn from_base(base: CommTag) -> Self {
+        Self {
+            sizes: base,
+            data: base.offset(1),
+        }
+    }
+}
+
 /// Compile-time no-op comm for pure serial unit tests.
 #[derive(Clone, Debug, Default)]
 pub struct NoComm;

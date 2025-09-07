@@ -1,245 +1,208 @@
-//! Complete missing sieve arrows across ranks using fixed wire triples.
+//! Complete missing sieve arrows across ranks using minimal wire arrows.
 //!
-//! This module provides routines for synchronizing and completing sieve arrows
-//! across distributed ranks, using packed wire triples for efficient communication.
-//! It supports iterative completion until convergence and ensures DAG invariants.
+//! This module synchronizes sieve structure between distributed ranks by
+//! exchanging only `(src,dst)` pairs already translated into the receiver's
+//! local `PointId` space.  The protocol mirrors the section completion: a
+//! symmetric two-phase exchange (sizes then data) tagged via [`SieveCommTags`].
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 
-use bytemuck::Zeroable;
+use bytemuck::{Zeroable, cast_slice, cast_slice_mut};
 
-use crate::algs::communicator::Wait;
-use crate::algs::wire::{WireArrowTriple, WireCount};
+use crate::algs::communicator::{CommTag, Communicator, SieveCommTags, Wait};
+use crate::algs::completion::size_exchange::exchange_sizes_symmetric;
+use crate::algs::wire::WireArrow;
 use crate::mesh_error::MeshSieveError;
-use crate::overlap::overlap::{OvlId, Remote, local};
-use crate::prelude::{Communicator, Overlap};
+use crate::overlap::overlap::Overlap;
 use crate::topology::cache::InvalidateCache;
 use crate::topology::point::PointId;
-use crate::topology::sieve::InMemorySieve;
 use crate::topology::sieve::sieve_trait::Sieve;
 
-/// Complete missing sieve arrows across ranks.
-///
-/// Exchanges arrow‐counts and arrow‐payloads in two symmetric phases,
-/// always waiting on every nonblocking send/recv before returning.
-pub fn complete_sieve<C: Communicator>(
-    sieve: &mut InMemorySieve<PointId, Remote>,
+/// Translate a local `PointId` to the neighbor's `PointId` via `Overlap`.
+fn remote_id_for(overlap: &Overlap, nbr: usize, local: PointId) -> Result<PointId, MeshSieveError> {
+    overlap
+        .links_to(nbr)
+        .find(|(p, _)| *p == local)
+        .and_then(|(_, rp)| rp)
+        .ok_or_else(|| MeshSieveError::MissingOverlap {
+            source: format!(
+                "Unresolved mapping for local {} to neighbor {}",
+                local.get(),
+                nbr
+            )
+            .into(),
+        })
+}
+
+/// Build per-neighbor wire buffers in the receiver's ID space.
+fn build_wires<S>(
+    mesh: &S,
+    overlap: &Overlap,
+    neighbors: &[usize],
+) -> Result<HashMap<usize, Vec<WireArrow>>, MeshSieveError>
+where
+    S: Sieve<Point = PointId>,
+{
+    let mut srcs_per_nbr: HashMap<usize, Vec<PointId>> = HashMap::new();
+    for &nbr in neighbors {
+        let mut srcs: Vec<PointId> = overlap.links_to(nbr).map(|(p, _)| p).collect();
+        srcs.sort_unstable();
+        srcs.dedup();
+        srcs_per_nbr.insert(nbr, srcs);
+    }
+
+    let mut est_cap: HashMap<usize, usize> = HashMap::new();
+    for (&nbr, srcs) in &srcs_per_nbr {
+        let mut sum = 0usize;
+        for &s in srcs {
+            sum += mesh.cone_points(s).count();
+        }
+        est_cap.insert(nbr, sum);
+    }
+
+    let mut wires: HashMap<usize, Vec<WireArrow>> = HashMap::new();
+    for (&nbr, srcs) in &srcs_per_nbr {
+        let mut buf = Vec::with_capacity(*est_cap.get(&nbr).unwrap_or(&0));
+        for &src_local in srcs {
+            let src_remote = remote_id_for(overlap, nbr, src_local)?;
+            let mut dsts: Vec<PointId> = mesh.cone_points(src_local).collect();
+            dsts.sort_unstable();
+            dsts.dedup();
+            for dst_local in dsts {
+                let dst_remote = remote_id_for(overlap, nbr, dst_local)?;
+                buf.push(WireArrow::new(src_remote.get(), dst_remote.get()));
+            }
+        }
+        buf.sort_unstable_by_key(|w| (w.src(), w.dst()));
+        buf.dedup_by_key(|w| (w.src(), w.dst()));
+        wires.insert(nbr, buf);
+    }
+
+    Ok(wires)
+}
+
+/// Complete missing sieve arrows using explicit communication tags.
+pub fn complete_sieve_with_tags<S, C>(
+    mesh: &mut S,
     overlap: &Overlap,
     comm: &C,
     my_rank: usize,
-) -> Result<(), MeshSieveError> {
-    const BASE_TAG: u16 = 0xC0DE;
-
-    // 0) nothing to do for serial / single‐rank
+    tags: SieveCommTags,
+) -> Result<(), MeshSieveError>
+where
+    S: Sieve<Point = PointId> + InvalidateCache,
+    S::Payload: Default + Clone + Send + 'static,
+    C: Communicator + Sync,
+{
+    #[cfg(any(debug_assertions, feature = "check-invariants"))]
+    overlap.validate_invariants()?;
     if comm.is_no_comm() || comm.size() <= 1 {
-        sieve.strata.take();
+        mesh.invalidate_cache();
         return Ok(());
     }
 
-    // 1) Who needs which arrows?
-    let mut nb_links: HashMap<usize, Vec<(PointId, PointId)>> = HashMap::new();
-    for (&p, outs) in &sieve.adjacency_out {
-        for (_d, _) in outs {
-            for (_d2, rem) in overlap.cone(local(p)) {
-                if rem.rank != my_rank {
-                    nb_links
-                        .entry(rem.rank)
-                        .or_default()
-                        .push((p, rem.remote_point.expect("overlap unresolved")));
-                }
-            }
-        }
+    // Deterministic neighbor set (excluding self)
+    let mut nb: BTreeSet<usize> = overlap.neighbor_ranks().collect();
+    nb.remove(&my_rank);
+    let neighbors: Vec<usize> = nb.into_iter().collect();
+    if neighbors.is_empty() {
+        mesh.invalidate_cache();
+        return Ok(());
     }
-    if nb_links.is_empty() {
-        let me_pt = Overlap::partition_node_id(my_rank);
-        for (src, rem) in overlap.support(me_pt) {
-            if rem.rank != my_rank
-                && let OvlId::Local(src_pt) = src
-            {
-                nb_links
-                    .entry(rem.rank)
-                    .or_default()
-                    .push((rem.remote_point.expect("overlap unresolved"), src_pt));
-            }
-        }
+    let all_neighbors: HashSet<usize> = neighbors.iter().copied().collect();
+
+    // Build wire buffers per neighbor
+    let wires = build_wires(mesh, overlap, &neighbors)?;
+
+    // Phase 1: symmetric exchange of counts
+    let counts = exchange_sizes_symmetric(&wires, comm, tags.sizes.as_u16(), &all_neighbors)?;
+
+    // Phase 2: payload exchange
+    let mut recvs = Vec::new();
+    for &nbr in &neighbors {
+        let n = counts.get(&nbr).copied().unwrap_or(0) as usize;
+        let mut buf = vec![WireArrow::zeroed(); n];
+        let h = comm.irecv(nbr, tags.data.as_u16(), cast_slice_mut(&mut buf));
+        recvs.push((nbr, h, buf));
     }
 
-    // Peers to talk to
-    let peers: Vec<usize> = (0..comm.size()).filter(|&r| r != my_rank).collect();
+    let mut sends = Vec::new();
+    for &nbr in &neighbors {
+        let out = wires.get(&nbr).map_or(&[][..], |v| &v[..]);
+        sends.push(comm.isend(nbr, tags.data.as_u16(), cast_slice(out)));
+    }
 
-    // We'll accumulate all send‐handles here (phase1 + phase2)
-    let mut pending_sends: Vec<C::SendHandle> = Vec::new();
-    // And collect any error we see, but still drain all handles before returning
     let mut maybe_err: Option<MeshSieveError> = None;
-
-    // --- Phase 1: exchange counts ---------------------------------------
-    // 1a) post all receives for counts
-    let mut size_recvs: Vec<(usize, C::RecvHandle, WireCount)> = Vec::with_capacity(peers.len());
-    for &peer in &peers {
-        let mut cnt = WireCount::new(0);
-        let h = comm.irecv(
-            peer,
-            BASE_TAG,
-            bytemuck::cast_slice_mut(std::slice::from_mut(&mut cnt)),
-        );
-        size_recvs.push((peer, h, cnt));
-    }
-    // 1b) post all sends for counts
-    for &peer in &peers {
-        let cnt = WireCount::new(nb_links.get(&peer).map(|v| v.len()).unwrap_or(0));
-        pending_sends.push(comm.isend(
-            peer,
-            BASE_TAG,
-            bytemuck::cast_slice(std::slice::from_ref(&cnt)),
-        ));
-    }
-    // 1c) wait for all count‐recvs
-    let mut sizes_in: HashMap<usize, usize> = HashMap::new();
-    for (peer, h, mut cnt) in size_recvs {
+    for (nbr, h, mut buf) in recvs {
         match h.wait() {
-            Some(data) if data.len() == std::mem::size_of::<WireCount>() => {
-                let bytes = bytemuck::cast_slice_mut(std::slice::from_mut(&mut cnt));
-                bytes.copy_from_slice(&data);
-                sizes_in.insert(peer, cnt.get());
-            }
-            Some(data) => {
-                maybe_err.get_or_insert_with(|| MeshSieveError::CommError {
-                    neighbor: peer,
-                    source: Box::new(crate::mesh_error::CommError(format!(
-                        "expected {} bytes for size from {}, got {}",
-                        std::mem::size_of::<WireCount>(),
-                        peer,
-                        data.len()
-                    ))),
-                });
-            }
-            None => {
-                maybe_err.get_or_insert_with(|| MeshSieveError::CommError {
-                    neighbor: peer,
-                    source: Box::new(crate::mesh_error::CommError(format!(
-                        "failed to recv size from {peer}"
-                    ))),
-                });
-            }
-        }
-    }
-
-    // --- Phase 2: exchange actual WireArrowTriple payloads -------------------
-    // 2a) post all receives for triples
-    let mut data_recvs: Vec<(usize, C::RecvHandle, Vec<WireArrowTriple>)> =
-        Vec::with_capacity(peers.len());
-    for &peer in &peers {
-        let n = *sizes_in.get(&peer).unwrap_or(&0);
-        let mut buffer = vec![WireArrowTriple::zeroed(); n];
-        let bytes = bytemuck::cast_slice_mut(buffer.as_mut_slice());
-        let h = comm.irecv(peer, BASE_TAG + 1, bytes);
-        data_recvs.push((peer, h, buffer));
-    }
-    // 2b) post all sends of our triples
-    for &peer in &peers {
-        let mut triples = Vec::new();
-        if let Some(links) = nb_links.get(&peer) {
-            for &(src, _) in links {
-                if let Some(outs) = sieve.adjacency_out.get(&src) {
-                    for (d, payload) in outs {
-                        triples.push(WireArrowTriple::new(
-                            src.get(),
-                            d.get(),
-                            payload.remote_point.expect("overlap unresolved").get(),
-                            payload.rank as u32,
-                        ));
-                    }
+            Some(raw) if raw.len() == buf.len() * std::mem::size_of::<WireArrow>() => {
+                cast_slice_mut(&mut buf).copy_from_slice(&raw);
+                for w in &buf {
+                    let src = PointId::new(w.src())
+                        .map_err(|e| MeshSieveError::MeshError(Box::new(e)))?;
+                    let dst = PointId::new(w.dst())
+                        .map_err(|e| MeshSieveError::MeshError(Box::new(e)))?;
+                    mesh.add_arrow(src, dst, S::Payload::default());
                 }
             }
-        }
-        let bytes = bytemuck::cast_slice(&triples);
-        // always post a send, even if empty
-        pending_sends.push(comm.isend(peer, BASE_TAG + 1, bytes));
-    }
-
-    // 3) wait + integrate all triple‐recvs
-    let mut inserted = std::collections::HashSet::new();
-    for (peer, h, mut buffer) in data_recvs {
-        match h.wait() {
-            Some(raw) if raw.len() == buffer.len() * std::mem::size_of::<WireArrowTriple>() => {
-                let view = bytemuck::cast_slice_mut(buffer.as_mut_slice());
-                view.copy_from_slice(&raw);
-                for t in &buffer {
-                    let (src, dst, remote_point, rank) = t.decode();
-                    match (
-                        PointId::new(src),
-                        PointId::new(dst),
-                        PointId::new(remote_point),
-                    ) {
-                        (Ok(src_pt), Ok(dst_pt), Ok(rem_pt)) => {
-                            let payload = Remote {
-                                rank: rank as usize,
-                                remote_point: Some(rem_pt),
-                            };
-                            if inserted.insert((src_pt, dst_pt)) {
-                                sieve
-                                    .adjacency_out
-                                    .entry(src_pt)
-                                    .or_default()
-                                    .push((dst_pt, payload));
-                                sieve
-                                    .adjacency_in
-                                    .entry(dst_pt)
-                                    .or_default()
-                                    .push((src_pt, payload));
-                            }
-                        }
-                        (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => {
-                            maybe_err.get_or_insert_with(|| MeshSieveError::MeshError(Box::new(e)));
-                        }
-                    }
-                }
-            }
-            Some(raw) => {
-                maybe_err.get_or_insert_with(|| MeshSieveError::CommError {
-                    neighbor: peer,
-                    source: Box::new(crate::mesh_error::CommError(format!(
-                        "expected {} bytes for triples from {}, got {}",
-                        buffer.len() * std::mem::size_of::<WireArrowTriple>(),
-                        peer,
-                        raw.len()
-                    ))),
+            Some(raw) if maybe_err.is_none() => {
+                let exp = buf.len() * std::mem::size_of::<WireArrow>();
+                maybe_err = Some(MeshSieveError::CommError {
+                    neighbor: nbr,
+                    source: format!("payload size mismatch: expected {exp}B, got {}B", raw.len())
+                        .into(),
                 });
             }
-            None => {
-                maybe_err.get_or_insert_with(|| MeshSieveError::CommError {
-                    neighbor: peer,
-                    source: Box::new(crate::mesh_error::CommError(format!(
-                        "failed to recv triples from {peer}"
-                    ))),
+            None if maybe_err.is_none() => {
+                maybe_err = Some(MeshSieveError::CommError {
+                    neighbor: nbr,
+                    source: "recv returned None".into(),
                 });
             }
+            _ => {}
         }
     }
 
-    // Invalidate cached strata
-    sieve.strata.take();
-
-    // 4) always drain all sends
-    for send in pending_sends {
-        let _ = send.wait();
+    for h in sends {
+        let _ = h.wait();
     }
 
-    // 5) finally, propagate error or success
-    if let Some(err) = maybe_err {
-        Err(err)
+    mesh.invalidate_cache();
+    if let Some(e) = maybe_err {
+        Err(e)
     } else {
         Ok(())
     }
 }
 
-/// Iteratively completes the sieve until no new points/arrows are added.
-pub fn complete_sieve_until_converged(
-    sieve: &mut InMemorySieve<PointId, Remote>,
+/// Convenience wrapper using a legacy default tag (0xC0DE).
+pub fn complete_sieve<S, C>(
+    mesh: &mut S,
     overlap: &Overlap,
-    comm: &impl Communicator,
+    comm: &C,
     my_rank: usize,
-) -> Result<(), MeshSieveError> {
+) -> Result<(), MeshSieveError>
+where
+    S: Sieve<Point = PointId> + InvalidateCache,
+    S::Payload: Default + Clone + Send + 'static,
+    C: Communicator + Sync,
+{
+    let tags = SieveCommTags::from_base(CommTag::new(0xC0DE));
+    complete_sieve_with_tags(mesh, overlap, comm, my_rank, tags)
+}
+
+/// Iteratively completes the sieve until no new points/arrows are added.
+pub fn complete_sieve_until_converged<S, C>(
+    sieve: &mut S,
+    overlap: &Overlap,
+    comm: &C,
+    my_rank: usize,
+) -> Result<(), MeshSieveError>
+where
+    S: Sieve<Point = PointId> + InvalidateCache,
+    S::Payload: Default + Clone + Send + 'static,
+    C: Communicator + Sync,
+{
     let mut prev = std::collections::HashSet::new();
     loop {
         let before: std::collections::HashSet<_> = sieve.points().collect();
@@ -249,12 +212,41 @@ pub fn complete_sieve_until_converged(
             break;
         }
         prev = after.clone();
-        InvalidateCache::invalidate_cache(sieve);
+        sieve.invalidate_cache();
     }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    // TODO: add tests for complete_sieve with a mock Communicator
+    use super::*;
+    use crate::algs::communicator::Communicator;
+    use crate::overlap::overlap::Overlap;
+    use crate::topology::sieve::InMemorySieve;
+
+    #[test]
+    fn unresolved_mapping_errors() {
+        // Dummy communicator that claims two ranks but performs no I/O.
+        struct DummyComm;
+        impl Communicator for DummyComm {
+            type SendHandle = ();
+            type RecvHandle = ();
+            fn isend(&self, _peer: usize, _tag: u16, _buf: &[u8]) -> Self::SendHandle {}
+            fn irecv(&self, _peer: usize, _tag: u16, _buf: &mut [u8]) -> Self::RecvHandle {}
+            fn rank(&self) -> usize {
+                0
+            }
+            fn size(&self) -> usize {
+                2
+            }
+        }
+
+        let mut sieve: InMemorySieve<PointId, ()> = InMemorySieve::default();
+        let mut ovlp = Overlap::new();
+        ovlp.add_link_structural_one(PointId::new(1).unwrap(), 1); // unresolved
+        let comm = DummyComm;
+        let tags = SieveCommTags::from_base(CommTag::new(0x5100));
+        let res = complete_sieve_with_tags(&mut sieve, &ovlp, &comm, 0, tags);
+        assert!(matches!(res, Err(MeshSieveError::MissingOverlap { .. })));
+    }
 }
