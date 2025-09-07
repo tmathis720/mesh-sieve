@@ -1,25 +1,33 @@
 // src/algs/distribute.rs
 
+use crate::algs::communicator::Communicator;
+use crate::mesh_error::MeshSieveError;
+use crate::overlap::overlap::{Overlap, OvlId};
 use crate::topology::point::PointId;
 use crate::topology::sieve::{InMemorySieve, Sieve};
-use crate::overlap::overlap::Overlap;
-use crate::algs::communicator::Communicator;
 
 
 
 /// Distribute a global mesh across ranks, returning the local submesh and overlap graph.
 ///
-/// Implements Sec. 3 mesh distribution: builds the overlap Sieve and extracts the local submesh.
+/// Phase A of distribution: extract the local topology and create structural overlap
+/// links (`Local(p) -> Part(r)`), leaving `remote_point` unresolved for later phases.
 ///
 /// # Arguments
-/// - `mesh`: the full global mesh (arrows of type `Payload=()`)
-/// - `parts`: a slice mapping each `PointId.get() as usize` to a rank
-/// - `comm`: your communicator (MPI or Rayon)
+/// - `mesh`: the full global mesh (arrows of type `Payload = ()`)
+/// - `parts`: mapping each `PointId` (1-based) to an owning rank
+/// - `comm`: communicator providing `rank()` and `size()`
 ///
 /// # Returns
 /// `(local_mesh, overlap)` where:
-/// - `local_mesh`: only those arrows owned by this rank
-/// - `overlap`: the overlap Sieve (arrows `PointId→partition_pt(rank)`) for ghost‐exchange
+/// - `local_mesh`: only arrows whose endpoints are both owned by this rank
+/// - `overlap`: bipartite `Local(p) -> Part(r)` links for every foreign point
+///
+/// ## Phases
+/// - **Phase A (here):** extract local topology and build structural overlap.
+/// - **Phase B (later):** expand overlap via mesh closure rules.
+/// - **Phase C (later):** resolve remote IDs via exchange/service.
+/// - **Phase D (later):** complete section/stack data using the overlap.
 ///
 /// # Example (serial)
 /// ```rust
@@ -30,14 +38,15 @@ use crate::algs::communicator::Communicator;
 /// let mut global = InMemorySieve::<PointId,()>::default();
 /// global.add_arrow(PointId::new(1).unwrap(), PointId::new(2).unwrap(), ());
 /// global.add_arrow(PointId::new(2).unwrap(), PointId::new(3).unwrap(), ());
-/// let parts = vec![0,1,1];
+/// let parts = vec![0, 1, 1];
 /// let comm = NoComm;
-/// let (local, overlap) = distribute_mesh(&global, &parts, &comm).unwrap();
-/// assert_eq!(local.cone(PointId::new(1).unwrap()).count(), 0);
-/// assert_eq!(local.cone(PointId::new(2).unwrap()).count(), 0);
-/// assert_eq!(local.cone(PointId::new(3).unwrap()).count(), 0);
-/// let ghosts: Vec<_> = overlap.links_to_resolved(1).collect();
-/// assert!(ghosts.contains(&(PointId::new(3).unwrap(), PointId::new(3).unwrap())));
+/// let (_local, overlap) = distribute_mesh(&global, &parts, &comm).unwrap();
+/// let ranks: Vec<_> = overlap.neighbor_ranks().collect();
+/// assert!(ranks.contains(&1));
+/// let links: Vec<_> = overlap.links_to(1).collect();
+/// assert!(links
+///     .iter()
+///     .any(|(p, rp)| *p == PointId::new(3).unwrap() && rp.is_none()));
 /// ```
 /// # Example (MPI)
 /// ```ignore
@@ -49,40 +58,84 @@ pub fn distribute_mesh<M, C>(
     mesh: &M,
     parts: &[usize],
     comm: &C,
-) -> Result<(InMemorySieve<PointId, ()>, Overlap), crate::mesh_error::MeshSieveError>
+) -> Result<(InMemorySieve<PointId, ()>, Overlap), MeshSieveError>
 where
-    M: Sieve<Point=PointId, Payload=()>,
+    M: Sieve<Point = PointId, Payload = ()>,
     C: Communicator + Sync,
 {
     let my_rank = comm.rank();
-    let _n_ranks = comm.size();
-    // 1) Build the “overlap” sieve
-    let mut overlap = Overlap::new();
-    for p in mesh.points() {
-        let idx = p.get().checked_sub(1)
-            .ok_or(crate::mesh_error::MeshSieveError::PartitionIndexOutOfBounds(p.get() as usize))? as usize;
-        let owner = *parts.get(idx)
-            .ok_or(crate::mesh_error::MeshSieveError::PartitionIndexOutOfBounds(p.get() as usize))?;
+
+    // ---------- Pass 0: collect points and validate `parts` ----------
+    let mut max_id = 0u64;
+    let pts: Vec<PointId> = mesh
+        .points()
+        .inspect(|p| max_id = max_id.max(p.get()))
+        .collect();
+    if parts.len() < max_id as usize {
+        return Err(MeshSieveError::PartitionIndexOutOfBounds(parts.len()));
+    }
+
+    // ---------- Pass 1: collect foreign points ----------
+    let mut foreign_pts: Vec<(PointId, usize)> = Vec::new();
+    foreign_pts.reserve(pts.len() / 2);
+
+    for p in &pts {
+        let owner = owner_of(parts, *p)?;
         if owner != my_rank {
-            overlap.add_link(p, owner, p);
+            foreign_pts.push((*p, owner));
         }
     }
-    // 2) Extract local submesh: only arrows whose src→dst are both owned here
-    let mut local = InMemorySieve::<PointId,()>::default();
+
+    // ---------- Build Overlap ----------
+    let mut overlap = Overlap::default();
+    overlap.add_links_structural_bulk(foreign_pts);
+
+    #[cfg(any(debug_assertions, feature = "check-invariants"))]
+    overlap.validate_invariants()?;
+
+    // ---------- Build local submesh ----------
+    let mut local = InMemorySieve::<PointId, ()>::default();
     for base in mesh.base_points() {
-        let base_idx = base.get().checked_sub(1)
-            .ok_or(crate::mesh_error::MeshSieveError::PartitionIndexOutOfBounds(base.get() as usize))? as usize;
-        if *parts.get(base_idx).ok_or(crate::mesh_error::MeshSieveError::PartitionIndexOutOfBounds(base.get() as usize))? == my_rank {
+        if owner_of(parts, base)? == my_rank {
             for (dst, _) in mesh.cone(base) {
-                let dst_idx = dst.get().checked_sub(1)
-                    .ok_or(crate::mesh_error::MeshSieveError::PartitionIndexOutOfBounds(dst.get() as usize))? as usize;
-                if *parts.get(dst_idx).ok_or(crate::mesh_error::MeshSieveError::PartitionIndexOutOfBounds(dst.get() as usize))? == my_rank {
+                if owner_of(parts, dst)? == my_rank {
                     local.add_arrow(base, dst, ());
                 }
             }
         }
     }
-    // 3) (Optional) completion of overlap graph could be performed here
-    // 4) (Optional: exchange data if needed, but for mesh topology with () payload, this is not required)
+
     Ok((local, overlap))
+}
+
+/// Only for single-process demos/tests: set `remote_point = Some(local_p)` for all links.
+pub fn resolve_overlap_identity(overlap: &mut Overlap) {
+    let mut to_resolve = Vec::new();
+    for src in overlap.base_points() {
+        if let OvlId::Local(p) = src {
+            for (dst, rem) in overlap.cone(src) {
+                if let OvlId::Part(r) = dst {
+                    debug_assert_eq!(rem.rank, r);
+                    to_resolve.push((p, r));
+                }
+            }
+        }
+    }
+    for (p, r) in to_resolve {
+        overlap
+            .resolve_remote_point(p, r, p)
+            .expect("resolve_remote_point failed");
+    }
+}
+
+#[inline]
+fn owner_of(parts: &[usize], p: PointId) -> Result<usize, MeshSieveError> {
+    let idx = p
+        .get()
+        .checked_sub(1)
+        .ok_or(MeshSieveError::PartitionIndexOutOfBounds(p.get() as usize))? as usize;
+    parts
+        .get(idx)
+        .copied()
+        .ok_or(MeshSieveError::PartitionIndexOutOfBounds(idx))
 }
