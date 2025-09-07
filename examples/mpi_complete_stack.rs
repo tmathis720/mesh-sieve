@@ -35,9 +35,13 @@ fn main() {
         remote_point: PodU64,
     }
     impl mesh_sieve::algs::completion::stack_completion::HasRank for DummyRemote {
-        fn rank(&self) -> usize {
-            self.rank
+        fn rank_u32(&self) -> u32 {
+            self.rank as u32
         }
+    }
+    impl mesh_sieve::algs::completion::stack_completion::WirePoint for PodU64 {
+        fn to_wire(self) -> u64 { self.0 }
+        fn from_wire(w: u64) -> Self { PodU64(w) }
     }
     let comm = MpiComm::default();
     let world = &comm.world;

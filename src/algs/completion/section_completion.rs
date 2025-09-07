@@ -45,7 +45,7 @@ where
     let all_neighbors: HashSet<usize> = all.into_iter().collect();
 
     // 3) exchange the item counts
-    let counts = exchange_sizes_symmetric(&links, comm, tags.sizes.as_u16(), &all_neighbors)
+    let counts = exchange_sizes_symmetric(&links, comm, tags.sizes, &all_neighbors)
         .map_err(|e| MeshSieveError::CommError {
             neighbor: my_rank,
             source: format!("exchange_sizes_symmetric failed: {e}").into(),

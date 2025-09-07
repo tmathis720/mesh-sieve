@@ -72,6 +72,13 @@ impl CommTag {
     }
 }
 
+impl From<u16> for CommTag {
+    #[inline]
+    fn from(x: u16) -> Self {
+        CommTag::new(x)
+    }
+}
+
 /// Convenience bundle of tags for the multi-phase section completion.
 #[derive(Copy, Clone, Debug)]
 pub struct SectionCommTags {
@@ -102,6 +109,26 @@ pub struct SieveCommTags {
 }
 
 impl SieveCommTags {
+    /// Construct tags from a base, assigning deterministic offsets per phase.
+    #[inline]
+    pub const fn from_base(base: CommTag) -> Self {
+        Self {
+            sizes: base,
+            data: base.offset(1),
+        }
+    }
+}
+
+/// Convenience bundle of tags for stack completion.
+#[derive(Copy, Clone, Debug)]
+pub struct StackCommTags {
+    /// Tag used during the size exchange phase.
+    pub sizes: CommTag,
+    /// Tag used during the data exchange phase.
+    pub data: CommTag,
+}
+
+impl StackCommTags {
     /// Construct tags from a base, assigning deterministic offsets per phase.
     #[inline]
     pub const fn from_base(base: CommTag) -> Self {

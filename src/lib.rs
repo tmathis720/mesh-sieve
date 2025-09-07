@@ -65,7 +65,9 @@ pub mod prelude {
     pub use crate::algs::communicator::MpiComm;
     #[cfg(feature = "rayon")]
     pub use crate::algs::communicator::RayonComm;
-    pub use crate::algs::completion::{complete_section, complete_sieve, complete_stack};
+    pub use crate::algs::completion::{
+        complete_section, complete_sieve, complete_stack, complete_stack_with_tags,
+    };
     pub use crate::algs::rcm::distributed_rcm;
     pub use crate::data::atlas::Atlas;
     pub use crate::data::section::{Map, Section};

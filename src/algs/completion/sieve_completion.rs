@@ -115,7 +115,7 @@ where
     let wires = build_wires(mesh, overlap, &neighbors)?;
 
     // Phase 1: symmetric exchange of counts
-    let counts = exchange_sizes_symmetric(&wires, comm, tags.sizes.as_u16(), &all_neighbors)?;
+    let counts = exchange_sizes_symmetric(&wires, comm, tags.sizes, &all_neighbors)?;
 
     // Phase 2: payload exchange
     let mut recvs = Vec::new();

@@ -8,7 +8,7 @@ pub mod stack_completion;
 
 pub use section_completion::{complete_section, complete_section_with_tags};
 pub use sieve_completion::{complete_sieve, complete_sieve_with_tags};
-pub use stack_completion::complete_stack;
+pub use stack_completion::{complete_stack, complete_stack_with_tags};
 
 pub fn partition_point(rank: usize) -> crate::topology::point::PointId {
     crate::topology::point::PointId::new((rank as u64) + 1)
