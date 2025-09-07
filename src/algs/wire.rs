@@ -90,7 +90,29 @@ impl WireAdj {
 
 // ===== Sieve completion ====================================================
 
-/// Arrow triple used by sieve completion.
+/// Minimal arrow payload `(src, dst)` in receiver-local IDs.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct WireArrow {
+    pub src_le: u64,
+    pub dst_le: u64,
+}
+impl WireArrow {
+    pub fn new(src: u64, dst: u64) -> Self {
+        Self {
+            src_le: src.to_le(),
+            dst_le: dst.to_le(),
+        }
+    }
+    pub fn src(&self) -> u64 {
+        u64::from_le(self.src_le)
+    }
+    pub fn dst(&self) -> u64 {
+        u64::from_le(self.dst_le)
+    }
+}
+
+/// Legacy arrow triple used by sieve completion.
 /// NOTE: `rank_le` is u32 (never usize) on the wire.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -163,6 +185,7 @@ const _: () = {
     assert!(size_of::<WireCount>() == 4);
     assert!(size_of::<WirePoint>() == 8);
     assert!(size_of::<WireAdj>() == 16);
+    assert!(size_of::<WireArrow>() == 16);
     assert!(size_of::<WireArrowTriple>() == WireArrowTriple::SIZE);
     assert!(align_of::<WireArrowTriple>() == 8);
 };
@@ -180,6 +203,16 @@ mod tests {
         cast_slice_mut(&mut out).copy_from_slice(&bytes);
         assert_eq!(out[0].src(), 1);
         assert_eq!(out[1].dst(), 4);
+    }
+
+    #[test]
+    fn roundtrip_wire_arrow() {
+        let v = vec![WireArrow::new(10, 20), WireArrow::new(30, 40)];
+        let bytes: Vec<u8> = cast_slice(&v).to_vec();
+        let mut out = vec![WireArrow::zeroed(); v.len()];
+        cast_slice_mut(&mut out).copy_from_slice(&bytes);
+        assert_eq!(out[0].src(), 10);
+        assert_eq!(out[1].dst(), 40);
     }
 
     #[test]
