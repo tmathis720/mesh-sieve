@@ -5,8 +5,9 @@
 // and that the Stack is correctly completed with values from both ranks.
 #[cfg(feature = "mpi-support")]
 fn main() {
-    use mesh_sieve::algs::communicator::MpiComm;
+    use mesh_sieve::algs::communicator::{CommTag, MpiComm, StackCommTags};
     use mesh_sieve::algs::completion::complete_stack;
+    use mesh_sieve::algs::completion::stack_exchange::{HasRank, WirePoint};
     use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
     use mesh_sieve::topology::stack::{InMemoryStack, Stack};
     use mpi::topology::Communicator;
@@ -34,9 +35,18 @@ fn main() {
         rank: usize,
         remote_point: PodU64,
     }
-    impl mesh_sieve::algs::completion::stack_completion::HasRank for DummyRemote {
-        fn rank(&self) -> usize {
-            self.rank
+    impl HasRank for DummyRemote {
+        fn rank_u32(&self) -> u32 {
+            self.rank as u32
+        }
+    }
+
+    impl WirePoint for PodU64 {
+        fn to_wire(self) -> u64 {
+            self.0
+        }
+        fn from_wire(w: u64) -> Self {
+            PodU64(w)
         }
     }
     let comm = MpiComm::default();
@@ -72,7 +82,9 @@ fn main() {
         );
     }
     // actually run and unwrap any error from the stack‐completion
-    complete_stack(&mut stack, &overlap, &comm, rank, size).expect("MPI stack completion failed");
+    let tags = StackCommTags::from_base(CommTag::new(0xC0DE));
+    complete_stack(&mut stack, &overlap, &comm, rank, size, tags)
+        .expect("MPI stack completion failed");
     let arrows: Vec<_> = stack.lift(PodU64(1)).collect();
 
     if rank == 1 {

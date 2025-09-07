@@ -4,7 +4,7 @@
 //! with each neighbor during distributed section completion. It supports both asymmetric
 //! and symmetric communication patterns.
 
-use crate::algs::communicator::Wait;
+use crate::algs::communicator::{CommTag, Wait};
 use crate::algs::wire::WireCount;
 use crate::mesh_error::MeshSieveError;
 use std::collections::{HashMap, HashSet};
@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 pub fn exchange_sizes<C, T>(
     links: &HashMap<usize, Vec<T>>,
     comm: &C,
-    base_tag: u16,
+    tag: CommTag,
 ) -> Result<HashMap<usize, u32>, MeshSieveError>
 where
     C: crate::algs::communicator::Communicator + Sync,
@@ -25,7 +25,7 @@ where
         let mut cnt = WireCount::new(0);
         let h = comm.irecv(
             nbr,
-            base_tag,
+            tag.as_u16(),
             bytemuck::cast_slice_mut(std::slice::from_mut(&mut cnt)),
         );
         recv_size.insert(nbr, (h, cnt));
@@ -33,47 +33,45 @@ where
 
     // 2) post all sends
     let mut pending_sends = Vec::with_capacity(links.len());
+    let mut send_bufs = Vec::with_capacity(links.len());
     for (&nbr, items) in links.iter() {
         let count = WireCount::new(items.len());
         pending_sends.push(comm.isend(
             nbr,
-            base_tag,
+            tag.as_u16(),
             bytemuck::cast_slice(std::slice::from_ref(&count)),
         ));
+        send_bufs.push(count);
     }
 
     // 3) wait for all recvs, collect counts (but do not early–return)
     let mut sizes_in = HashMap::new();
     let mut maybe_err = None;
     for (nbr, (h, mut cnt)) in recv_size {
-        if maybe_err.is_some() {
-            break;
-        }
         match h.wait() {
-            Some(data) => {
-                if data.len() != std::mem::size_of::<WireCount>() {
-                    maybe_err = Some(MeshSieveError::CommError {
-                        neighbor: nbr,
-                        source: format!(
-                            "expected {} bytes for size header, got {}",
-                            std::mem::size_of::<WireCount>(),
-                            data.len()
-                        )
-                        .into(),
-                    });
-                    break;
-                }
+            Some(data) if data.len() == std::mem::size_of::<WireCount>() => {
                 let bytes = bytemuck::cast_slice_mut(std::slice::from_mut(&mut cnt));
                 bytes.copy_from_slice(&data);
                 sizes_in.insert(nbr, cnt.get() as u32);
             }
-            None => {
+            Some(data) if maybe_err.is_none() => {
+                maybe_err = Some(MeshSieveError::CommError {
+                    neighbor: nbr,
+                    source: format!(
+                        "expected {} bytes for size header, got {}",
+                        std::mem::size_of::<WireCount>(),
+                        data.len()
+                    )
+                    .into(),
+                });
+            }
+            None if maybe_err.is_none() => {
                 maybe_err = Some(MeshSieveError::CommError {
                     neighbor: nbr,
                     source: format!("failed to receive size from rank {nbr}").into(),
                 });
-                break;
             }
+            _ => {}
         }
     }
 
@@ -95,7 +93,7 @@ where
 pub fn exchange_sizes_symmetric<C, T>(
     links: &HashMap<usize, Vec<T>>,
     comm: &C,
-    base_tag: u16,
+    tag: CommTag,
     all_neighbors: &HashSet<usize>,
 ) -> Result<HashMap<usize, u32>, MeshSieveError>
 where
@@ -107,7 +105,7 @@ where
         let mut cnt = WireCount::new(0);
         let h = comm.irecv(
             nbr,
-            base_tag,
+            tag.as_u16(),
             bytemuck::cast_slice_mut(std::slice::from_mut(&mut cnt)),
         );
         recv_size.insert(nbr, (h, cnt));
@@ -120,7 +118,7 @@ where
         let count = WireCount::new(links.get(&nbr).map_or(0, |v| v.len()));
         pending_sends.push(comm.isend(
             nbr,
-            base_tag,
+            tag.as_u16(),
             bytemuck::cast_slice(std::slice::from_ref(&count)),
         ));
         send_bufs.push(count);
@@ -130,34 +128,30 @@ where
     let mut sizes_in = HashMap::new();
     let mut maybe_err = None;
     for (nbr, (h, mut cnt)) in recv_size {
-        if maybe_err.is_some() {
-            break;
-        }
         match h.wait() {
-            Some(data) => {
-                if data.len() != std::mem::size_of::<WireCount>() {
-                    maybe_err = Some(MeshSieveError::CommError {
-                        neighbor: nbr,
-                        source: format!(
-                            "expected {} bytes for size header, got {}",
-                            std::mem::size_of::<WireCount>(),
-                            data.len()
-                        )
-                        .into(),
-                    });
-                    break;
-                }
+            Some(data) if data.len() == std::mem::size_of::<WireCount>() => {
                 let bytes = bytemuck::cast_slice_mut(std::slice::from_mut(&mut cnt));
                 bytes.copy_from_slice(&data);
                 sizes_in.insert(nbr, cnt.get() as u32);
             }
-            None => {
+            Some(data) if maybe_err.is_none() => {
+                maybe_err = Some(MeshSieveError::CommError {
+                    neighbor: nbr,
+                    source: format!(
+                        "expected {} bytes for size header, got {}",
+                        std::mem::size_of::<WireCount>(),
+                        data.len()
+                    )
+                    .into(),
+                });
+            }
+            None if maybe_err.is_none() => {
                 maybe_err = Some(MeshSieveError::CommError {
                     neighbor: nbr,
                     source: format!("failed to receive size from rank {nbr}").into(),
                 });
-                break;
             }
+            _ => {}
         }
     }
 
