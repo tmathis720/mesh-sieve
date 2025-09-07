@@ -1,3 +1,4 @@
+#![cfg(feature = "mpi-support")]
 //! ## Replication Factor (RF) and Load Balance
 //!
 //! - RF: average number of parts each vertex appears in. If `P(v)` is the set of parts
