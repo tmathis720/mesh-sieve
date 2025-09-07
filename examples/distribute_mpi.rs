@@ -7,14 +7,12 @@
 // its local mesh and overlap for manual inspection.
 #[cfg(feature = "mpi-support")]
 fn main() {
-    use mpi::traits::*;
     use mesh_sieve::algs::communicator::{Communicator, MpiComm};
     use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
     use mesh_sieve::topology::point::PointId;
     use mesh_sieve::algs::distribute_mesh;
     // 1. Initialize MPI
-    let universe = mpi::initialize().unwrap();
-    let comm = MpiComm::from_universe(universe);
+    let comm = MpiComm::default();
     if comm.size() != 2 {
         eprintln!("This test requires 2 MPI ranks");
         return;
@@ -36,7 +34,7 @@ fn main() {
     println!("Rank {} local: {:?}", comm.rank(), local);
     println!("Rank {} overlap: {:?}", comm.rank(), overlap);
     // Synchronize before exit
-    comm.world.barrier();
+    comm.barrier();
 }
 
 #[cfg(not(feature = "mpi-support"))]

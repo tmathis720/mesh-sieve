@@ -10,7 +10,7 @@
 //! results across runs.
 
 use crate::partitioning::{graph_traits::PartitionableGraph, PartitionerConfig, PartitionerError};
-use rand::{rngs::SmallRng, seq::SliceRandom, Rng, RngCore, SeedableRng};
+use rand::{rngs::SmallRng, seq::SliceRandom, RngCore, SeedableRng};
 use rayon::iter::ParallelIterator;
 
 /// Returns an error if `degrees.len()` doesn’t match the number of vertices.
@@ -186,7 +186,7 @@ fn pick_uniform_without_replacement(
 mod tests {
     use super::*;
     use crate::partitioning::graph_traits::PartitionableGraph;
-    use rayon::iter::{IntoParallelIterator, ParallelIterator};
+    use rayon::iter::IntoParallelIterator;
 
     struct PathGraph {
         n: usize,

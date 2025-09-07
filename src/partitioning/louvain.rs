@@ -16,11 +16,15 @@
 //! Classical modularity can be written as `Q = ∑_c (E_cc - a_c^2)`.
 //! The modularity *gain* from merging clusters `i` and `j` is:
 //!
-//!     ΔQ_ij = 2 * (E_ij - a_i * a_j)
+//! ```text
+//! ΔQ_ij = 2 * (E_ij - a_i * a_j)
+//! ```
 //!
 //! In terms of raw counts, this is equivalently:
 //!
-//!     ΔQ_ij = (e_ij / m) - (vol_i * vol_j) / (2 m^2)
+//! ```text
+//! ΔQ_ij = (e_ij / m) - (vol_i * vol_j) / (2 m^2)
+//! ```
 //!
 //! We then apply a *size-balance factor* `f_ij = min(vol_i, vol_j) / max(vol_i, vol_j)`
 //! and maximize `ΔQ'_ij = α * ΔQ_ij * f_ij`, where `α ∈ [0,1]` is a configuration parameter
