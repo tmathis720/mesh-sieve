@@ -620,7 +620,7 @@ fn test_sieved_array_operations(rank: usize) {
 fn test_error_handling_robustness(rank: usize) {
     use mesh_sieve::{
         overlap::delta::ZeroDelta,
-        prelude::{Atlas, ValueDelta, Section, Sieve},
+        prelude::{Atlas, Section, Sieve, ValueDelta},
     };
 
     println!("[rank {}] Testing error handling robustness...", rank);

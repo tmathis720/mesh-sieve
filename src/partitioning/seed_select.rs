@@ -9,8 +9,8 @@
 //! The RNG is seeded from [`PartitionerConfig::rng_seed`] ensuring stable
 //! results across runs.
 
-use crate::partitioning::{graph_traits::PartitionableGraph, PartitionerConfig, PartitionerError};
-use rand::{rngs::SmallRng, seq::SliceRandom, RngCore, SeedableRng};
+use crate::partitioning::{PartitionerConfig, PartitionerError, graph_traits::PartitionableGraph};
+use rand::{RngCore, SeedableRng, rngs::SmallRng, seq::SliceRandom};
 use rayon::iter::ParallelIterator;
 
 /// Returns an error if `degrees.len()` doesn’t match the number of vertices.

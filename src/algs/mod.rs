@@ -8,14 +8,14 @@ pub mod completion;
 pub mod distribute;
 pub mod dual_graph;
 pub mod lattice;
-pub mod wire;
 pub mod metis_partition;
 pub mod partition;
+pub mod rcm;
+pub mod reduction;
 pub mod traversal;
 pub mod traversal_ref;
-pub mod reduction;
-pub mod rcm;
+pub mod wire;
 
+pub use crate::algs::distribute::distribute_mesh;
 pub use completion::complete_section;
 pub use lattice::adjacent;
-pub use crate::algs::distribute::distribute_mesh;

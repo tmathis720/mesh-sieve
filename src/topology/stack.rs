@@ -7,11 +7,11 @@
 
 use super::sieve::InMemorySieve;
 use crate::mesh_error::MeshSieveError;
+use crate::topology::_debug_invariants::debug_invariants;
+use crate::topology::bounds::{PayloadLike, PointLike};
 use crate::topology::cache::InvalidateCache;
 use std::collections::HashMap;
 use std::sync::Arc;
-use crate::topology::_debug_invariants::debug_invariants;
-use crate::topology::bounds::{PointLike, PayloadLike};
 
 /// A `Stack` links a *base* Sieve to a *cap* Sieve via vertical arrows.
 /// Each arrow carries a payload (e.g., orientation or permutation).
@@ -32,15 +32,9 @@ pub trait Stack {
     /// Per-arrow payload type.
     type Payload: Clone;
     /// The underlying base Sieve type.
-    type BaseSieve: crate::topology::sieve::sieve_trait::Sieve<
-        Point = Self::Point,
-        Payload = Self::Payload,
-    >;
+    type BaseSieve: crate::topology::sieve::sieve_trait::Sieve<Point = Self::Point, Payload = Self::Payload>;
     /// The underlying cap Sieve type.
-    type CapSieve: crate::topology::sieve::sieve_trait::Sieve<
-        Point = Self::CapPt,
-        Payload = Self::Payload,
-    >;
+    type CapSieve: crate::topology::sieve::sieve_trait::Sieve<Point = Self::CapPt, Payload = Self::Payload>;
 
     // === Topology queries ===
     /// Returns an iterator over all upward arrows from base point `p` to cap points.
@@ -103,11 +97,7 @@ pub trait Stack {
 ///
 /// Also embeds two `InMemorySieve`s to represent the base and cap topologies themselves.
 #[derive(Clone, Debug)]
-pub struct InMemoryStack<
-    B: PointLike,
-    C: PointLike,
-    P = (),
-> {
+pub struct InMemoryStack<B: PointLike, C: PointLike, P = ()> {
     /// Underlying base sieve (e.g., mesh connectivity).
     pub base: InMemorySieve<B, P>,
     /// Underlying cap sieve (e.g., DOF connectivity).
@@ -320,13 +310,19 @@ where
         for (b, v) in &self.up {
             let mut seen = HashSet::new();
             for (c, _) in v {
-                debug_assert!(seen.insert(*c), "duplicate vertical arrow base={b:?} cap={c:?}");
+                debug_assert!(
+                    seen.insert(*c),
+                    "duplicate vertical arrow base={b:?} cap={c:?}"
+                );
             }
         }
         for (c, v) in &self.down {
             let mut seen = HashSet::new();
             for (b, _) in v {
-                debug_assert!(seen.insert(*b), "duplicate vertical arrow cap={c:?} base={b:?}");
+                debug_assert!(
+                    seen.insert(*b),
+                    "duplicate vertical arrow cap={c:?} base={b:?}"
+                );
             }
         }
 
@@ -336,13 +332,19 @@ where
 
         for (b, ups) in &self.up {
             for (c, _) in ups {
-                let has = self.down.get(c).is_some_and(|v| v.iter().any(|(bb, _)| *bb == *b));
+                let has = self
+                    .down
+                    .get(c)
+                    .is_some_and(|v| v.iter().any(|(bb, _)| *bb == *b));
                 debug_assert!(has, "stack mirror missing: up {b:?}->{c:?} has no down");
             }
         }
         for (c, downs) in &self.down {
             for (b, _) in downs {
-                let has = self.up.get(b).is_some_and(|v| v.iter().any(|(cc, _)| *cc == *c));
+                let has = self
+                    .up
+                    .get(b)
+                    .is_some_and(|v| v.iter().any(|(cc, _)| *cc == *c));
                 debug_assert!(has, "stack mirror missing: down {b:?}->{c:?} has no up");
             }
         }

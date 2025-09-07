@@ -1,9 +1,11 @@
-use rayon::prelude::*;
 use mesh_sieve::partitioning::graph_traits::PartitionableGraph;
+use rayon::prelude::*;
 
 /// Simple adjacency-list graph for examples/tests.
 #[derive(Clone)]
-pub struct AdjListGraph { pub nbrs: Vec<Vec<usize>> }
+pub struct AdjListGraph {
+    pub nbrs: Vec<Vec<usize>>,
+}
 
 impl AdjListGraph {
     pub fn from_undirected(n: usize, edges: &[(usize, usize)]) -> Self {

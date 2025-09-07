@@ -46,9 +46,7 @@ pub enum MeshSieveError {
     SievedArrayPointNotInAtlas(crate::topology::point::PointId),
 
     /// Mismatch between expected and provided slice length for a point.
-    #[error(
-        "Section error: slice length mismatch for {point:?}: expected {expected}, got {found}"
-    )]
+    #[error("Section error: slice length mismatch for {point:?}: expected {expected}, got {found}")]
     SliceLengthMismatch {
         point: crate::topology::point::PointId,
         expected: usize,

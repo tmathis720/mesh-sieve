@@ -1,5 +1,5 @@
-use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
 use mesh_sieve::topology::sieve::Sieve;
+use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
 
 // Build a tiny simplicial-ish mesh: two triangles (0,1) sharing an edge (4).
 // 0 -> edges {2,3,4}; 1 -> edges {4,5,6}; edges -> vertices.

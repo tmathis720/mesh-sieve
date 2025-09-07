@@ -15,16 +15,24 @@ pub const WIRE_VERSION: u16 = 1;
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct WireHdr {
     pub version_le: u16,  // = WIRE_VERSION.to_le()
-    pub kind_le:    u16,  // 1 = Cone, 2 = Support, etc.
+    pub kind_le: u16,     // 1 = Cone, 2 = Support, etc.
     pub reserved_le: u32, // future use; keep zero
 }
 
 impl WireHdr {
     pub fn new(kind: u16) -> Self {
-        Self { version_le: WIRE_VERSION.to_le(), kind_le: kind.to_le(), reserved_le: 0 }
+        Self {
+            version_le: WIRE_VERSION.to_le(),
+            kind_le: kind.to_le(),
+            reserved_le: 0,
+        }
     }
-    pub fn kind(&self) -> u16 { u16::from_le(self.kind_le) }
-    pub fn version(&self) -> u16 { u16::from_le(self.version_le) }
+    pub fn kind(&self) -> u16 {
+        u16::from_le(self.kind_le)
+    }
+    pub fn version(&self) -> u16 {
+        u16::from_le(self.version_le)
+    }
 }
 
 #[repr(C)]
@@ -33,8 +41,14 @@ pub struct WireCount {
     pub n_le: u32, // count of following records
 }
 impl WireCount {
-    pub fn new(n: usize) -> Self { Self { n_le: (n as u32).to_le() } }
-    pub fn get(&self) -> usize { u32::from_le(self.n_le) as usize }
+    pub fn new(n: usize) -> Self {
+        Self {
+            n_le: (n as u32).to_le(),
+        }
+    }
+    pub fn get(&self) -> usize {
+        u32::from_le(self.n_le) as usize
+    }
 }
 
 /// A point id (u64) carried on the wire.
@@ -44,8 +58,12 @@ pub struct WirePoint {
     pub id_le: u64,
 }
 impl WirePoint {
-    pub fn of(id: u64) -> Self { Self { id_le: id.to_le() } }
-    pub fn get(&self) -> u64 { u64::from_le(self.id_le) }
+    pub fn of(id: u64) -> Self {
+        Self { id_le: id.to_le() }
+    }
+    pub fn get(&self) -> u64 {
+        u64::from_le(self.id_le)
+    }
 }
 
 /// An adjacency pair (src, dst) — used in closure/support replies.
@@ -56,9 +74,18 @@ pub struct WireAdj {
     pub dst_le: u64,
 }
 impl WireAdj {
-    pub fn new(src: u64, dst: u64) -> Self { Self { src_le: src.to_le(), dst_le: dst.to_le() } }
-    pub fn src(&self) -> u64 { u64::from_le(self.src_le) }
-    pub fn dst(&self) -> u64 { u64::from_le(self.dst_le) }
+    pub fn new(src: u64, dst: u64) -> Self {
+        Self {
+            src_le: src.to_le(),
+            dst_le: dst.to_le(),
+        }
+    }
+    pub fn src(&self) -> u64 {
+        u64::from_le(self.src_le)
+    }
+    pub fn dst(&self) -> u64 {
+        u64::from_le(self.dst_le)
+    }
 }
 
 // ===== Sieve completion ====================================================
@@ -68,11 +95,11 @@ impl WireAdj {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct WireArrowTriple {
-    pub src_le:         u64,
-    pub dst_le:         u64,
-    pub remote_point_le:u64,
-    pub rank_le:        u32, // remote rank
-    pub _pad:           u32, // pad to 8-byte alignment (explicit)
+    pub src_le: u64,
+    pub dst_le: u64,
+    pub remote_point_le: u64,
+    pub rank_le: u32, // remote rank
+    pub _pad: u32,    // pad to 8-byte alignment (explicit)
 }
 impl WireArrowTriple {
     pub const SIZE: usize = 32; // 3*8 + 4 + 4
@@ -105,30 +132,38 @@ pub const WIRE_PAYLOAD_MAX: usize = 16; // example cap; set to your actual need
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct WireStackTriple {
     pub base_le: u64,
-    pub cap_le:  u64,
+    pub cap_le: u64,
     /// Opaque payload bytes. Producer and consumer must agree on its meaning.
-    pub pay:     [u8; WIRE_PAYLOAD_MAX],
+    pub pay: [u8; WIRE_PAYLOAD_MAX],
 }
 impl WireStackTriple {
     pub fn new(base: u64, cap: u64, pay: &[u8]) -> Self {
         let mut buf = [0u8; WIRE_PAYLOAD_MAX];
         let n = pay.len().min(WIRE_PAYLOAD_MAX);
         buf[..n].copy_from_slice(&pay[..n]);
-        Self { base_le: base.to_le(), cap_le: cap.to_le(), pay: buf }
+        Self {
+            base_le: base.to_le(),
+            cap_le: cap.to_le(),
+            pay: buf,
+        }
     }
-    pub fn base(&self) -> u64 { u64::from_le(self.base_le) }
-    pub fn cap(&self) -> u64 { u64::from_le(self.cap_le) }
+    pub fn base(&self) -> u64 {
+        u64::from_le(self.base_le)
+    }
+    pub fn cap(&self) -> u64 {
+        u64::from_le(self.cap_le)
+    }
 }
 
 // ===== Compile-time sanity checks =========================================
 
 const _: () = {
     // Pod/Zeroable ensures no padding contains uninit when cast to bytes.
-    assert!(size_of::<WireHdr>()        == 8);
-    assert!(size_of::<WireCount>()      == 4);
-    assert!(size_of::<WirePoint>()      == 8);
-    assert!(size_of::<WireAdj>()        == 16);
-    assert!(size_of::<WireArrowTriple>()== WireArrowTriple::SIZE);
+    assert!(size_of::<WireHdr>() == 8);
+    assert!(size_of::<WireCount>() == 4);
+    assert!(size_of::<WirePoint>() == 8);
+    assert!(size_of::<WireAdj>() == 16);
+    assert!(size_of::<WireArrowTriple>() == WireArrowTriple::SIZE);
     assert!(align_of::<WireArrowTriple>() == 8);
 };
 
@@ -153,16 +188,19 @@ mod tests {
         let bytes: Vec<u8> = cast_slice(&[t]).to_vec();
         let mut out = vec![WireArrowTriple::zeroed(); 1];
         cast_slice_mut(&mut out).copy_from_slice(&bytes);
-        assert_eq!(out[0].decode(), (1,2,3,4));
-        assert_eq!(WireArrowTriple::SIZE, std::mem::size_of::<WireArrowTriple>());
+        assert_eq!(out[0].decode(), (1, 2, 3, 4));
+        assert_eq!(
+            WireArrowTriple::SIZE,
+            std::mem::size_of::<WireArrowTriple>()
+        );
     }
 
     #[test]
     fn roundtrip_stack() {
-        let pay = [1u8,2,3,4];
+        let pay = [1u8, 2, 3, 4];
         let t = WireStackTriple::new(10, 20, &pay);
         let bytes: Vec<u8> = cast_slice(&[t]).to_vec();
-        let mut out = vec![WireStackTriple::zeroed();1];
+        let mut out = vec![WireStackTriple::zeroed(); 1];
         cast_slice_mut(&mut out).copy_from_slice(&bytes);
         assert_eq!(out[0].base(), 10);
         assert_eq!(out[0].cap(), 20);
@@ -175,4 +213,3 @@ mod tests {
         assert_eq!(hdr.version(), WIRE_VERSION);
     }
 }
-

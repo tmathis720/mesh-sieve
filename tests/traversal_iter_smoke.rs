@@ -1,5 +1,5 @@
-use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
 use mesh_sieve::topology::sieve::Sieve;
+use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
 
 #[test]
 fn closure_iter_behaves_like_boxed_closure() {
@@ -48,4 +48,3 @@ fn closure_both_iter_visits_both_directions() {
 
     assert_eq!(v, vec![1, 2, 3, 4]);
 }
-

@@ -5,17 +5,17 @@ use once_cell::sync::OnceCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use super::build_ext::SieveBuildExt;
 use super::mutable::MutableSieve;
 use super::oriented::{Orientation, OrientedSieve};
+use super::query_ext::SieveQueryExt;
 use super::sieve_trait::Sieve;
 use crate::mesh_error::MeshSieveError;
+use crate::topology::_debug_invariants::debug_invariants;
+use crate::topology::bounds::{PayloadLike, PointLike};
 use crate::topology::cache::InvalidateCache;
 use crate::topology::orientation::Sign;
 use crate::topology::sieve::strata::{StrataCache, compute_strata};
-use crate::topology::_debug_invariants::debug_invariants;
-use crate::topology::bounds::{PointLike, PayloadLike};
-use super::query_ext::SieveQueryExt;
-use super::build_ext::SieveBuildExt;
 
 #[derive(Clone, Debug)]
 pub struct InMemoryOrientedSieve<P, T = (), O = Sign>
@@ -197,12 +197,16 @@ where
             .collect();
         dbg::assert_no_dups_per_src(&out_view);
 
-        let out_pairs = dbg::count_pairs(self.adjacency_out.iter().flat_map(|(&src, vec)| {
-            vec.iter().map(move |(dst, _, _)| (src, *dst))
-        }));
-        let in_pairs = dbg::count_pairs(self.adjacency_in.iter().flat_map(|(&dst, vec)| {
-            vec.iter().map(move |(src, _, _)| (*src, dst))
-        }));
+        let out_pairs = dbg::count_pairs(
+            self.adjacency_out
+                .iter()
+                .flat_map(|(&src, vec)| vec.iter().map(move |(dst, _, _)| (src, *dst))),
+        );
+        let in_pairs = dbg::count_pairs(
+            self.adjacency_in
+                .iter()
+                .flat_map(|(&dst, vec)| vec.iter().map(move |(src, _, _)| (*src, dst))),
+        );
         dbg::counts_equal(&out_pairs, &in_pairs, "adjacency_out", "adjacency_in");
 
         fn check_orient<P, T, O>(s: &InMemoryOrientedSieve<P, T, O>)
@@ -236,10 +240,7 @@ where
     }
 
     /// Pre-size cone/support capacities from `(src, dst, count)` tuples.
-    pub fn reserve_from_edge_counts(
-        &mut self,
-        counts: impl IntoIterator<Item = (P, P, usize)>,
-    ) {
+    pub fn reserve_from_edge_counts(&mut self, counts: impl IntoIterator<Item = (P, P, usize)>) {
         use std::collections::HashMap;
         let mut by_src: HashMap<P, usize> = HashMap::new();
         let mut by_dst: HashMap<P, usize> = HashMap::new();
@@ -487,7 +488,10 @@ where
             new_cone = dedup;
         }
 
-        self.adjacency_out.entry(p).or_default().reserve(new_cone.len());
+        self.adjacency_out
+            .entry(p)
+            .or_default()
+            .reserve(new_cone.len());
         {
             use std::collections::HashMap;
             let mut dst_counts: HashMap<P, usize> = HashMap::new();
@@ -574,7 +578,10 @@ where
             new_sup = dedup;
         }
 
-        self.adjacency_in.entry(q).or_default().reserve(new_sup.len());
+        self.adjacency_in
+            .entry(q)
+            .or_default()
+            .reserve(new_sup.len());
         {
             use std::collections::HashMap;
             let mut src_counts: HashMap<P, usize> = HashMap::new();

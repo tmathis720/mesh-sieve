@@ -6,8 +6,6 @@ use crate::overlap::overlap::{Overlap, OvlId};
 use crate::topology::point::PointId;
 use crate::topology::sieve::{InMemorySieve, Sieve};
 
-
-
 /// Distribute a global mesh across ranks, returning the local submesh and overlap graph.
 ///
 /// Phase A of distribution: extract the local topology and create structural overlap

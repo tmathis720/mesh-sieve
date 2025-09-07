@@ -1,6 +1,6 @@
 use mesh_sieve::data::atlas::Atlas;
-use mesh_sieve::data::section::Section;
 use mesh_sieve::data::refine::sieved_array::SievedArray;
+use mesh_sieve::data::section::Section;
 use mesh_sieve::topology::arrow::Orientation;
 use mesh_sieve::topology::point::PointId;
 use mesh_sieve::topology::sieve::Sieve;
@@ -55,9 +55,9 @@ fn orientation_and_overlap_smoke() {
 #[test]
 fn partition_metrics_smoke() {
     use mesh_sieve::partitioning::{
-        partition,
         PartitionerConfig,
         metrics::{edge_cut, replication_factor},
+        partition,
     };
     let edges = tiny_mesh::tiny_dual_graph_edges();
     let g = test_graph::AdjListGraph::from_undirected(2, &edges);

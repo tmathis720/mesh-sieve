@@ -170,10 +170,11 @@ where
         stack.reserve(seeds.len().saturating_mul(2));
         for p in seeds {
             if let Some(i) = index.get(&p).copied()
-                && !seen[i] {
-                    seen[i] = true;
-                    stack.push(i);
-                }
+                && !seen[i]
+            {
+                seen[i] = true;
+                stack.push(i);
+            }
         }
 
         while let Some(i) = stack.pop() {
@@ -222,10 +223,11 @@ where
         q.reserve(seeds.len().saturating_mul(2));
         for p in seeds {
             if let Some(i) = index.get(&p).copied()
-                && !seen[i] {
-                    seen[i] = true;
-                    q.push_back(i);
-                }
+                && !seen[i]
+            {
+                seen[i] = true;
+                q.push_back(i);
+            }
         }
 
         while let Some(i) = q.pop_front() {

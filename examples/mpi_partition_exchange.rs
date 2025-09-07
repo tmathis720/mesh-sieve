@@ -24,7 +24,7 @@ use rayon::iter::ParallelIterator;
 #[cfg(feature = "mpi-support")]
 use mesh_sieve::partitioning::graph_traits::PartitionableGraph;
 #[cfg(feature = "mpi-support")]
-use mesh_sieve::partitioning::{partition, PartitionerConfig};
+use mesh_sieve::partitioning::{PartitionerConfig, partition};
 
 /// Build a 2×2 structured grid of points (IDs 0..8).
 #[cfg(feature = "mpi-support")]

@@ -13,7 +13,7 @@ pub fn main() {
     use mesh_sieve::data::atlas::Atlas;
     use mesh_sieve::data::section::Section;
     use mesh_sieve::overlap::delta::CopyDelta;
-    use mesh_sieve::overlap::overlap::{Overlap, Remote, OvlId};
+    use mesh_sieve::overlap::overlap::{Overlap, OvlId, Remote};
     use mesh_sieve::topology::point::PointId;
     use mesh_sieve::topology::sieve::sieve_trait::Sieve;
     use mpi::topology::Communicator;

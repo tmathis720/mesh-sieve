@@ -51,8 +51,7 @@ pub fn counts_equal<P>(
             continue;
         };
         debug_assert_eq!(
-            va,
-            vb,
+            va, vb,
             "edge multiplicity mismatch for {k:?}: {label_a}={va}, {label_b}={vb}"
         );
     }

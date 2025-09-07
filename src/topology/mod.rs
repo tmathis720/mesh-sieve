@@ -14,15 +14,15 @@
 //! Duplicate edges are forbidden; debug builds assert that the outgoing and incoming maps
 //! remain perfect mirrors and contain no parallel edges.
 
+mod _debug_invariants;
 pub mod arrow;
-pub mod cache;
 pub mod bounds;
+pub mod cache;
 pub mod orientation;
 pub mod point;
 pub mod sieve;
 pub mod stack;
 pub mod utils;
-mod _debug_invariants;
 
 pub use cache::InvalidateCache;
 pub use orientation::*;

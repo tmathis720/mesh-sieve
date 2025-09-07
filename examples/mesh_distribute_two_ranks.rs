@@ -9,11 +9,11 @@
 
 #[cfg(feature = "mpi-support")]
 fn main() {
-    use mesh_sieve::algs::communicator::{MpiComm, Communicator};
+    use mesh_sieve::algs::communicator::{Communicator, MpiComm};
     use mesh_sieve::algs::distribute::distribute_mesh;
+    use mesh_sieve::overlap::overlap::{Overlap as OvlGraph, OvlId};
     use mesh_sieve::topology::point::PointId;
-    use mesh_sieve::topology::sieve::{Sieve, InMemorySieve};
-    use mesh_sieve::overlap::overlap::{OvlId, Overlap as OvlGraph};
+    use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
     let comm = MpiComm::default();
     let size = Communicator::size(&comm);
     let rank = Communicator::rank(&comm);
@@ -26,7 +26,7 @@ fn main() {
     }
 
     // 1) Build a toy global mesh: two arrows 1→2 and 3→4
-    let mut global = InMemorySieve::<PointId,()>::default();
+    let mut global = InMemorySieve::<PointId, ()>::default();
     global.add_arrow(PointId::new(1).unwrap(), PointId::new(2).unwrap(), ());
     global.add_arrow(PointId::new(3).unwrap(), PointId::new(4).unwrap(), ());
 
@@ -57,7 +57,7 @@ fn main() {
 
     // Assert: rank 0 sees only PointId(1)→PointId(2) locally,
     //         plus an overlap link from 3→partition(1)
-    if rank==0 {
+    if rank == 0 {
         assert!(local.points().any(|p| p == PointId::new(1).unwrap()));
         assert!(ovl_pts.is_empty());
     } else {

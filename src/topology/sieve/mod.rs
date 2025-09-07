@@ -9,8 +9,14 @@
 //! [`InMemoryOrientedSieveArc`], and [`InMemoryStackArc`] type aliases for convenience.
 //! Avoid wrappers that convert between `T` and `Arc<T>` on the fly; they add allocations and defeat sharing.
 
+/// Bulk arrow insertion helpers.
+pub mod build_ext;
+/// Frozen CSR representation for deterministic, cache-friendly traversal.
+pub mod frozen_csr;
 /// In-memory implementation of the [`Sieve`] trait.
 pub mod in_memory;
+/// Deterministic in-memory sieve backed by `BTreeMap`.
+pub mod in_memory_det;
 /// In-memory implementation storing per-arrow orientations.
 pub mod in_memory_oriented;
 /// Trait for sieves that support full topology mutation.
@@ -19,38 +25,32 @@ pub mod mutable;
 pub mod oriented;
 /// Additional edge query helpers built on top of [`Sieve`].
 pub mod query_ext;
-/// Bulk arrow insertion helpers.
-pub mod build_ext;
+/// Bulk preallocation helpers.
+pub mod reserve;
 /// Reference-returning extensions to [`Sieve`].
 pub mod sieve_ref;
 /// Core trait for sieve data structures.
 pub mod sieve_trait;
 /// Strata sieve implementation.
 pub mod strata;
-/// Bulk preallocation helpers.
-pub mod reserve;
 /// Concrete traversal iterators without dynamic dispatch.
 pub mod traversal_iter;
-/// Frozen CSR representation for deterministic, cache-friendly traversal.
-pub mod frozen_csr;
-/// Deterministic in-memory sieve backed by `BTreeMap`.
-pub mod in_memory_det;
 
 // Re-export the core trait and in‐memory impl at top level
+pub use build_ext::SieveBuildExt;
+pub use frozen_csr::{FrozenSieveCsr, freeze_csr};
 pub use in_memory::InMemorySieve;
+pub use in_memory_det::InMemorySieveDeterministic;
 pub use in_memory_oriented::InMemoryOrientedSieve;
 pub use mutable::MutableSieve;
 pub use oriented::{Orientation, OrientedSieve};
+pub use query_ext::SieveQueryExt;
+pub use reserve::SieveReserveExt;
 pub use sieve_ref::SieveRef;
 pub use sieve_trait::Sieve;
-pub use query_ext::SieveQueryExt;
-pub use build_ext::SieveBuildExt;
-pub use in_memory_det::InMemorySieveDeterministic;
-pub use reserve::SieveReserveExt;
 pub use traversal_iter::{
     ClosureBothIter, ClosureBothIterRef, ClosureIter, ClosureIterRef, StarIter, StarIterRef,
 };
-pub use frozen_csr::{freeze_csr, FrozenSieveCsr};
 
 use std::sync::Arc;
 

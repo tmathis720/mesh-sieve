@@ -59,7 +59,10 @@ pub struct DualGraphOpts {
 
 impl Default for DualGraphOpts {
     fn default() -> Self {
-        Self { boundary: AdjacencyOpts::default(), symmetrize: true }
+        Self {
+            boundary: AdjacencyOpts::default(),
+            symmetrize: true,
+        }
     }
 }
 
@@ -129,7 +132,11 @@ where
 
     if n == 0 {
         return (
-            DualGraph { xadj: vec![0], adjncy: Vec::new(), vwgt: Vec::new() },
+            DualGraph {
+                xadj: vec![0],
+                adjncy: Vec::new(),
+                vwgt: Vec::new(),
+            },
             cells,
         );
     }
@@ -244,4 +251,3 @@ where
 
     (DualGraph { xadj, adjncy, vwgt }, cells)
 }
-

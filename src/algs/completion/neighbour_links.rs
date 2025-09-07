@@ -44,9 +44,7 @@ where
                 let remote_pt = rem
                     .remote_point
                     .ok_or(MeshSieveError::OverlapLinkMissing(p, rem.rank))?;
-                out.entry(rem.rank)
-                    .or_default()
-                    .push((p, remote_pt));
+                out.entry(rem.rank).or_default().push((p, remote_pt));
             }
         }
     }

@@ -2,8 +2,8 @@
 
 use mesh_sieve::algs::traversal as trv;
 use mesh_sieve::topology::point::PointId;
-use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
 use mesh_sieve::topology::sieve::Sieve;
+use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
 
 fn v(i: u32) -> PointId {
     PointId::new((i + 1) as u64).unwrap()
@@ -131,4 +131,3 @@ fn link_is_empty_for_all_points_in_fig1() {
         assert!(l.is_empty(), "link({p}) should be empty on incidence DAG");
     }
 }
-

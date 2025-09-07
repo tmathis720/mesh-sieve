@@ -3,7 +3,7 @@
 //! Used by `closure_completed(...)`.
 
 use crate::algs::communicator::{Communicator, Wait};
-use crate::algs::wire::{WireAdj, WireCount, WireHdr, WirePoint, WIRE_VERSION};
+use crate::algs::wire::{WIRE_VERSION, WireAdj, WireCount, WireHdr, WirePoint};
 use crate::mesh_error::MeshSieveError;
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
@@ -24,7 +24,7 @@ pub fn fetch_adjacency<C: Communicator>(
     comm: &C,
     base_tag: u16,
 ) -> Result<HashMap<PointId, Vec<PointId>>, MeshSieveError> {
-    use bytemuck::{cast_slice, cast_slice_mut, Zeroable};
+    use bytemuck::{Zeroable, cast_slice, cast_slice_mut};
 
     // 0) Post receives for reply header + counts
     let mut recv_counts = Vec::new();
@@ -152,7 +152,7 @@ pub fn fetch_adjacency<C: Communicator>(
 }
 
 use crate::algs::communicator::PollWait;
-use bytemuck::{cast_slice, cast_slice_mut, Zeroable};
+use bytemuck::{Zeroable, cast_slice, cast_slice_mut};
 
 enum Stage<C: Communicator> {
     WaitingHdr {

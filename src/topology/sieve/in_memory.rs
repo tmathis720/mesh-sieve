@@ -6,19 +6,19 @@
 //! the adjacency vectors (not globally deterministic unless you pre-sort).
 //! It supports generic point and payload types.
 
+use super::build_ext::SieveBuildExt;
 use super::mutable::MutableSieve;
+use super::query_ext::SieveQueryExt;
 use super::sieve_ref::SieveRef;
 use super::sieve_trait::Sieve;
 use crate::mesh_error::MeshSieveError;
+use crate::topology::_debug_invariants::debug_invariants;
+use crate::topology::bounds::{PayloadLike, PointLike};
 use crate::topology::cache::InvalidateCache;
-use crate::topology::sieve::strata::{compute_strata, StrataCache};
+use crate::topology::sieve::strata::{StrataCache, compute_strata};
 use once_cell::sync::OnceCell;
 use std::collections::HashMap;
 use std::sync::Arc;
-use crate::topology::_debug_invariants::debug_invariants;
-use crate::topology::bounds::{PointLike, PayloadLike};
-use super::query_ext::SieveQueryExt;
-use super::build_ext::SieveBuildExt;
 
 /// An in-memory sieve implementation using hash maps for adjacency storage.
 ///
@@ -150,12 +150,16 @@ impl<P: PointLike, T: PayloadLike> InMemorySieve<P, T> {
         let in_total: usize = self.adjacency_in.values().map(|v| v.len()).sum();
         debug_assert_eq!(out_total, in_total, "total out != total in");
 
-        let out_pairs = dbg::count_pairs(self.adjacency_out.iter().flat_map(|(&src, vec)| {
-            vec.iter().map(move |(dst, _)| (src, *dst))
-        }));
-        let in_pairs = dbg::count_pairs(self.adjacency_in.iter().flat_map(|(&dst, vec)| {
-            vec.iter().map(move |(src, _)| (*src, dst))
-        }));
+        let out_pairs = dbg::count_pairs(
+            self.adjacency_out
+                .iter()
+                .flat_map(|(&src, vec)| vec.iter().map(move |(dst, _)| (src, *dst))),
+        );
+        let in_pairs = dbg::count_pairs(
+            self.adjacency_in
+                .iter()
+                .flat_map(|(&dst, vec)| vec.iter().map(move |(src, _)| (*src, dst))),
+        );
         dbg::counts_equal(&out_pairs, &in_pairs, "adjacency_out", "adjacency_in");
 
         // Optional self-loop check:
@@ -219,8 +223,7 @@ impl<P: PointLike, T: PayloadLike> InMemorySieve<P, T> {
     }
 }
 
-impl<P: PointLike, T: PayloadLike> InvalidateCache for InMemorySieve<P, T>
-{
+impl<P: PointLike, T: PayloadLike> InvalidateCache for InMemorySieve<P, T> {
     #[inline]
     fn invalidate_cache(&mut self) {
         self.strata.take();
@@ -231,8 +234,7 @@ type ConeMapIter<'a, P, T> = std::iter::Map<std::slice::Iter<'a, (P, T)>, fn(&'a
 type ConeRefMapIter<'a, P, T> =
     std::iter::Map<std::slice::Iter<'a, (P, T)>, fn(&'a (P, T)) -> (P, &'a T)>;
 
-impl<P: PointLike, T: PayloadLike> Sieve for InMemorySieve<P, T>
-{
+impl<P: PointLike, T: PayloadLike> Sieve for InMemorySieve<P, T> {
     type Point = P;
     type Payload = T;
     type ConeIter<'a>
@@ -355,13 +357,15 @@ impl<P: PointLike, T: PayloadLike> Sieve for InMemorySieve<P, T>
     fn remove_arrow(&mut self, src: P, dst: P) -> Option<T> {
         let mut removed = None;
         if let Some(v) = self.adjacency_out.get_mut(&src)
-            && let Some(pos) = v.iter().position(|(d, _)| *d == dst) {
-                removed = Some(v.remove(pos).1);
-            }
+            && let Some(pos) = v.iter().position(|(d, _)| *d == dst)
+        {
+            removed = Some(v.remove(pos).1);
+        }
         if let Some(v) = self.adjacency_in.get_mut(&dst)
-            && let Some(pos) = v.iter().position(|(s, _)| *s == src) {
-                v.remove(pos);
-            }
+            && let Some(pos) = v.iter().position(|(s, _)| *s == src)
+        {
+            v.remove(pos);
+        }
         self.invalidate_cache();
         debug_invariants!(self);
         removed
@@ -490,9 +494,10 @@ where
                 if let Some(pos) = out.iter().position(|(dd, _)| *dd == d) {
                     out[pos].1 = pay.clone();
                     if let Some(ins) = self.adjacency_in.get_mut(&d)
-                        && let Some(pos2) = ins.iter().position(|(ss, _)| *ss == s) {
-                            ins[pos2].1 = pay;
-                        }
+                        && let Some(pos2) = ins.iter().position(|(ss, _)| *ss == s)
+                    {
+                        ins[pos2].1 = pay;
+                    }
                 } else {
                     out.push((d, pay.clone()));
                     self.adjacency_in.entry(d).or_default().push((s, pay));
@@ -532,9 +537,10 @@ where
                 if let Some(pos) = out.iter().position(|(dd, _)| *dd == d) {
                     out[pos].1 = pay.clone();
                     if let Some(ins) = self.adjacency_in.get_mut(&d)
-                        && let Some(pos2) = ins.iter().position(|(ss, _)| *ss == s) {
-                            ins[pos2].1 = pay;
-                        }
+                        && let Some(pos2) = ins.iter().position(|(ss, _)| *ss == s)
+                    {
+                        ins[pos2].1 = pay;
+                    }
                 } else {
                     out.push((d, pay.clone()));
                     self.adjacency_in.entry(d).or_default().push((s, pay));

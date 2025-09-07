@@ -1,5 +1,5 @@
 use crate::topology::orientation::BitFlip;
-use crate::topology::sieve::{InMemoryOrientedSieve, InMemorySieve, Sieve, OrientedSieve};
+use crate::topology::sieve::{InMemoryOrientedSieve, InMemorySieve, OrientedSieve, Sieve};
 use crate::topology::stack::{InMemoryStack, Stack};
 
 #[test]

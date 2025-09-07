@@ -8,9 +8,9 @@
 //!   3. Sweep the edges again to produce replica lists for vertices that
 //!      touch different primary parts.
 
+use crate::partitioning::PartitionMap;
 use crate::partitioning::error::PartitionError;
 use crate::partitioning::graph_traits::PartitionableGraph;
-use crate::partitioning::PartitionMap;
 use hashbrown::HashMap;
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -220,8 +220,12 @@ where
 {
     use hashbrown::HashMap;
     let verts: Vec<_> = graph.vertices().collect();
-    let vert_idx: HashMap<usize, usize> =
-        verts.iter().copied().enumerate().map(|(i, v)| (v, i)).collect();
+    let vert_idx: HashMap<usize, usize> = verts
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(i, v)| (v, i))
+        .collect();
     let mut primary = vec![0usize; verts.len()];
     for (i, &v) in verts.iter().enumerate() {
         primary[i] = pm.part_of(v);

@@ -53,8 +53,7 @@ pub trait PartitionableGraph: Sync {
         Self::VertexId: 'static,
         Self: Sized,
     {
-        self
-            .vertices()
+        self.vertices()
             .flat_map_iter(move |u| {
                 self.neighbors_seq(u)
                     .filter(move |&v| u < v)
@@ -72,7 +71,8 @@ pub trait PartitionableGraph: Sync {
     /// Deterministic O(E) helper: count of undirected edges.
     fn edge_count(&self) -> usize
     where
-        Self::VertexId: 'static, Self: Sized,
+        Self::VertexId: 'static,
+        Self: Sized,
     {
         self.edges().count()
     }
@@ -103,7 +103,10 @@ where
         g.vertices().for_each(|u| {
             let e = *deg.get(&u).unwrap_or(&0);
             let d = g.degree(u);
-            debug_assert_eq!(e, d, "degree mismatch for {u:?}: edges() says {e}, degree() says {d}");
+            debug_assert_eq!(
+                e, d,
+                "degree mismatch for {u:?}: edges() says {e}, degree() says {d}"
+            );
         });
     }
 }

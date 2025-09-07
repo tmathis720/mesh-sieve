@@ -42,7 +42,10 @@ pub struct AdjacencyOpts {
 
 impl Default for AdjacencyOpts {
     fn default() -> Self {
-        Self { max_down_depth: Some(1), same_stratum_only: true }
+        Self {
+            max_down_depth: Some(1),
+            same_stratum_only: true,
+        }
     }
 }
 
@@ -141,9 +144,10 @@ where
                 continue;
             }
             if let (Some(hp), Some(hm)) = (seed_height, height_map.as_ref())
-                && hm.get(&cell).copied() != Some(hp) {
-                    continue;
-                }
+                && hm.get(&cell).copied() != Some(hp)
+            {
+                continue;
+            }
             neigh.insert(cell);
         }
     }
@@ -154,7 +158,8 @@ where
 
 /// Backward-compatible default: neighbors across **faces** only (FV style).
 pub fn adjacent<S>(sieve: &S, p: P) -> Vec<P>
-where S: Sieve<Point = P>
+where
+    S: Sieve<Point = P>,
 {
     adjacent_with(sieve, p, AdjacencyOpts::default())
 }

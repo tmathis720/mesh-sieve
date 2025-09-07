@@ -4,9 +4,9 @@
 //! contiguous array) with a `Vec<V>` to hold the actual data. It provides
 //! methods for inserting, accessing, and iterating per-point data slices.
 
+use crate::data::DebugInvariants;
 use crate::data::atlas::Atlas;
 use crate::data::refine::delta::SliceDelta;
-use crate::data::DebugInvariants;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cache::InvalidateCache;
 use crate::topology::point::PointId;

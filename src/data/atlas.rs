@@ -404,7 +404,7 @@ mod tests {
         let _ = a.try_insert(p1, 3);
         let pre_len = a.total_len();
         a.remove_point(PointId::new(999).unwrap()).unwrap(); // does not exist
-                                                             // should be unchanged
+        // should be unchanged
         assert_eq!(a.total_len(), pre_len);
         assert_eq!(a.get(p1), Some((0, 3)));
     }

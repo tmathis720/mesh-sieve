@@ -7,14 +7,14 @@
 
 #[cfg(feature = "mpi-support")]
 fn main() {
-    use mpi::topology::Communicator;
     use mesh_sieve::algs::communicator::MpiComm;
-    use mesh_sieve::topology::point::PointId;
-    use mesh_sieve::overlap::overlap::Overlap;
+    use mesh_sieve::algs::completion::complete_section;
     use mesh_sieve::data::atlas::Atlas;
     use mesh_sieve::data::section::Section;
     use mesh_sieve::overlap::delta::CopyDelta;
-    use mesh_sieve::algs::completion::complete_section;
+    use mesh_sieve::overlap::overlap::Overlap;
+    use mesh_sieve::topology::point::PointId;
+    use mpi::topology::Communicator;
     let comm = MpiComm::default();
     let world = &comm.world;
     let size = world.size() as usize;
@@ -27,11 +27,14 @@ fn main() {
     }
     let mut atlas = Atlas::default();
     if rank == 2 {
-        atlas.try_insert(PointId::new(2).unwrap(), 1).expect("Failed to insert into atlas");
+        atlas
+            .try_insert(PointId::new(2).unwrap(), 1)
+            .expect("Failed to insert into atlas");
     }
     let mut sec = Section::<u32>::new(atlas);
     if rank == 2 {
-        sec.try_set(PointId::new(2).unwrap(), &[42]).expect("Failed to set section value");
+        sec.try_set(PointId::new(2).unwrap(), &[42])
+            .expect("Failed to set section value");
     }
     let mut ovlp = Overlap::default();
     let delta = CopyDelta;

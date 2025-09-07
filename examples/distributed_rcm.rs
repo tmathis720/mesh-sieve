@@ -3,8 +3,6 @@
 //! Version 1.2.0: Passing
 //! This example demonstrates how to use the `mesh_sieve` library to perform a distributed reverse Cuthill-McKee (RCM) ordering on a simple 2D grid mesh.
 
-
-
 /// Example partitioning: assign each row of the grid to a rank
 #[cfg(feature = "mpi-support")]
 fn partition_vertices(nx: usize, ny: usize, size: usize) -> Vec<usize> {
@@ -22,10 +20,10 @@ fn partition_vertices(nx: usize, ny: usize, size: usize) -> Vec<usize> {
 
 #[cfg(feature = "mpi-support")]
 fn main() {
-    use mesh_sieve::algs::rcm::distributed_rcm;
     use mesh_sieve::algs::communicator::{Communicator, MpiComm};
-    use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
+    use mesh_sieve::algs::rcm::distributed_rcm;
     use mesh_sieve::topology::point::PointId;
+    use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
     let comm = MpiComm::default();
     let rank = comm.rank();
     let size = comm.size();
@@ -70,9 +68,7 @@ fn main() {
 
     println!("Rank {}: local vertices = {:?}", rank, local_vertices);
     // Count local edges
-    let local_edge_count: usize = local_vertices.iter().map(|&v| {
-        sieve.cone(v).count()
-    }).sum();
+    let local_edge_count: usize = local_vertices.iter().map(|&v| sieve.cone(v).count()).sum();
     println!("Rank {}: local edges = {}", rank, local_edge_count);
 
     // Run distributed RCM
@@ -83,7 +79,11 @@ fn main() {
     let mut expected = local_vertices.clone();
     expected.sort_by_key(|pid| pid.get());
     let valid = rcm_sorted == expected;
-    assert!(valid, "RCM order is not a valid permutation for rank {}", rank);
+    assert!(
+        valid,
+        "RCM order is not a valid permutation for rank {}",
+        rank
+    );
     println!("Rank {}: RCM order {:?}", rank, rcm_order);
 
     comm.barrier();

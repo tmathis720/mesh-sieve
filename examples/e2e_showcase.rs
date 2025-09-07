@@ -1,6 +1,6 @@
 use mesh_sieve::data::atlas::Atlas;
-use mesh_sieve::data::section::Section;
 use mesh_sieve::data::refine::sieved_array::SievedArray;
+use mesh_sieve::data::section::Section;
 use mesh_sieve::topology::arrow::Orientation;
 use mesh_sieve::topology::point::PointId;
 use mesh_sieve::topology::sieve::Sieve;
@@ -9,19 +9,24 @@ use mesh_sieve::overlap::overlap::*;
 
 #[cfg(feature = "mpi-support")]
 use mesh_sieve::partitioning::{
-    partition,
     PartitionerConfig,
     metrics::{edge_cut, replication_factor},
+    partition,
 };
 
-#[path = "support/tiny_mesh.rs"]
-mod tiny_mesh;
 #[cfg(feature = "mpi-support")]
 #[path = "support/test_graph_impl.rs"]
 mod test_graph;
+#[path = "support/tiny_mesh.rs"]
+mod tiny_mesh;
 
 #[cfg(feature = "rayon")]
-fn check_parallel_refine_matches_serial(atlas: &Atlas, sec: &Section<f64>, q0: PointId, q1: PointId) {
+fn check_parallel_refine_matches_serial(
+    atlas: &Atlas,
+    sec: &Section<f64>,
+    q0: PointId,
+    q1: PointId,
+) {
     use mesh_sieve::data::refine::sieved_array::SievedArray;
     use mesh_sieve::topology::arrow::Orientation;
 
@@ -192,7 +197,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let src = OvlId::Local(q0);
         let dst = OvlId::Part(7);
         let mut ov_bad = ov.clone();
-        Sieve::add_arrow(&mut ov_bad, src, dst, Remote { rank: 5, remote_point: None });
+        Sieve::add_arrow(
+            &mut ov_bad,
+            src,
+            dst,
+            Remote {
+                rank: 5,
+                remote_point: None,
+            },
+        );
         assert!(ov_bad.validate_invariants().is_err());
     }
 

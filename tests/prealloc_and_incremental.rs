@@ -1,5 +1,5 @@
-use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
 use mesh_sieve::topology::sieve::Sieve;
+use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
 
 #[test]
 fn reserve_cone_and_support_do_not_change_topology() {

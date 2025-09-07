@@ -4,10 +4,10 @@
 //! mirroring section completion logic. It handles symmetric communication of stack
 //! data between ranks using the [`Communicator`] trait.
 
-use std::collections::HashMap;
 use crate::algs::communicator::Wait;
-use crate::algs::wire::{WireCount, WireStackTriple, WIRE_PAYLOAD_MAX};
+use crate::algs::wire::{WIRE_PAYLOAD_MAX, WireCount, WireStackTriple};
 use crate::topology::sieve::sieve_trait::Sieve;
+use std::collections::HashMap;
 
 /// Trait for extracting rank from overlap payloads.
 pub trait HasRank {
@@ -16,7 +16,9 @@ pub trait HasRank {
 }
 
 impl HasRank for crate::overlap::overlap::Remote {
-    fn rank(&self) -> usize { self.rank }
+    fn rank(&self) -> usize {
+        self.rank
+    }
 }
 
 /// Complete the stack by exchanging arrows with all neighbor ranks.
@@ -78,7 +80,8 @@ where
         for (cap, pay) in owned_caps {
             for (_dst, rem) in overlap.cone(base) {
                 if rem.rank() != my_rank {
-                    nb_links.entry(rem.rank())
+                    nb_links
+                        .entry(rem.rank())
                         .or_default()
                         .push((base, cap, pay));
                 }
@@ -87,25 +90,36 @@ where
     }
     // --- DEADLOCK FIX: ensure symmetric communication ---
     // Use all ranks except my_rank as neighbors
-    let all_neighbors: std::collections::HashSet<usize> = (0..n_ranks).filter(|&r| r != my_rank).collect();
+    let all_neighbors: std::collections::HashSet<usize> =
+        (0..n_ranks).filter(|&r| r != my_rank).collect();
     // 2. Exchange sizes (always post send/recv for all neighbors)
     let mut recv_size = HashMap::new();
     for &nbr in &all_neighbors {
         let mut cnt = WireCount::new(0);
-        let h = comm.irecv(nbr, BASE_TAG, bytemuck::cast_slice_mut(std::slice::from_mut(&mut cnt)));
+        let h = comm.irecv(
+            nbr,
+            BASE_TAG,
+            bytemuck::cast_slice_mut(std::slice::from_mut(&mut cnt)),
+        );
         recv_size.insert(nbr, (h, cnt));
     }
     let mut pending_size_sends = Vec::with_capacity(all_neighbors.len());
-    let mut size_send_bufs   = Vec::with_capacity(all_neighbors.len());
+    let mut size_send_bufs = Vec::with_capacity(all_neighbors.len());
     for &nbr in &all_neighbors {
         let count = WireCount::new(nb_links.get(&nbr).map_or(0, |v| v.len()));
-        let h     = comm.isend(nbr, BASE_TAG, bytemuck::cast_slice(std::slice::from_ref(&count)));
+        let h = comm.isend(
+            nbr,
+            BASE_TAG,
+            bytemuck::cast_slice(std::slice::from_ref(&count)),
+        );
         pending_size_sends.push(h);
         size_send_bufs.push(count);
     }
     let mut sizes_in = HashMap::new();
     for (nbr, (h, mut cnt)) in recv_size {
-        let data = h.wait().ok_or_else(|| crate::mesh_error::CommError(format!("failed to receive size from rank {nbr}")))?;
+        let data = h.wait().ok_or_else(|| {
+            crate::mesh_error::CommError(format!("failed to receive size from rank {nbr}"))
+        })?;
         let bytes = bytemuck::cast_slice_mut(std::slice::from_mut(&mut cnt));
         bytes.copy_from_slice(&data);
         sizes_in.insert(nbr, cnt.get());
@@ -114,7 +128,7 @@ where
         let _ = send_h.wait();
     }
     // 3. Exchange data (always post send/recv for all neighbors)
-    use bytemuck::{bytes_of, bytes_of_mut, cast_slice, cast_slice_mut, Zeroable};
+    use bytemuck::{Zeroable, bytes_of, bytes_of_mut, cast_slice, cast_slice_mut};
     let mut recv_data = HashMap::new();
     for &nbr in &all_neighbors {
         let n_items = sizes_in.get(&nbr).copied().unwrap_or(0);
@@ -123,7 +137,7 @@ where
         recv_data.insert(nbr, (h, buf));
     }
     let mut pending_data_sends = Vec::with_capacity(all_neighbors.len());
-    let mut data_send_bufs     = Vec::with_capacity(all_neighbors.len());
+    let mut data_send_bufs = Vec::with_capacity(all_neighbors.len());
     for &nbr in &all_neighbors {
         let triples = nb_links.get(&nbr).map_or(&[][..], |v| &v[..]);
         let wire: Vec<WireStackTriple> = triples
@@ -140,7 +154,9 @@ where
         data_send_bufs.push(wire);
     }
     for (_nbr, (h, mut buf)) in recv_data {
-        let raw = h.wait().ok_or_else(|| crate::mesh_error::CommError("failed to receive stack data".to_string()))?;
+        let raw = h.wait().ok_or_else(|| {
+            crate::mesh_error::CommError("failed to receive stack data".to_string())
+        })?;
         let buf_bytes = cast_slice_mut(buf.as_mut_slice());
         buf_bytes.copy_from_slice(&raw);
         for w in &buf {
@@ -157,4 +173,3 @@ where
     }
     Ok(())
 }
-

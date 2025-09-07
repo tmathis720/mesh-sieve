@@ -18,9 +18,11 @@ fn structural_overlap_only() {
     let ranks: Vec<_> = ov0.neighbor_ranks().collect();
     assert_eq!(ranks, vec![1]);
     let links: Vec<_> = ov0.links_to(1).collect();
-    assert!(links
-        .iter()
-        .any(|(p, rp)| *p == PointId::new(3).unwrap() && rp.is_none()));
+    assert!(
+        links
+            .iter()
+            .any(|(p, rp)| *p == PointId::new(3).unwrap() && rp.is_none())
+    );
 }
 
 #[test]
@@ -36,4 +38,3 @@ fn invariants_hold() {
     #[cfg(any(debug_assertions, feature = "check-invariants"))]
     ov.validate_invariants().unwrap();
 }
-

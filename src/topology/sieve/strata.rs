@@ -9,9 +9,9 @@
 //! or `Err(MeshSieveError::CycleDetected)` if the topology contains a cycle.
 
 use crate::mesh_error::MeshSieveError;
+use crate::topology::bounds::PointLike;
 use crate::topology::sieve::Sieve;
 use std::collections::HashMap;
-use crate::topology::bounds::PointLike;
 
 /// Precomputed stratum information for a sieve.
 ///

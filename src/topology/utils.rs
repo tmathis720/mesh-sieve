@@ -1,8 +1,8 @@
 //! Utility helpers for topology, including DAG assertion.
 use crate::mesh_error::MeshSieveError;
+use crate::topology::bounds::PointLike;
 use crate::topology::sieve::Sieve;
 use std::collections::{HashMap, VecDeque};
-use crate::topology::bounds::PointLike;
 
 /// Generic DAG check for any `S: Sieve`.
 ///

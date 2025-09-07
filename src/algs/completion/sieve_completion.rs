@@ -11,7 +11,7 @@ use bytemuck::Zeroable;
 use crate::algs::communicator::Wait;
 use crate::algs::wire::{WireArrowTriple, WireCount};
 use crate::mesh_error::MeshSieveError;
-use crate::overlap::overlap::{local, OvlId, Remote};
+use crate::overlap::overlap::{OvlId, Remote, local};
 use crate::prelude::{Communicator, Overlap};
 use crate::topology::cache::InvalidateCache;
 use crate::topology::point::PointId;
@@ -54,12 +54,13 @@ pub fn complete_sieve<C: Communicator>(
         let me_pt = Overlap::partition_node_id(my_rank);
         for (src, rem) in overlap.support(me_pt) {
             if rem.rank != my_rank
-                && let OvlId::Local(src_pt) = src {
-                    nb_links
-                        .entry(rem.rank)
-                        .or_default()
-                        .push((rem.remote_point.expect("overlap unresolved"), src_pt));
-                }
+                && let OvlId::Local(src_pt) = src
+            {
+                nb_links
+                    .entry(rem.rank)
+                    .or_default()
+                    .push((rem.remote_point.expect("overlap unresolved"), src_pt));
+            }
         }
     }
 
@@ -73,17 +74,24 @@ pub fn complete_sieve<C: Communicator>(
 
     // --- Phase 1: exchange counts ---------------------------------------
     // 1a) post all receives for counts
-    let mut size_recvs: Vec<(usize, C::RecvHandle, WireCount)> =
-        Vec::with_capacity(peers.len());
+    let mut size_recvs: Vec<(usize, C::RecvHandle, WireCount)> = Vec::with_capacity(peers.len());
     for &peer in &peers {
         let mut cnt = WireCount::new(0);
-        let h = comm.irecv(peer, BASE_TAG, bytemuck::cast_slice_mut(std::slice::from_mut(&mut cnt)));
+        let h = comm.irecv(
+            peer,
+            BASE_TAG,
+            bytemuck::cast_slice_mut(std::slice::from_mut(&mut cnt)),
+        );
         size_recvs.push((peer, h, cnt));
     }
     // 1b) post all sends for counts
     for &peer in &peers {
         let cnt = WireCount::new(nb_links.get(&peer).map(|v| v.len()).unwrap_or(0));
-        pending_sends.push(comm.isend(peer, BASE_TAG, bytemuck::cast_slice(std::slice::from_ref(&cnt))));
+        pending_sends.push(comm.isend(
+            peer,
+            BASE_TAG,
+            bytemuck::cast_slice(std::slice::from_ref(&cnt)),
+        ));
     }
     // 1c) wait for all count‐recvs
     let mut sizes_in: HashMap<usize, usize> = HashMap::new();
@@ -153,9 +161,7 @@ pub fn complete_sieve<C: Communicator>(
     let mut inserted = std::collections::HashSet::new();
     for (peer, h, mut buffer) in data_recvs {
         match h.wait() {
-            Some(raw)
-                if raw.len() == buffer.len() * std::mem::size_of::<WireArrowTriple>() =>
-            {
+            Some(raw) if raw.len() == buffer.len() * std::mem::size_of::<WireArrowTriple>() => {
                 let view = bytemuck::cast_slice_mut(buffer.as_mut_slice());
                 view.copy_from_slice(&raw);
                 for t in &buffer {

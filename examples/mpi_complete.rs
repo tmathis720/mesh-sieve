@@ -5,14 +5,14 @@
 #[cfg(feature = "mpi-support")]
 fn main() {
     use mesh_sieve::algs::communicator::MpiComm;
-    use mpi::topology::Communicator;
-    use std::process;
-    use mesh_sieve::topology::point::PointId;
-    use mesh_sieve::overlap::overlap::Overlap;
+    use mesh_sieve::algs::completion::complete_section;
     use mesh_sieve::data::atlas::Atlas;
     use mesh_sieve::data::section::Section;
     use mesh_sieve::overlap::delta::CopyDelta;
-    use mesh_sieve::algs::completion::complete_section;
+    use mesh_sieve::overlap::overlap::Overlap;
+    use mesh_sieve::topology::point::PointId;
+    use mpi::topology::Communicator;
+    use std::process;
     // 1) Init MPI
     let comm = MpiComm::default();
     let world = &comm.world;
@@ -41,11 +41,19 @@ fn main() {
     // so that after complete_section() each rank can see both values.
     let mut atlas = Atlas::default();
     if rank == 0 {
-        atlas.try_insert(p0, 1).expect("Failed to insert p0 into atlas");  // my owned DOF
-        atlas.try_insert(p1, 1).expect("Failed to insert p1 into atlas");  // ghost DOF
+        atlas
+            .try_insert(p0, 1)
+            .expect("Failed to insert p0 into atlas"); // my owned DOF
+        atlas
+            .try_insert(p1, 1)
+            .expect("Failed to insert p1 into atlas"); // ghost DOF
     } else {
-        atlas.try_insert(p1, 1).expect("Failed to insert p1 into atlas");
-        atlas.try_insert(p0, 1).expect("Failed to insert p0 into atlas");
+        atlas
+            .try_insert(p1, 1)
+            .expect("Failed to insert p1 into atlas");
+        atlas
+            .try_insert(p0, 1)
+            .expect("Failed to insert p0 into atlas");
     }
     let mut sec = Section::<u32>::new(atlas);
 
@@ -57,7 +65,8 @@ fn main() {
     }
 
     // Debug: print neighbour links before exchange
-    let links = mesh_sieve::algs::completion::neighbour_links::neighbour_links(&sec, &mut ovlp, rank);
+    let links =
+        mesh_sieve::algs::completion::neighbour_links::neighbour_links(&sec, &mut ovlp, rank);
     println!("[rank {}] neighbour_links: {:?}", rank, links);
 
     // 6) Perform the two-phase exchange
@@ -67,14 +76,12 @@ fn main() {
     // 7) Check the result
     if rank == 0 {
         // rank0 should have received rank1’s 200 into its p1 slot
-        let got = sec.try_restrict(p1)
-            .expect("Failed to restrict p1")[0];
+        let got = sec.try_restrict(p1).expect("Failed to restrict p1")[0];
         println!("rank0: received ghost p1 = {}", got);
         assert_eq!(got, 200);
     } else {
         // rank1 should have received rank0’s 100 into its p0 slot
-        let got = sec.try_restrict(p0)
-            .expect("Failed to restrict p0")[0];
+        let got = sec.try_restrict(p0).expect("Failed to restrict p0")[0];
         println!("rank1: received ghost p0 = {}", got);
         assert_eq!(got, 100);
     }

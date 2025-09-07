@@ -299,38 +299,40 @@ impl Overlap {
         let dst = part(rank);
 
         if let Some(vec) = self.inner.adjacency_out.get_mut(&src)
-            && let Some((_, rem)) = vec.iter_mut().find(|(d, _)| *d == dst) {
-                if rem.rank != rank {
-                    return Err(OverlapRankMismatch {
-                        expected: rank,
-                        found: rem.rank,
+            && let Some((_, rem)) = vec.iter_mut().find(|(d, _)| *d == dst)
+        {
+            if rem.rank != rank {
+                return Err(OverlapRankMismatch {
+                    expected: rank,
+                    found: rem.rank,
+                });
+            }
+            match rem.remote_point {
+                None => {
+                    rem.remote_point = Some(remote);
+                    if let Some(vec_in) = self.inner.adjacency_in.get_mut(&dst)
+                        && let Some((_, rem_in)) = vec_in.iter_mut().find(|(s, _)| *s == src)
+                    {
+                        rem_in.remote_point = Some(remote);
+                    }
+                    self.invalidate_cache();
+                    self.debug_validate();
+                    return Ok(());
+                }
+                Some(existing) if existing == remote => {
+                    self.debug_validate();
+                    return Ok(());
+                }
+                Some(existing) => {
+                    return Err(OverlapResolutionConflict {
+                        local: local_pt,
+                        rank,
+                        existing: Some(existing),
+                        new: remote,
                     });
                 }
-                match rem.remote_point {
-                    None => {
-                        rem.remote_point = Some(remote);
-                        if let Some(vec_in) = self.inner.adjacency_in.get_mut(&dst)
-                            && let Some((_, rem_in)) = vec_in.iter_mut().find(|(s, _)| *s == src) {
-                                rem_in.remote_point = Some(remote);
-                            }
-                        self.invalidate_cache();
-                        self.debug_validate();
-                        return Ok(());
-                    }
-                    Some(existing) if existing == remote => {
-                        self.debug_validate();
-                        return Ok(());
-                    }
-                    Some(existing) => {
-                        return Err(OverlapResolutionConflict {
-                            local: local_pt,
-                            rank,
-                            existing: Some(existing),
-                            new: remote,
-                        });
-                    }
-                }
             }
+        }
         Err(OverlapLinkMissing(local_pt, rank))
     }
 
@@ -348,8 +350,8 @@ impl Overlap {
 
     /// Debug/feature-gated invariant checker.
     pub fn validate_invariants(&self) -> Result<(), MeshSieveError> {
-        use std::collections::HashSet;
         use MeshSieveError as E;
+        use std::collections::HashSet;
 
         for src in self.inner.adjacency_out.keys() {
             if let OvlId::Part(_) = src {

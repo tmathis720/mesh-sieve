@@ -7,9 +7,7 @@ use std::collections::{BTreeSet, HashSet};
 
 use crate::algs::communicator::{CommTag, Communicator, SectionCommTags};
 use crate::algs::completion::{
-    data_exchange,
-    neighbour_links::neighbour_links,
-    size_exchange::exchange_sizes_symmetric,
+    data_exchange, neighbour_links::neighbour_links, size_exchange::exchange_sizes_symmetric,
 };
 use crate::data::section::Section;
 use crate::mesh_error::MeshSieveError;
@@ -34,10 +32,11 @@ where
     overlap.validate_invariants()?;
 
     // 1) discover which points each neighbor needs
-    let links = neighbour_links::<V>(section, overlap, my_rank).map_err(|e| MeshSieveError::CommError {
-        neighbor: my_rank,
-        source: format!("neighbour_links failed: {e}").into(),
-    })?;
+    let links =
+        neighbour_links::<V>(section, overlap, my_rank).map_err(|e| MeshSieveError::CommError {
+            neighbor: my_rank,
+            source: format!("neighbour_links failed: {e}").into(),
+        })?;
 
     // 2) Build true neighbor set (both outgoing and incoming), deterministically ordered
     let mut all: BTreeSet<usize> = overlap.neighbor_ranks().collect();
@@ -46,12 +45,11 @@ where
     let all_neighbors: HashSet<usize> = all.into_iter().collect();
 
     // 3) exchange the item counts
-    let counts = exchange_sizes_symmetric(&links, comm, tags.sizes.as_u16(), &all_neighbors).map_err(|e| {
-        MeshSieveError::CommError {
+    let counts = exchange_sizes_symmetric(&links, comm, tags.sizes.as_u16(), &all_neighbors)
+        .map_err(|e| MeshSieveError::CommError {
             neighbor: my_rank,
             source: format!("exchange_sizes_symmetric failed: {e}").into(),
-        }
-    })?;
+        })?;
 
     // 4) exchange the actual data parts & fuse into our section
     data_exchange::exchange_data_symmetric::<V, D, C>(
@@ -116,8 +114,12 @@ mod tests {
         ovlp.add_link_structural_one(PointId::new(1).unwrap(), 1);
         let comm = NoComm;
         let tags = SectionCommTags::from_base(CommTag::new(0x4100));
-        let res = complete_section_with_tags::<i32, CopyDelta, _>(&mut section, &ovlp, &comm, 0, tags);
-        assert!(matches!(res, Err(MeshSieveError::CommError { neighbor: 0, .. })));
+        let res =
+            complete_section_with_tags::<i32, CopyDelta, _>(&mut section, &ovlp, &comm, 0, tags);
+        assert!(matches!(
+            res,
+            Err(MeshSieveError::CommError { neighbor: 0, .. })
+        ));
     }
 
     #[test]
@@ -126,7 +128,11 @@ mod tests {
         let ovlp = Overlap::new();
         let comm = NoComm;
         let tags = SectionCommTags::from_base(CommTag::new(0x4200));
-        let res = complete_section_with_tags::<i32, CopyDelta, _>(&mut section, &ovlp, &comm, 0, tags);
-        assert!(matches!(res, Err(MeshSieveError::CommError { neighbor: 0, .. })));
+        let res =
+            complete_section_with_tags::<i32, CopyDelta, _>(&mut section, &ovlp, &comm, 0, tags);
+        assert!(matches!(
+            res,
+            Err(MeshSieveError::CommError { neighbor: 0, .. })
+        ));
     }
 }

@@ -118,9 +118,10 @@ where
 
         while let Some((p, d)) = stack.pop() {
             if let Some(f) = early_stop
-                && f(p) {
-                    break;
-                }
+                && f(p)
+            {
+                break;
+            }
             if max_depth.is_some_and(|md| d >= md) {
                 continue;
             }
@@ -151,9 +152,10 @@ where
 
         while let Some((p, d)) = q.pop_front() {
             if let Some(f) = early_stop
-                && f(p) {
-                    break;
-                }
+                && f(p)
+            {
+                break;
+            }
             if max_depth.is_some_and(|md| d >= md) {
                 continue;
             }
@@ -248,10 +250,11 @@ where
         stack.reserve(seeds.len().saturating_mul(2));
         for p in seeds {
             if let Some(i) = index.get(&p).copied()
-                && !seen[i] {
-                    seen[i] = true;
-                    stack.push(i);
-                }
+                && !seen[i]
+            {
+                seen[i] = true;
+                stack.push(i);
+            }
         }
 
         while let Some(i) = stack.pop() {
@@ -303,10 +306,11 @@ where
         q.reserve(seeds.len().saturating_mul(2));
         for p in seeds {
             if let Some(i) = index.get(&p).copied()
-                && !seen[i] {
-                    seen[i] = true;
-                    q.push_back(i);
-                }
+                && !seen[i]
+            {
+                seen[i] = true;
+                q.push_back(i);
+            }
         }
 
         while let Some(i) = q.pop_front() {
@@ -545,14 +549,16 @@ where
                 }
             }
             if let Some(owner) = overlap.cone(local(p)).find_map(|(_, r)| Some(r.rank))
-                && owner != my_rank {
-                    by_owner.entry(owner).or_default().push(p);
-                }
+                && owner != my_rank
+            {
+                by_owner.entry(owner).or_default().push(p);
+            }
         }
         if !by_owner.is_empty()
-            && let Ok(adj) = fetch_adjacency(&by_owner, ReqKind::Cone, comm, TAG) {
-                fuse(sieve, &adj);
-            }
+            && let Ok(adj) = fetch_adjacency(&by_owner, ReqKind::Cone, comm, TAG)
+        {
+            fuse(sieve, &adj);
+        }
     }
 
     let mut stack: Vec<Point> = seed_vec.clone();
@@ -568,14 +574,16 @@ where
             }
         }
 
-        if !advanced && matches!(policy.kind, CompletionKind::Cone | CompletionKind::Both)
+        if !advanced
+            && matches!(policy.kind, CompletionKind::Cone | CompletionKind::Both)
             && let Some(owner) = overlap.cone(local(p)).find_map(|(_, r)| Some(r.rank))
-                && owner != my_rank {
-                    let e = batch.entry(owner).or_default();
-                    if !e.contains(&p) {
-                        e.push(p);
-                    }
-                }
+            && owner != my_rank
+        {
+            let e = batch.entry(owner).or_default();
+            if !e.contains(&p) {
+                e.push(p);
+            }
+        }
 
         if policy.batch > 0 {
             let total: usize = batch.values().map(|v| v.len()).sum();
@@ -589,9 +597,10 @@ where
     }
 
     if !batch.is_empty()
-        && let Ok(adj) = fetch_adjacency(&batch, ReqKind::Cone, comm, TAG) {
-            fuse(sieve, &adj);
-        }
+        && let Ok(adj) = fetch_adjacency(&batch, ReqKind::Cone, comm, TAG)
+    {
+        fuse(sieve, &adj);
+    }
 
     closure_local(sieve, seen)
 }

@@ -138,7 +138,10 @@ fn debug_validate_labels_contiguous(labels: &[isize]) {
         let n = labels.len();
         let mut seen = vec![false; n];
         for &l in labels {
-            assert!(l >= 0 && (l as usize) < n, "RCM: non-contiguous or out-of-range label {l}");
+            assert!(
+                l >= 0 && (l as usize) < n,
+                "RCM: non-contiguous or out-of-range label {l}"
+            );
             let i = l as usize;
             assert!(!seen[i], "RCM: duplicate label {i}");
             seen[i] = true;
@@ -230,14 +233,21 @@ where
 
         let degree = adj.iter().map(|v| v.len()).collect();
 
-        Self { sieve, comm, point_to_idx, idx_to_point, degree, adj, mode }
+        Self {
+            sieve,
+            comm,
+            point_to_idx,
+            idx_to_point,
+            degree,
+            adj,
+            mode,
+        }
     }
 
     #[inline]
     pub fn neighbors_idx(&self, u: usize) -> &[usize] {
         &self.adj[u]
     }
-
 }
 
 /// Find a pseudo-peripheral root vertex using Algorithm 2 (Azad et al.).
@@ -248,7 +258,9 @@ where
     C: Communicator,
 {
     let n = prims.idx_to_point.len();
-    if n == 0 { return 0; }
+    if n == 0 {
+        return 0;
+    }
     let mut r = 0usize;
     let mut last_lvl = 0usize;
     loop {
@@ -257,7 +269,9 @@ where
         seen[r] = true;
 
         while let Some(curr) = level.last() {
-            if curr.is_empty() { break; }
+            if curr.is_empty() {
+                break;
+            }
             let mut next = Vec::new();
             for &u in curr {
                 for &v in &prims.adj[u] {
@@ -267,7 +281,9 @@ where
                     }
                 }
             }
-            if next.is_empty() { break; }
+            if next.is_empty() {
+                break;
+            }
             next.sort_unstable();
             next.dedup();
             level.push(next);
@@ -275,8 +291,13 @@ where
 
         let lvl = level.len();
         let last_layer = &level[lvl - 1];
-        let &r_prime = last_layer.iter().min_by_key(|&&v| prims.degree[v]).unwrap_or(&r);
-        if lvl <= last_lvl { break; }
+        let &r_prime = last_layer
+            .iter()
+            .min_by_key(|&&v| prims.degree[v])
+            .unwrap_or(&r);
+        if lvl <= last_lvl {
+            break;
+        }
         last_lvl = lvl;
         r = r_prime;
     }
@@ -344,10 +365,18 @@ mod tests {
         type SendHandle = ();
         type RecvHandle = ();
 
-        fn isend(&self, _peer: usize, _tag: u16, _buf: &[u8]) -> Self::SendHandle { () }
-        fn irecv(&self, _peer: usize, _tag: u16, _buf: &mut [u8]) -> Self::RecvHandle { () }
-        fn rank(&self) -> usize { 0 }
-        fn size(&self) -> usize { 1 }
+        fn isend(&self, _peer: usize, _tag: u16, _buf: &[u8]) -> Self::SendHandle {
+            ()
+        }
+        fn irecv(&self, _peer: usize, _tag: u16, _buf: &mut [u8]) -> Self::RecvHandle {
+            ()
+        }
+        fn rank(&self) -> usize {
+            0
+        }
+        fn size(&self) -> usize {
+            1
+        }
     }
 
     fn make_line_graph(n: usize) -> MockSieve {
@@ -376,7 +405,10 @@ mod tests {
 
     #[test]
     fn test_rcm_empty_graph() {
-        let sieve = MockSieve { cone_adj: vec![], support_adj: vec![] };
+        let sieve = MockSieve {
+            cone_adj: vec![],
+            support_adj: vec![],
+        };
         let comm = NoComm;
         let order = distributed_rcm(&sieve, &comm);
         assert!(order.is_empty());
@@ -395,7 +427,10 @@ mod tests {
     #[test]
     fn test_rcm_star_graph() {
         // Star: 0 connected to 1,2,3,4
-        let mut s = MockSieve { cone_adj: vec![HashSet::new(); 5], support_adj: vec![HashSet::new(); 5] };
+        let mut s = MockSieve {
+            cone_adj: vec![HashSet::new(); 5],
+            support_adj: vec![HashSet::new(); 5],
+        };
         for i in 1..5 {
             s.add_arrow(0, i, ());
             s.add_arrow(i, 0, ());
@@ -411,7 +446,10 @@ mod tests {
     #[test]
     fn rcm_default_is_undirected() {
         // Directed edges 0->1, 2->1 to exercise support edges
-        let mut s = MockSieve { cone_adj: vec![HashSet::new(); 3], support_adj: vec![HashSet::new(); 3] };
+        let mut s = MockSieve {
+            cone_adj: vec![HashSet::new(); 3],
+            support_adj: vec![HashSet::new(); 3],
+        };
         s.add_arrow(0, 1, ());
         s.add_arrow(2, 1, ());
         let comm = NoComm;

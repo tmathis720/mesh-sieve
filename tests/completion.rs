@@ -18,7 +18,9 @@ fn ghost_update_self() {
 
     // Build a section with one value = 42
     let mut atlas = Atlas::default();
-    atlas.try_insert(p0, 1).expect("Failed to insert point into atlas");
+    atlas
+        .try_insert(p0, 1)
+        .expect("Failed to insert point into atlas");
     let mut sec = Section::<u32>::new(atlas);
     sec.try_set(p0, &[42]).expect("Failed to set section value");
 
@@ -27,5 +29,8 @@ fn ghost_update_self() {
     // Should complete without deadlock and leave the value intact.
     let _ = complete_section::<u32, CopyDelta, _>(&mut sec, &ovlp, &comm, 0);
 
-    assert_eq!(sec.try_restrict(p0).expect("Failed to restrict section")[0], 42);
+    assert_eq!(
+        sec.try_restrict(p0).expect("Failed to restrict section")[0],
+        42
+    );
 }

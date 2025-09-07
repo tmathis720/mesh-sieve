@@ -45,4 +45,3 @@ fn truncation_is_ok() {
     let got = h.wait().unwrap();
     assert_eq!(got, vec![1, 2, 3, 4]);
 }
-

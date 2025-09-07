@@ -170,7 +170,10 @@ mod tests {
     #[test]
     fn default_is_unit_on_1() {
         let d = Arrow::<()>::default();
-        assert_eq!(d, Arrow::unit(PointId::new(1).unwrap(), PointId::new(1).unwrap()));
+        assert_eq!(
+            d,
+            Arrow::unit(PointId::new(1).unwrap(), PointId::new(1).unwrap())
+        );
     }
 
     #[test]
@@ -182,7 +185,11 @@ mod tests {
 
     #[test]
     fn clone_eqs_original() {
-        let a = Arrow::new(PointId::new(3).unwrap(), PointId::new(4).unwrap(), vec![1,2,3]);
+        let a = Arrow::new(
+            PointId::new(3).unwrap(),
+            PointId::new(4).unwrap(),
+            vec![1, 2, 3],
+        );
         let b = a.clone();
         assert_eq!(a, b);
     }

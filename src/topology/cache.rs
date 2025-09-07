@@ -14,4 +14,3 @@ impl<T: InvalidateCache + ?Sized> InvalidateCache for Box<T> {
         (**self).invalidate_cache();
     }
 }
-

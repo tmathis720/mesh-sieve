@@ -32,8 +32,7 @@ pub trait MutableSieve: Sieve + InvalidateCache {
         &mut self,
         p: Self::Point,
         chain: impl IntoIterator<Item = (Self::Point, Self::Payload)>,
-    )
-    where
+    ) where
         Self::Payload: Clone,
     {
         let old_dsts: Vec<_> = self.cone_points(p).collect();
@@ -51,8 +50,7 @@ pub trait MutableSieve: Sieve + InvalidateCache {
         &mut self,
         p: Self::Point,
         chain: impl IntoIterator<Item = (Self::Point, Self::Payload)>,
-    )
-    where
+    ) where
         Self::Payload: Clone,
     {
         for (dst, pay) in chain {
@@ -66,8 +64,7 @@ pub trait MutableSieve: Sieve + InvalidateCache {
         &mut self,
         q: Self::Point,
         chain: impl IntoIterator<Item = (Self::Point, Self::Payload)>,
-    )
-    where
+    ) where
         Self::Payload: Clone,
     {
         let old_srcs: Vec<_> = self.support_points(q).collect();
@@ -85,8 +82,7 @@ pub trait MutableSieve: Sieve + InvalidateCache {
         &mut self,
         q: Self::Point,
         chain: impl IntoIterator<Item = (Self::Point, Self::Payload)>,
-    )
-    where
+    ) where
         Self::Payload: Clone,
     {
         for (src, pay) in chain {

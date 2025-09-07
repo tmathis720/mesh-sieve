@@ -14,7 +14,10 @@ fn main() {
         s.add_arrow(PointId::new(10).unwrap(), PointId::new(2).unwrap(), ());
         s.add_arrow(PointId::new(11).unwrap(), PointId::new(2).unwrap(), ());
         s.add_arrow(PointId::new(11).unwrap(), PointId::new(3).unwrap(), ());
-        (s, vec![PointId::new(10).unwrap(), PointId::new(11).unwrap()])
+        (
+            s,
+            vec![PointId::new(10).unwrap(), PointId::new(11).unwrap()],
+        )
     };
 
     // 2) Build dual graph

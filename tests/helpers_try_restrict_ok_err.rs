@@ -1,11 +1,13 @@
-use mesh_sieve::data::refine::helpers::{restrict_closure_vec, try_restrict_closure_vec};
 use mesh_sieve::data::atlas::Atlas;
+use mesh_sieve::data::refine::helpers::{restrict_closure_vec, try_restrict_closure_vec};
 use mesh_sieve::data::section::Section;
 use mesh_sieve::mesh_error::MeshSieveError;
 use mesh_sieve::topology::point::PointId;
 use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
 
-fn v(i: u64) -> PointId { PointId::new(i).unwrap() }
+fn v(i: u64) -> PointId {
+    PointId::new(i).unwrap()
+}
 
 #[test]
 #[should_panic]

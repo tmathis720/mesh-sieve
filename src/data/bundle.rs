@@ -25,11 +25,8 @@ pub trait SliceReducer<V>: Sync {
     fn make_zero(&self, len: usize) -> Vec<V>;
 
     /// Accumulate `src` into `acc` element-wise.
-    fn accumulate(
-        &self,
-        acc: &mut [V],
-        src: &[V],
-    ) -> Result<(), crate::mesh_error::MeshSieveError>;
+    fn accumulate(&self, acc: &mut [V], src: &[V])
+    -> Result<(), crate::mesh_error::MeshSieveError>;
 
     /// Optional finalize step once all sources have been accumulated.
     fn finalize(

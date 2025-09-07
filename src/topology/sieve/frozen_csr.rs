@@ -8,11 +8,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use super::query_ext::SieveQueryExt;
 use super::sieve_ref::SieveRef;
 use super::sieve_trait::Sieve;
-use super::query_ext::SieveQueryExt;
+use crate::topology::bounds::{PayloadLike, PointLike};
 use crate::topology::cache::InvalidateCache;
-use crate::topology::bounds::{PointLike, PayloadLike};
 
 /// Immutable sieve backed by a pair of CSR adjacency graphs.
 #[derive(Clone, Debug)]

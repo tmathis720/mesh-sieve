@@ -346,7 +346,10 @@ mod mpi_backend {
                 .world
                 .process_at_rank(peer as i32)
                 .immediate_send_with_tag(StaticScope, slice, tag as i32);
-            MpiSendHandle { req: Some(req), buf: raw }
+            MpiSendHandle {
+                req: Some(req),
+                buf: raw,
+            }
         }
 
         fn irecv(&self, peer: usize, tag: u16, template: &mut [u8]) -> Self::RecvHandle {
@@ -359,7 +362,11 @@ mod mpi_backend {
                 .world
                 .process_at_rank(peer as i32)
                 .immediate_receive_into_with_tag(StaticScope, slice_mut, tag as i32);
-            MpiRecvHandle { req: Some(req), buf: raw, len }
+            MpiRecvHandle {
+                req: Some(req),
+                buf: raw,
+                len,
+            }
         }
 
         fn rank(&self) -> usize {
@@ -382,7 +389,9 @@ mod mpi_backend {
             if let Some(r) = self.req.take() {
                 let _ = r.wait();
             }
-            unsafe { drop(Box::from_raw(self.buf)); }
+            unsafe {
+                drop(Box::from_raw(self.buf));
+            }
             None
         }
     }
@@ -391,7 +400,9 @@ mod mpi_backend {
             if let Some(r) = self.req.take() {
                 let _ = r.test();
             }
-            unsafe { drop(Box::from_raw(self.buf)); }
+            unsafe {
+                drop(Box::from_raw(self.buf));
+            }
             #[cfg(debug_assertions)]
             eprintln!("[MpiSendHandle::drop] send not explicitly waited");
         }
@@ -418,14 +429,14 @@ mod mpi_backend {
             if let Some(r) = self.req.take() {
                 let _ = r.test();
             }
-            unsafe { drop(Box::from_raw(self.buf)); }
+            unsafe {
+                drop(Box::from_raw(self.buf));
+            }
             #[cfg(debug_assertions)]
             eprintln!("[MpiRecvHandle::drop] recv not explicitly waited");
         }
     }
-
 }
 
 #[cfg(feature = "mpi-support")]
 pub use mpi_backend::MpiComm;
-
