@@ -171,26 +171,41 @@ where
     }
 
     let mut lens_in: HashMap<usize, Vec<u32>> = HashMap::with_capacity(all_neighbors.len());
+    let mut first_err: Option<MeshSieveError> = None;
     for (nbr, (h, mut buf)) in recv_lens {
-        let raw = h.wait().ok_or_else(|| MeshSieveError::CommError {
-            neighbor: nbr,
-            source: "lengths recv returned None".into(),
-        })?;
+        let raw = match h.wait() {
+            Some(r) => r,
+            None => {
+                if first_err.is_none() {
+                    first_err = Some(MeshSieveError::CommError {
+                        neighbor: nbr,
+                        source: "lengths recv returned None".into(),
+                    });
+                }
+                continue;
+            }
+        };
         let expect_bytes = buf.len() * std::mem::size_of::<u32>();
         if raw.len() != expect_bytes {
-            return Err(MeshSieveError::BufferSizeMismatch {
-                neighbor: nbr,
-                expected: expect_bytes,
-                got: raw.len(),
-            });
+            if first_err.is_none() {
+                first_err = Some(MeshSieveError::BufferSizeMismatch {
+                    neighbor: nbr,
+                    expected: expect_bytes,
+                    got: raw.len(),
+                });
+            }
+            continue;
         }
         cast_slice_mut(&mut buf).copy_from_slice(&raw);
         if buf.len() != recv_counts.get(&nbr).copied().unwrap_or(0) as usize {
-            return Err(MeshSieveError::LengthsCountMismatch {
-                neighbor: nbr,
-                expected: recv_counts.get(&nbr).copied().unwrap_or(0) as usize,
-                got: buf.len(),
-            });
+            if first_err.is_none() {
+                first_err = Some(MeshSieveError::LengthsCountMismatch {
+                    neighbor: nbr,
+                    expected: recv_counts.get(&nbr).copied().unwrap_or(0) as usize,
+                    got: buf.len(),
+                });
+            }
+            continue;
         }
         lens_in.insert(nbr, buf);
     }
@@ -198,6 +213,9 @@ where
         let _ = s.wait();
     }
     drop(keep_len_send_bufs);
+    if let Some(e) = first_err {
+        return Err(e);
+    }
 
     // payload phase
     let mut recv_parts: HashMap<usize, (C::RecvHandle, Vec<D::Part>)> = HashMap::new();
@@ -230,53 +248,82 @@ where
         keep_data_send_bufs.push(flat);
     }
 
+    let mut first_err: Option<MeshSieveError> = None;
     for (nbr, (h, mut buf)) in recv_parts {
-        let raw = h.wait().ok_or_else(|| MeshSieveError::CommError {
-            neighbor: nbr,
-            source: "payload recv returned None".into(),
-        })?;
+        let raw = match h.wait() {
+            Some(r) => r,
+            None => {
+                if first_err.is_none() {
+                    first_err = Some(MeshSieveError::CommError {
+                        neighbor: nbr,
+                        source: "payload recv returned None".into(),
+                    });
+                }
+                continue;
+            }
+        };
         let expect_bytes = buf.len() * std::mem::size_of::<D::Part>();
         if raw.len() != expect_bytes {
-            return Err(MeshSieveError::BufferSizeMismatch {
-                neighbor: nbr,
-                expected: expect_bytes,
-                got: raw.len(),
-            });
+            if first_err.is_none() {
+                first_err = Some(MeshSieveError::BufferSizeMismatch {
+                    neighbor: nbr,
+                    expected: expect_bytes,
+                    got: raw.len(),
+                });
+            }
+            continue;
         }
         cast_slice_mut(&mut buf).copy_from_slice(&raw);
 
         let lens = &lens_in[&nbr];
         let pairs = links.get(&nbr).map_or(&[][..], |v| &v[..]);
         if lens.len() != pairs.len() {
-            return Err(MeshSieveError::LengthsCountMismatch {
-                neighbor: nbr,
-                expected: pairs.len(),
-                got: lens.len(),
-            });
+            if first_err.is_none() {
+                first_err = Some(MeshSieveError::LengthsCountMismatch {
+                    neighbor: nbr,
+                    expected: pairs.len(),
+                    got: lens.len(),
+                });
+            }
+            continue;
         }
 
         let mut cursor = 0usize;
+        let mut neighbor_failed = false;
         for ((_, recv_loc), &m_u32) in pairs.iter().zip(lens) {
             let m = m_u32 as usize;
-            let dst =
-                section
-                    .try_restrict_mut(*recv_loc)
-                    .map_err(|e| MeshSieveError::SectionAccess {
-                        point: *recv_loc,
-                        source: Box::new(e),
-                    })?;
+            let dst = match section.try_restrict_mut(*recv_loc) {
+                Ok(d) => d,
+                Err(e) => {
+                    if first_err.is_none() {
+                        first_err = Some(MeshSieveError::SectionAccess {
+                            point: *recv_loc,
+                            source: Box::new(e),
+                        });
+                    }
+                    neighbor_failed = true;
+                    break;
+                }
+            };
             if dst.len() != m {
-                return Err(MeshSieveError::PayloadCountMismatch {
-                    neighbor: nbr,
-                    expected: m,
-                    got: dst.len(),
-                });
+                if first_err.is_none() {
+                    first_err = Some(MeshSieveError::PayloadCountMismatch {
+                        neighbor: nbr,
+                        expected: m,
+                        got: dst.len(),
+                    });
+                }
+                neighbor_failed = true;
+                break;
             }
             let chunk = &buf[cursor..cursor + m];
             for (d, &part) in dst.iter_mut().zip(chunk.iter()) {
                 D::fuse(d, part);
             }
             cursor += m;
+        }
+        if neighbor_failed {
+            continue;
         }
         debug_assert_eq!(cursor, buf.len(), "payload cursor mismatch");
     }
@@ -285,6 +332,10 @@ where
         let _ = s.wait();
     }
     drop(keep_data_send_bufs);
+
+    if let Some(e) = first_err {
+        return Err(e);
+    }
 
     Ok(())
 }
