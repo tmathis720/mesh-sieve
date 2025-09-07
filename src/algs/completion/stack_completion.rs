@@ -7,7 +7,8 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use bytemuck::{cast_slice, cast_slice_mut, Pod, Zeroable};
+use crate::algs::wire::{cast_slice, cast_slice_mut, WirePoint};
+use bytemuck::{Pod, Zeroable};
 
 use crate::algs::communicator::{CommTag, StackCommTags, Wait};
 use crate::algs::completion::size_exchange::exchange_sizes_symmetric;
@@ -28,20 +29,6 @@ impl HasRank for crate::overlap::overlap::Remote {
     }
 }
 
-/// Bridge for converting point types to and from wire‐encoded `u64`s.
-pub trait WirePoint: Copy {
-    fn to_wire(self) -> u64;
-    fn from_wire(w: u64) -> Self;
-}
-
-impl WirePoint for crate::topology::point::PointId {
-    #[inline]
-    fn to_wire(self) -> u64 { self.get() }
-    #[inline]
-    fn from_wire(w: u64) -> Self {
-        Self::new(w).expect("invalid PointId on wire")
-    }
-}
 
 /// Fixed width `(base, cap, payload)` triple used on the wire.
 #[repr(C)]

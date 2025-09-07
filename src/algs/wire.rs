@@ -3,6 +3,35 @@
 use bytemuck::{Pod, Zeroable};
 use std::mem::{align_of, size_of};
 
+pub fn cast_slice<T: Pod>(v: &[T]) -> &[u8] {
+    bytemuck::cast_slice(v)
+}
+
+pub fn cast_slice_mut<T: Pod>(v: &mut [T]) -> &mut [u8] {
+    bytemuck::cast_slice_mut(v)
+}
+
+pub fn cast_slice_from<T: Pod>(v: &[u8]) -> &[T] {
+    bytemuck::cast_slice(v)
+}
+
+pub fn cast_slice_from_mut<T: Pod>(v: &mut [u8]) -> &mut [T] {
+    bytemuck::cast_slice_mut(v)
+}
+
+pub fn expect_exact_len(actual: usize, expected: usize) -> Result<(), String> {
+    if actual == expected { Ok(()) } else { Err(format!("expected {} bytes, got {}", expected, actual)) }
+}
+
+#[repr(transparent)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+pub struct WireCountU32(pub u32);
+
+pub trait WirePoint: Copy {
+    fn to_wire(self) -> u64;
+    fn from_wire(w: u64) -> Self;
+}
+
 /// Bump when the layout or semantics change in incompatible ways.
 pub const WIRE_VERSION: u16 = 1;
 
@@ -54,10 +83,10 @@ impl WireCount {
 /// A point id (u64) carried on the wire.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
-pub struct WirePoint {
+pub struct WirePointRepr {
     pub id_le: u64,
 }
-impl WirePoint {
+impl WirePointRepr {
     pub fn of(id: u64) -> Self {
         Self { id_le: id.to_le() }
     }
@@ -183,12 +212,21 @@ const _: () = {
     // Pod/Zeroable ensures no padding contains uninit when cast to bytes.
     assert!(size_of::<WireHdr>() == 8);
     assert!(size_of::<WireCount>() == 4);
-    assert!(size_of::<WirePoint>() == 8);
+    assert!(size_of::<WirePointRepr>() == 8);
     assert!(size_of::<WireAdj>() == 16);
     assert!(size_of::<WireArrow>() == 16);
     assert!(size_of::<WireArrowTriple>() == WireArrowTriple::SIZE);
     assert!(align_of::<WireArrowTriple>() == 8);
 };
+
+impl WirePoint for crate::topology::point::PointId {
+    #[inline]
+    fn to_wire(self) -> u64 { self.get() }
+    #[inline]
+    fn from_wire(w: u64) -> Self {
+        crate::topology::point::PointId::new(w).expect("invalid PointId on wire")
+    }
+}
 
 #[cfg(test)]
 mod tests {

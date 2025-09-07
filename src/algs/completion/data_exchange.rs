@@ -29,7 +29,7 @@ where
     D::Part: bytemuck::Pod + Default,
     C: crate::algs::communicator::Communicator + Sync,
 {
-    use bytemuck::cast_slice;
+    use crate::algs::wire::cast_slice;
     use std::collections::HashMap;
 
     // --- Stage 2: exchange data (asymmetric) ---
@@ -79,7 +79,7 @@ where
             });
         }
         buffer.copy_from_slice(&raw);
-        let parts: &[D::Part] = cast_slice(&buffer);
+        let parts: &[D::Part] = crate::algs::wire::cast_slice_from(&buffer);
         let link_vec = &links[&nbr];
         if parts.len() != link_vec.len() {
             return Err(MeshSieveError::PartCountMismatch {
@@ -135,7 +135,7 @@ where
     D::Part: bytemuck::Pod + Default + Copy,
     C: crate::algs::communicator::Communicator + Sync,
 {
-    use bytemuck::{cast_slice, cast_slice_mut};
+    use crate::algs::wire::{cast_slice, cast_slice_mut};
     use std::collections::HashMap;
 
     let tag_len = base_tag;

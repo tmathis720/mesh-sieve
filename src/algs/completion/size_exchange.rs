@@ -7,7 +7,7 @@
 //! error occurs.
 
 use crate::algs::communicator::{CommTag, Wait};
-use crate::algs::wire::WireCount;
+use crate::algs::wire::{WireCount, cast_slice, cast_slice_mut};
 use crate::mesh_error::MeshSieveError;
 use std::collections::{HashMap, HashSet};
 
@@ -28,7 +28,7 @@ where
         let h = comm.irecv(
             nbr,
             tag.as_u16(),
-            bytemuck::cast_slice_mut(std::slice::from_mut(&mut cnt)),
+            cast_slice_mut(std::slice::from_mut(&mut cnt)),
         );
         recv_size.insert(nbr, (h, cnt));
     }
@@ -41,7 +41,7 @@ where
         pending_sends.push(comm.isend(
             nbr,
             tag.as_u16(),
-            bytemuck::cast_slice(std::slice::from_ref(&count)),
+            cast_slice(std::slice::from_ref(&count)),
         ));
         send_bufs.push(count);
     }
@@ -53,7 +53,7 @@ where
         match h.wait() {
             Some(data) if data.len() == std::mem::size_of::<WireCount>() => {
                 if maybe_err.is_none() {
-                    let bytes = bytemuck::cast_slice_mut(std::slice::from_mut(&mut cnt));
+                    let bytes = cast_slice_mut(std::slice::from_mut(&mut cnt));
                     bytes.copy_from_slice(&data);
                     sizes_in.insert(nbr, cnt.get() as u32);
                 }
@@ -110,7 +110,7 @@ where
         let h = comm.irecv(
             nbr,
             tag.as_u16(),
-            bytemuck::cast_slice_mut(std::slice::from_mut(&mut cnt)),
+            cast_slice_mut(std::slice::from_mut(&mut cnt)),
         );
         recv_size.insert(nbr, (h, cnt));
     }
@@ -123,7 +123,7 @@ where
         pending_sends.push(comm.isend(
             nbr,
             tag.as_u16(),
-            bytemuck::cast_slice(std::slice::from_ref(&count)),
+            cast_slice(std::slice::from_ref(&count)),
         ));
         send_bufs.push(count);
     }
@@ -135,7 +135,7 @@ where
         match h.wait() {
             Some(data) if data.len() == std::mem::size_of::<WireCount>() => {
                 if maybe_err.is_none() {
-                    let bytes = bytemuck::cast_slice_mut(std::slice::from_mut(&mut cnt));
+                    let bytes = cast_slice_mut(std::slice::from_mut(&mut cnt));
                     bytes.copy_from_slice(&data);
                     sizes_in.insert(nbr, cnt.get() as u32);
                 }

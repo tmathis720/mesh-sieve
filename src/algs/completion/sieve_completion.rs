@@ -7,7 +7,8 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use bytemuck::{Zeroable, cast_slice, cast_slice_mut};
+use crate::algs::wire::{cast_slice, cast_slice_mut};
+use bytemuck::Zeroable;
 
 use crate::algs::communicator::{CommTag, Communicator, SieveCommTags, Wait};
 use crate::algs::completion::size_exchange::exchange_sizes_symmetric;
