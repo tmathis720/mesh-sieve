@@ -3,6 +3,7 @@
 //! Used by `closure_completed(...)`.
 
 use crate::algs::communicator::{Communicator, Wait};
+use crate::algs::wire::{WireAdj, WireCount, WireHdr, WirePoint, WIRE_VERSION};
 use crate::mesh_error::MeshSieveError;
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
@@ -15,26 +16,6 @@ pub enum ReqKind {
     Support = 2,
 }
 
-#[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct WireHdr {
-    kind: u8,
-    _pad: [u8; 7],
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct WirePoint {
-    id: u64,
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct WireAdj {
-    src: u64,
-    dst: u64,
-}
-
 /// Send to each owner rank the list of points to fetch; receive adjacency lists back.
 /// Returns map: src_point -> Vec<dst_point>.
 pub fn fetch_adjacency<C: Communicator>(
@@ -43,62 +24,72 @@ pub fn fetch_adjacency<C: Communicator>(
     comm: &C,
     base_tag: u16,
 ) -> Result<HashMap<PointId, Vec<PointId>>, MeshSieveError> {
-    use bytemuck::{cast_slice, cast_slice_mut};
+    use bytemuck::{cast_slice, cast_slice_mut, Zeroable};
 
     // 1) Post receives for replies (counts then payload)
     let mut recv_counts = Vec::new();
     for (&rank, _) in requests {
-        let mut buf = [0u8; 4];
-        let h = comm.irecv(rank, base_tag + 1, &mut buf);
-        recv_counts.push((rank, h, buf));
+        let mut cnt = WireCount::new(0);
+        let h = comm.irecv(
+            rank,
+            base_tag + 1,
+            cast_slice_mut(std::slice::from_mut(&mut cnt)),
+        );
+        recv_counts.push((rank, h, cnt));
     }
 
     // 2) Send requests (header + point list)
-    let hdr = WireHdr {
-        kind: kind as u8,
-        _pad: [0; 7],
-    };
     let mut pending_sends = Vec::new();
     let mut _keep_alive: Vec<Vec<WirePoint>> = Vec::new();
-    let mut _keep_hdrs: Vec<Vec<u8>> = Vec::new();
+    let mut _keep_hdrs: Vec<WireHdr> = Vec::new();
+    let mut _keep_counts: Vec<WireCount> = Vec::new();
     for (&rank, pts) in requests {
-        let body: Vec<WirePoint> = pts.iter().map(|p| WirePoint { id: p.get() }).collect();
-        let hdr_bytes = cast_slice(&[hdr]).to_vec();
-        let bytes_pts = cast_slice(&body);
-        pending_sends.push(comm.isend(rank, base_tag, &hdr_bytes));
-        let cnt = (body.len() as u32).to_le_bytes();
-        pending_sends.push(comm.isend(rank, base_tag + 3, &cnt));
-        pending_sends.push(comm.isend(rank, base_tag, bytes_pts));
+        let hdr = WireHdr::new(kind as u16);
+        let body: Vec<WirePoint> = pts.iter().map(|p| WirePoint::of(p.get())).collect();
+        let cnt = WireCount::new(body.len());
+        pending_sends.push(comm.isend(
+            rank,
+            base_tag,
+            cast_slice(std::slice::from_ref(&hdr)),
+        ));
+        pending_sends.push(comm.isend(
+            rank,
+            base_tag + 1,
+            cast_slice(std::slice::from_ref(&cnt)),
+        ));
+        pending_sends.push(comm.isend(rank, base_tag, cast_slice(&body)));
+        _keep_hdrs.push(hdr);
+        _keep_counts.push(cnt);
         _keep_alive.push(body);
-        _keep_hdrs.push(hdr_bytes);
     }
 
     // 3) Gather reply sizes (number of WireAdj records)
-    let mut counts: HashMap<usize, u32> = HashMap::new();
-    for (rank, h, mut buf) in recv_counts {
+    let mut counts: HashMap<usize, usize> = HashMap::new();
+    for (rank, h, mut cnt) in recv_counts {
         let raw = h.wait().ok_or_else(|| MeshSieveError::CommError {
             neighbor: rank,
             source: Box::new(crate::mesh_error::CommError("missing count reply".into())),
         })?;
-        if raw.len() != buf.len() {
+        let bytes = cast_slice_mut(std::slice::from_mut(&mut cnt));
+        if raw.len() != bytes.len() {
             return Err(MeshSieveError::CommError {
                 neighbor: rank,
                 source: Box::new(crate::mesh_error::CommError(format!(
                     "expected {}B count, got {}",
-                    buf.len(),
+                    bytes.len(),
                     raw.len()
                 ))),
             });
         }
-        buf.copy_from_slice(&raw);
-        counts.insert(rank, u32::from_le_bytes(buf));
+        bytes.copy_from_slice(&raw);
+        counts.insert(rank, cnt.get());
     }
 
     // 4) Post receives for adjacency payloads
     let mut recv_payloads = Vec::new();
     for (&rank, &nrec) in &counts {
-        let mut buf = vec![WireAdj { src: 0, dst: 0 }; nrec as usize];
-        let h = comm.irecv(rank, base_tag + 2, cast_slice_mut(&mut buf));
+        let mut buf = vec![WireAdj::zeroed(); nrec];
+        let h = comm.irecv(rank, base_tag + 2, cast_slice_mut(buf.as_mut_slice()));
         recv_payloads.push((rank, h, buf));
     }
 
@@ -114,7 +105,7 @@ pub fn fetch_adjacency<C: Communicator>(
             neighbor: rank,
             source: Box::new(crate::mesh_error::CommError("missing payload reply".into())),
         })?;
-        let bytes = cast_slice_mut(&mut buf);
+        let bytes = cast_slice_mut(buf.as_mut_slice());
         if bytes.len() != raw.len() {
             return Err(MeshSieveError::CommError {
                 neighbor: rank,
@@ -126,9 +117,9 @@ pub fn fetch_adjacency<C: Communicator>(
             });
         }
         bytes.copy_from_slice(&raw);
-        for &WireAdj { src, dst } in &buf {
-            let sp = PointId::new(src).map_err(|e| MeshSieveError::MeshError(Box::new(e)))?;
-            let dp = PointId::new(dst).map_err(|e| MeshSieveError::MeshError(Box::new(e)))?;
+        for a in &buf {
+            let sp = PointId::new(a.src()).map_err(|e| MeshSieveError::MeshError(Box::new(e)))?;
+            let dp = PointId::new(a.dst()).map_err(|e| MeshSieveError::MeshError(Box::new(e)))?;
             out.entry(sp).or_default().push(dp);
         }
     }
@@ -144,7 +135,7 @@ pub fn service_once_mesh_fetch<S: Sieve<Point = PointId>>(
     base_tag: u16,
 ) -> bool {
     use crate::algs::communicator::Wait;
-    use bytemuck::{cast_slice, cast_slice_mut};
+    use bytemuck::{cast_slice, cast_slice_mut, Zeroable};
 
     let me = comm.rank();
     let mut handled = false;
@@ -152,55 +143,54 @@ pub fn service_once_mesh_fetch<S: Sieve<Point = PointId>>(
         if peer == me {
             continue;
         }
-        let mut hdr_buf = [0u8; std::mem::size_of::<WireHdr>()];
-        let maybe = comm.irecv(peer, base_tag, &mut hdr_buf);
+        let mut hdr = WireHdr::new(0);
+        let maybe = comm.irecv(peer, base_tag, cast_slice_mut(std::slice::from_mut(&mut hdr)));
         if let Some(raw) = maybe.wait() {
-            if raw.len() != hdr_buf.len() {
+            if raw.len() != std::mem::size_of::<WireHdr>() {
                 continue;
             }
-            hdr_buf.copy_from_slice(&raw);
-            let hdr: WireHdr = bytemuck::pod_read_unaligned(&hdr_buf);
+            if hdr.version() != WIRE_VERSION {
+                continue;
+            }
 
-            let mut cnt_buf = [0u8; 4];
-            let hcnt = comm.irecv(peer, base_tag + 3, &mut cnt_buf);
+            let mut cnt = WireCount::new(0);
+            let hcnt = comm.irecv(
+                peer,
+                base_tag + 1,
+                cast_slice_mut(std::slice::from_mut(&mut cnt)),
+            );
             if let Some(rc) = hcnt.wait() {
-                if rc.len() != 4 {
+                if rc.len() != std::mem::size_of::<WireCount>() {
                     continue;
                 }
-                cnt_buf.copy_from_slice(&rc);
-                let npts = u32::from_le_bytes(cnt_buf) as usize;
 
-                let mut pts = vec![WirePoint { id: 0 }; npts];
-                let hpts = comm.irecv(peer, base_tag, cast_slice_mut(&mut pts));
+                let npts = cnt.get();
+
+                let mut pts = vec![WirePoint::zeroed(); npts];
+                let hpts = comm.irecv(peer, base_tag, cast_slice_mut(pts.as_mut_slice()));
                 if let Some(raw_pts) = hpts.wait() {
                     if raw_pts.len() != npts * std::mem::size_of::<WirePoint>() {
                         continue;
                     }
-                    cast_slice_mut(&mut pts).copy_from_slice(&raw_pts);
+                    cast_slice_mut(pts.as_mut_slice()).copy_from_slice(&raw_pts);
 
                     let mut wires = Vec::<WireAdj>::new();
                     wires.reserve(npts * 4);
-                    match hdr.kind {
-                        x if x == ReqKind::Cone as u8 => {
-                            for &WirePoint { id } in &pts {
-                                if let Ok(p) = PointId::new(id) {
-                                    for (q, _) in local_mesh.cone(p) {
-                                        wires.push(WireAdj {
-                                            src: id,
-                                            dst: q.get(),
-                                        });
+                    match hdr.kind() {
+                        x if x == ReqKind::Cone as u16 => {
+                            for p in &pts {
+                                if let Ok(src) = PointId::new(p.get()) {
+                                    for (q, _) in local_mesh.cone(src) {
+                                        wires.push(WireAdj::new(p.get(), q.get()));
                                     }
                                 }
                             }
                         }
-                        x if x == ReqKind::Support as u8 => {
-                            for &WirePoint { id } in &pts {
-                                if let Ok(p) = PointId::new(id) {
-                                    for (q, _) in local_mesh.support(p) {
-                                        wires.push(WireAdj {
-                                            src: id,
-                                            dst: q.get(),
-                                        });
+                        x if x == ReqKind::Support as u16 => {
+                            for p in &pts {
+                                if let Ok(src) = PointId::new(p.get()) {
+                                    for (q, _) in local_mesh.support(src) {
+                                        wires.push(WireAdj::new(p.get(), q.get()));
                                     }
                                 }
                             }
@@ -208,8 +198,10 @@ pub fn service_once_mesh_fetch<S: Sieve<Point = PointId>>(
                         _ => {}
                     }
 
-                    let cnt = (wires.len() as u32).to_le_bytes();
-                    let _ = comm.isend(peer, base_tag + 1, &cnt).wait();
+                    let cnt = WireCount::new(wires.len());
+                    let _ = comm
+                        .isend(peer, base_tag + 1, cast_slice(std::slice::from_ref(&cnt)))
+                        .wait();
                     let _ = comm.isend(peer, base_tag + 2, cast_slice(&wires)).wait();
                     handled = true;
                 }

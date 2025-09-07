@@ -1,4 +1,4 @@
-//! Complete missing sieve arrows across ranks by packing WireTriple.
+//! Complete missing sieve arrows across ranks using fixed wire triples.
 //!
 //! This module provides routines for synchronizing and completing sieve arrows
 //! across distributed ranks, using packed wire triples for efficient communication.
@@ -9,23 +9,14 @@ use std::collections::HashMap;
 use bytemuck::Zeroable;
 
 use crate::algs::communicator::Wait;
+use crate::algs::wire::{WireArrowTriple, WireCount};
 use crate::mesh_error::MeshSieveError;
-use crate::overlap::overlap::{OvlId, Remote, local};
+use crate::overlap::overlap::{local, OvlId, Remote};
 use crate::prelude::{Communicator, Overlap};
 use crate::topology::cache::InvalidateCache;
 use crate::topology::point::PointId;
 use crate::topology::sieve::InMemorySieve;
 use crate::topology::sieve::sieve_trait::Sieve;
-
-/// Packed arrow for network transport.
-#[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct WireTriple {
-    src: u64,
-    dst: u64,
-    remote_point: u64,
-    rank: usize,
-}
 
 /// Complete missing sieve arrows across ranks.
 ///
@@ -83,31 +74,33 @@ pub fn complete_sieve<C: Communicator>(
 
     // --- Phase 1: exchange counts ---------------------------------------
     // 1a) post all receives for counts
-    let mut size_recvs: Vec<(usize, C::RecvHandle, [u8; 4])> = Vec::with_capacity(peers.len());
+    let mut size_recvs: Vec<(usize, C::RecvHandle, WireCount)> =
+        Vec::with_capacity(peers.len());
     for &peer in &peers {
-        let buf = [0u8; 4];
-        let h = comm.irecv(peer, BASE_TAG, &mut buf.clone());
-        size_recvs.push((peer, h, buf));
+        let mut cnt = WireCount::new(0);
+        let h = comm.irecv(peer, BASE_TAG, bytemuck::cast_slice_mut(std::slice::from_mut(&mut cnt)));
+        size_recvs.push((peer, h, cnt));
     }
     // 1b) post all sends for counts
     for &peer in &peers {
-        let cnt = nb_links.get(&peer).map(|v| v.len()).unwrap_or(0) as u32;
-        let buf = cnt.to_le_bytes();
-        pending_sends.push(comm.isend(peer, BASE_TAG, &buf));
+        let cnt = WireCount::new(nb_links.get(&peer).map(|v| v.len()).unwrap_or(0));
+        pending_sends.push(comm.isend(peer, BASE_TAG, bytemuck::cast_slice(std::slice::from_ref(&cnt))));
     }
     // 1c) wait for all count‐recvs
     let mut sizes_in: HashMap<usize, usize> = HashMap::new();
-    for (peer, h, mut buf) in size_recvs {
+    for (peer, h, mut cnt) in size_recvs {
         match h.wait() {
-            Some(data) if data.len() == buf.len() => {
-                buf.copy_from_slice(&data);
-                sizes_in.insert(peer, u32::from_le_bytes(buf) as usize);
+            Some(data) if data.len() == std::mem::size_of::<WireCount>() => {
+                let bytes = bytemuck::cast_slice_mut(std::slice::from_mut(&mut cnt));
+                bytes.copy_from_slice(&data);
+                sizes_in.insert(peer, cnt.get());
             }
             Some(data) => {
                 maybe_err.get_or_insert_with(|| MeshSieveError::CommError {
                     neighbor: peer,
                     source: Box::new(crate::mesh_error::CommError(format!(
-                        "expected 4 bytes for size from {}, got {}",
+                        "expected {} bytes for size from {}, got {}",
+                        std::mem::size_of::<WireCount>(),
                         peer,
                         data.len()
                     ))),
@@ -125,13 +118,13 @@ pub fn complete_sieve<C: Communicator>(
         }
     }
 
-    // --- Phase 2: exchange actual WireTriple payloads -------------------
+    // --- Phase 2: exchange actual WireArrowTriple payloads -------------------
     // 2a) post all receives for triples
-    let mut data_recvs: Vec<(usize, C::RecvHandle, Vec<WireTriple>)> =
+    let mut data_recvs: Vec<(usize, C::RecvHandle, Vec<WireArrowTriple>)> =
         Vec::with_capacity(peers.len());
     for &peer in &peers {
         let n = *sizes_in.get(&peer).unwrap_or(&0);
-        let mut buffer = vec![WireTriple::zeroed(); n];
+        let mut buffer = vec![WireArrowTriple::zeroed(); n];
         let bytes = bytemuck::cast_slice_mut(buffer.as_mut_slice());
         let h = comm.irecv(peer, BASE_TAG + 1, bytes);
         data_recvs.push((peer, h, buffer));
@@ -143,12 +136,12 @@ pub fn complete_sieve<C: Communicator>(
             for &(src, _) in links {
                 if let Some(outs) = sieve.adjacency_out.get(&src) {
                     for (d, payload) in outs {
-                        triples.push(WireTriple {
-                            src: src.get(),
-                            dst: d.get(),
-                            remote_point: payload.remote_point.expect("overlap unresolved").get(),
-                            rank: payload.rank,
-                        });
+                        triples.push(WireArrowTriple::new(
+                            src.get(),
+                            d.get(),
+                            payload.remote_point.expect("overlap unresolved").get(),
+                            payload.rank as u32,
+                        ));
                     }
                 }
             }
@@ -162,16 +155,13 @@ pub fn complete_sieve<C: Communicator>(
     let mut inserted = std::collections::HashSet::new();
     for (peer, h, mut buffer) in data_recvs {
         match h.wait() {
-            Some(raw) if raw.len() == buffer.len() * std::mem::size_of::<WireTriple>() => {
+            Some(raw)
+                if raw.len() == buffer.len() * std::mem::size_of::<WireArrowTriple>() =>
+            {
                 let view = bytemuck::cast_slice_mut(buffer.as_mut_slice());
                 view.copy_from_slice(&raw);
-                for &WireTriple {
-                    src,
-                    dst,
-                    remote_point,
-                    rank,
-                } in &buffer
-                {
+                for t in &buffer {
+                    let (src, dst, remote_point, rank) = t.decode();
                     match (
                         PointId::new(src),
                         PointId::new(dst),
@@ -179,7 +169,7 @@ pub fn complete_sieve<C: Communicator>(
                     ) {
                         (Ok(src_pt), Ok(dst_pt), Ok(rem_pt)) => {
                             let payload = Remote {
-                                rank,
+                                rank: rank as usize,
                                 remote_point: Some(rem_pt),
                             };
                             if inserted.insert((src_pt, dst_pt)) {
@@ -206,7 +196,7 @@ pub fn complete_sieve<C: Communicator>(
                     neighbor: peer,
                     source: Box::new(crate::mesh_error::CommError(format!(
                         "expected {} bytes for triples from {}, got {}",
-                        buffer.len() * std::mem::size_of::<WireTriple>(),
+                        buffer.len() * std::mem::size_of::<WireArrowTriple>(),
                         peer,
                         raw.len()
                     ))),
