@@ -50,15 +50,45 @@ pub trait Communicator: Send + Sync + 'static {
 
 /// Tag newtype for safer tag arithmetic.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-pub struct CommTag(pub u16);
+pub struct CommTag(u16);
+
 impl CommTag {
+    /// Create a new tag from a raw `u16`.
     #[inline]
-    pub fn base(self) -> u16 {
+    pub const fn new(tag: u16) -> Self {
+        Self(tag)
+    }
+
+    /// Return the underlying `u16` value.
+    #[inline]
+    pub const fn as_u16(self) -> u16 {
         self.0
     }
+
+    /// Safely offset the tag by `dx`, wrapping on overflow.
     #[inline]
-    pub fn plus(self, off: u16) -> u16 {
-        self.0.wrapping_add(off)
+    pub const fn offset(self, dx: u16) -> Self {
+        Self(self.0.wrapping_add(dx))
+    }
+}
+
+/// Convenience bundle of tags for the multi-phase section completion.
+#[derive(Copy, Clone, Debug)]
+pub struct SectionCommTags {
+    /// Tag used during the size-exchange phase.
+    pub sizes: CommTag,
+    /// Tag used during the data-exchange phase.
+    pub data: CommTag,
+}
+
+impl SectionCommTags {
+    /// Construct tags from a base, assigning deterministic offsets per phase.
+    #[inline]
+    pub const fn from_base(base: CommTag) -> Self {
+        Self {
+            sizes: base,
+            data: base.offset(1),
+        }
     }
 }
 
