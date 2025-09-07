@@ -31,8 +31,16 @@ pub fn fetch_adjacency<C: Communicator>(
     for (&rank, _) in requests {
         let mut hdr = WireHdr::new(0);
         let mut cnt = WireCount::new(0);
-        let h_hdr = comm.irecv(rank, base_tag, cast_slice_mut(std::slice::from_mut(&mut hdr)));
-        let h_cnt = comm.irecv(rank, base_tag + 1, cast_slice_mut(std::slice::from_mut(&mut cnt)));
+        let h_hdr = comm.irecv(
+            rank,
+            base_tag,
+            cast_slice_mut(std::slice::from_mut(&mut hdr)),
+        );
+        let h_cnt = comm.irecv(
+            rank,
+            base_tag + 1,
+            cast_slice_mut(std::slice::from_mut(&mut cnt)),
+        );
         recv_counts.push((rank, hdr, cnt, h_hdr, h_cnt));
     }
 
@@ -76,7 +84,8 @@ pub fn fetch_adjacency<C: Communicator>(
             return Err(MeshSieveError::CommError {
                 neighbor: rank,
                 source: Box::new(crate::mesh_error::CommError(format!(
-                    "wire version mismatch: {}", hdr.version()
+                    "wire version mismatch: {}",
+                    hdr.version()
                 ))),
             });
         }
@@ -189,7 +198,11 @@ where
                 continue;
             }
             let mut hdr = WireHdr::new(0);
-            let h = comm.irecv(peer, base_tag, cast_slice_mut(std::slice::from_mut(&mut hdr)));
+            let h = comm.irecv(
+                peer,
+                base_tag,
+                cast_slice_mut(std::slice::from_mut(&mut hdr)),
+            );
             states.push(PeerState {
                 peer,
                 stage: Stage::WaitingHdr { h, buf: hdr },
@@ -209,8 +222,9 @@ where
             match &mut ps.stage {
                 Stage::WaitingHdr { h, buf } => {
                     if let Some(raw) = h.try_wait() {
-                        if raw.len() == std::mem::size_of::<WireHdr>() {
-                            cast_slice_mut(std::slice::from_mut(buf)).copy_from_slice(&raw);
+                        let bytes = cast_slice_mut(std::slice::from_mut(buf));
+                        if raw.len() == bytes.len() {
+                            bytes.copy_from_slice(&raw);
                             if buf.version() == WIRE_VERSION {
                                 let mut cnt = WireCount::new(0);
                                 let hcnt = self.comm.irecv(
@@ -218,21 +232,28 @@ where
                                     self.base_tag + 1,
                                     cast_slice_mut(std::slice::from_mut(&mut cnt)),
                                 );
-                                ps.stage = Stage::WaitingCnt { h: hcnt, hdr: *buf, cnt };
+                                ps.stage = Stage::WaitingCnt {
+                                    h: hcnt,
+                                    hdr: *buf,
+                                    cnt,
+                                };
                                 continue;
                             }
                         }
                         let mut hdr2 = WireHdr::new(0);
-                        let h2 = self
-                            .comm
-                            .irecv(ps.peer, self.base_tag, cast_slice_mut(std::slice::from_mut(&mut hdr2)));
+                        let h2 = self.comm.irecv(
+                            ps.peer,
+                            self.base_tag,
+                            cast_slice_mut(std::slice::from_mut(&mut hdr2)),
+                        );
                         ps.stage = Stage::WaitingHdr { h: h2, buf: hdr2 };
                     }
                 }
                 Stage::WaitingCnt { h, hdr, cnt } => {
                     if let Some(raw) = h.try_wait() {
-                        if raw.len() == std::mem::size_of::<WireCount>() {
-                            cast_slice_mut(std::slice::from_mut(cnt)).copy_from_slice(&raw);
+                        let bytes = cast_slice_mut(std::slice::from_mut(cnt));
+                        if raw.len() == bytes.len() {
+                            bytes.copy_from_slice(&raw);
                             let n = cnt.get();
                             let mut pts = vec![WirePoint::zeroed(); n];
                             let hp = self.comm.irecv(
@@ -249,9 +270,11 @@ where
                             continue;
                         }
                         let mut hdr2 = WireHdr::new(0);
-                        let h2 = self
-                            .comm
-                            .irecv(ps.peer, self.base_tag, cast_slice_mut(std::slice::from_mut(&mut hdr2)));
+                        let h2 = self.comm.irecv(
+                            ps.peer,
+                            self.base_tag,
+                            cast_slice_mut(std::slice::from_mut(&mut hdr2)),
+                        );
                         ps.stage = Stage::WaitingHdr { h: h2, buf: hdr2 };
                     }
                 }
@@ -284,24 +307,34 @@ where
                             }
                             let hdr_out = WireHdr::new(hdr.kind());
                             let cnt_out = WireCount::new(wires.len());
+                            let _ = self.comm.isend(
+                                ps.peer,
+                                self.base_tag,
+                                cast_slice(std::slice::from_ref(&hdr_out)),
+                            );
+                            let _ = self.comm.isend(
+                                ps.peer,
+                                self.base_tag + 1,
+                                cast_slice(std::slice::from_ref(&cnt_out)),
+                            );
                             let _ = self
                                 .comm
-                                .isend(ps.peer, self.base_tag, cast_slice(std::slice::from_ref(&hdr_out)));
-                            let _ = self
-                                .comm
-                                .isend(ps.peer, self.base_tag + 1, cast_slice(std::slice::from_ref(&cnt_out)));
-                            let _ = self.comm.isend(ps.peer, self.base_tag + 2, cast_slice(&wires));
+                                .isend(ps.peer, self.base_tag + 2, cast_slice(&wires));
                             let mut hdr2 = WireHdr::new(0);
-                            let h2 = self
-                                .comm
-                                .irecv(ps.peer, self.base_tag, cast_slice_mut(std::slice::from_mut(&mut hdr2)));
+                            let h2 = self.comm.irecv(
+                                ps.peer,
+                                self.base_tag,
+                                cast_slice_mut(std::slice::from_mut(&mut hdr2)),
+                            );
                             ps.stage = Stage::WaitingHdr { h: h2, buf: hdr2 };
                             completed += 1;
                         } else {
                             let mut hdr2 = WireHdr::new(0);
-                            let h2 = self
-                                .comm
-                                .irecv(ps.peer, self.base_tag, cast_slice_mut(std::slice::from_mut(&mut hdr2)));
+                            let h2 = self.comm.irecv(
+                                ps.peer,
+                                self.base_tag,
+                                cast_slice_mut(std::slice::from_mut(&mut hdr2)),
+                            );
                             ps.stage = Stage::WaitingHdr { h: h2, buf: hdr2 };
                         }
                     }
@@ -316,11 +349,7 @@ where
 /// Call repeatedly to make non-blocking progress on pending fetch requests.
 /// Each invocation consumes at most one ready message per peer and never
 /// blocks. Returns `true` if any request was fully handled.
-pub fn service_once_mesh_fetch<C, S>(
-    comm: &C,
-    local_mesh: &S,
-    base_tag: u16,
-) -> bool
+pub fn service_once_mesh_fetch<C, S>(comm: &C, local_mesh: &S, base_tag: u16) -> bool
 where
     C: Communicator + Clone + Send + 'static,
     C::RecvHandle: PollWait + Send,
