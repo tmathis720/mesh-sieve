@@ -135,6 +135,20 @@ pub enum MeshSieveError {
         expected: usize,
         got: usize,
     },
+    /// Lengths array count mismatch during data exchange.
+    #[error("Lengths count mismatch for neighbor {neighbor}: expected {expected}, got {got}")]
+    LengthsCountMismatch {
+        neighbor: usize,
+        expected: usize,
+        got: usize,
+    },
+    /// Payload element count mismatch during data exchange.
+    #[error("Payload count mismatch for neighbor {neighbor}: expected {expected}, got {got}")]
+    PayloadCountMismatch {
+        neighbor: usize,
+        expected: usize,
+        got: usize,
+    },
 
     #[error("Overlap link not found for (local={0}, rank={1})")]
     OverlapLinkMissing(crate::topology::point::PointId, usize),
@@ -279,6 +293,30 @@ impl PartialEq for MeshSieveError {
                     got: g1,
                 },
                 PartCountMismatch {
+                    neighbor: n2,
+                    expected: e2,
+                    got: g2,
+                },
+            ) => n1 == n2 && e1 == e2 && g1 == g2,
+            (
+                LengthsCountMismatch {
+                    neighbor: n1,
+                    expected: e1,
+                    got: g1,
+                },
+                LengthsCountMismatch {
+                    neighbor: n2,
+                    expected: e2,
+                    got: g2,
+                },
+            ) => n1 == n2 && e1 == e2 && g1 == g2,
+            (
+                PayloadCountMismatch {
+                    neighbor: n1,
+                    expected: e1,
+                    got: g1,
+                },
+                PayloadCountMismatch {
                     neighbor: n2,
                     expected: e2,
                     got: g2,
