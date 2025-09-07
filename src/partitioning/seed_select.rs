@@ -160,13 +160,12 @@ fn pick_seeds_aexpj(
     if keys.is_empty() {
         return pick_uniform_without_replacement(vertices, k, rng);
     }
-
+    let k = k.min(keys.len());
     let kth = k - 1;
     keys.select_nth_unstable_by(kth, |a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
 
     let mut chosen = keys[..=kth].to_vec();
     chosen.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
-    chosen.truncate(k);
     chosen.into_iter().map(|(_, i)| vertices[i]).collect()
 }
 
