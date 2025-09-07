@@ -1,13 +1,27 @@
-//! DFS/BFS traversal helpers for Sieve topologies.
+//! Traversal helpers over Sieve topologies.
+//!
+//! ## Determinism
+//! - The unordered builder (`TraversalBuilder`) returns a **sorted** set of visited points,
+//!   so the **output** is deterministic given the Sieve contents, even if internal visitation
+//!   depends on hash iteration order.
+//! - The ordered builder (`OrderedTraversalBuilder`) emits points in **chart order**
+//!   (height-major then point order via `compute_strata`), so both **process** and **output**
+//!   are deterministic.
+//!
+//! ## Complexity (unordered)
+//! - DFS/BFS visit each point at most once: O(V + E) time, O(V) memory.
+//!
+//! ## Complexity (ordered)
+//! - One `compute_strata` precomputation (cached in the Sieve) plus O(V + E).
 
 use crate::mesh_error::MeshSieveError;
-use crate::overlap::overlap::{local, Overlap};
-use crate::topology::point::PointId;
-use crate::topology::sieve::strata::compute_strata;
-use crate::topology::sieve::Sieve;
-use crate::topology::cache::InvalidateCache;
-use std::collections::{HashMap, HashSet, VecDeque};
+use crate::overlap::overlap::{Overlap, local};
 use crate::topology::bounds::PointLike;
+use crate::topology::cache::InvalidateCache;
+use crate::topology::point::PointId;
+use crate::topology::sieve::Sieve;
+use crate::topology::sieve::strata::compute_strata;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 pub type Point = PointId;
 
@@ -24,6 +38,10 @@ pub enum Strategy {
     BFS,
 }
 
+/// Builder for unordered traversals over a [`Sieve`].
+///
+/// - **Determinism:** returns the visited set sorted ascending.
+/// - **Complexity:** O(V + E) time and O(V) memory.
 pub struct TraversalBuilder<'a, S: Sieve> {
     sieve: &'a S,
     seeds: Vec<S::Point>,
@@ -73,6 +91,10 @@ where
         self
     }
 
+    /// Execute the traversal.
+    ///
+    /// - **Determinism:** output sorted ascending.
+    /// - **Complexity:** O(V + E) time / O(V) memory.
     pub fn run(self) -> Vec<S::Point> {
         match self.strat {
             Strategy::DFS => self.run_dfs(),
@@ -89,8 +111,10 @@ where
             max_depth,
             early_stop,
         } = self;
-        let mut seen: HashSet<S::Point> = seeds.iter().copied().collect();
-        let mut stack: Vec<(S::Point, u32)> = seeds.into_iter().map(|p| (p, 0)).collect();
+        let seed_vec: Vec<S::Point> = seeds;
+        let mut seen: HashSet<S::Point> = HashSet::with_capacity(seed_vec.len().saturating_mul(2));
+        seen.extend(seed_vec.iter().copied());
+        let mut stack: Vec<(S::Point, u32)> = seed_vec.into_iter().map(|p| (p, 0)).collect();
 
         while let Some((p, d)) = stack.pop() {
             if let Some(f) = early_stop {
@@ -121,8 +145,10 @@ where
             max_depth,
             early_stop,
         } = self;
-        let mut seen: HashSet<S::Point> = seeds.iter().copied().collect();
-        let mut q: VecDeque<(S::Point, u32)> = seeds.into_iter().map(|p| (p, 0)).collect();
+        let seed_vec: Vec<S::Point> = seeds;
+        let mut seen: HashSet<S::Point> = HashSet::with_capacity(seed_vec.len().saturating_mul(2));
+        seen.extend(seed_vec.iter().copied());
+        let mut q: VecDeque<(S::Point, u32)> = seed_vec.into_iter().map(|p| (p, 0)).collect();
 
         while let Some((p, d)) = q.pop_front() {
             if let Some(f) = early_stop {
@@ -157,9 +183,180 @@ fn step_neighbors<'a, S: Sieve>(
     }
 }
 
+/// Builder for deterministic traversals in chart order.
+///
+/// Borrowing `&mut S` allows reusing the cached strata (`compute_strata`) between
+/// traversals.
+pub struct OrderedTraversalBuilder<'a, S: Sieve> {
+    sieve: &'a mut S,
+    seeds: Vec<S::Point>,
+    dir: Dir,
+    strat: Strategy,
+}
+
+impl<'a, S> OrderedTraversalBuilder<'a, S>
+where
+    S: Sieve,
+    S::Point: Copy + Ord,
+{
+    /// Create a new ordered builder over `sieve`.
+    pub fn new(sieve: &'a mut S) -> Self {
+        Self {
+            sieve,
+            seeds: Vec::new(),
+            dir: Dir::Down,
+            strat: Strategy::DFS,
+        }
+    }
+    /// Seed starting points for traversal.
+    pub fn seeds<I: IntoIterator<Item = S::Point>>(mut self, it: I) -> Self {
+        self.seeds = it.into_iter().collect();
+        self
+    }
+    /// Traversal direction.
+    pub fn dir(mut self, d: Dir) -> Self {
+        self.dir = d;
+        self
+    }
+    /// Depth-first search.
+    pub fn dfs(mut self) -> Self {
+        self.strat = Strategy::DFS;
+        self
+    }
+    /// Breadth-first search.
+    pub fn bfs(mut self) -> Self {
+        self.strat = Strategy::BFS;
+        self
+    }
+
+    /// Run traversal emitting points in chart order.
+    pub fn run(self) -> Result<Vec<S::Point>, MeshSieveError> {
+        match self.strat {
+            Strategy::DFS => self.run_dfs_ordered(),
+            Strategy::BFS => self.run_bfs_ordered(),
+        }
+    }
+
+    fn run_dfs_ordered(self) -> Result<Vec<S::Point>, MeshSieveError> {
+        let Self {
+            sieve, seeds, dir, ..
+        } = self;
+        let strata = compute_strata(&*sieve)?;
+        let chart = strata.chart_points;
+        let index = strata.chart_index;
+        let n = chart.len();
+        let mut seen = vec![false; n];
+        let mut stack: Vec<usize> = Vec::new();
+        stack.reserve(seeds.len().saturating_mul(2));
+        for p in seeds {
+            if let Some(i) = index.get(&p).copied() {
+                if !seen[i] {
+                    seen[i] = true;
+                    stack.push(i);
+                }
+            }
+        }
+
+        while let Some(i) = stack.pop() {
+            let p = chart[i];
+            let mut nbrs: Vec<usize> = match dir {
+                Dir::Down => sieve
+                    .cone_points(p)
+                    .filter_map(|q| index.get(&q).copied())
+                    .collect(),
+                Dir::Up => sieve
+                    .support_points(p)
+                    .filter_map(|q| index.get(&q).copied())
+                    .collect(),
+                Dir::Both => sieve
+                    .cone_points(p)
+                    .chain(sieve.support_points(p))
+                    .filter_map(|q| index.get(&q).copied())
+                    .collect(),
+            };
+            nbrs.sort_unstable();
+            nbrs.dedup();
+            for j in nbrs.into_iter().rev() {
+                if !seen[j] {
+                    seen[j] = true;
+                    stack.push(j);
+                }
+            }
+        }
+
+        let mut out = Vec::with_capacity(seen.iter().filter(|&&b| b).count());
+        for (i, &flag) in seen.iter().enumerate() {
+            if flag {
+                out.push(chart[i]);
+            }
+        }
+        Ok(out)
+    }
+
+    fn run_bfs_ordered(self) -> Result<Vec<S::Point>, MeshSieveError> {
+        let Self {
+            sieve, seeds, dir, ..
+        } = self;
+        let strata = compute_strata(&*sieve)?;
+        let chart = strata.chart_points;
+        let index = strata.chart_index;
+        let n = chart.len();
+        let mut seen = vec![false; n];
+        let mut q: VecDeque<usize> = VecDeque::new();
+        q.reserve(seeds.len().saturating_mul(2));
+        for p in seeds {
+            if let Some(i) = index.get(&p).copied() {
+                if !seen[i] {
+                    seen[i] = true;
+                    q.push_back(i);
+                }
+            }
+        }
+
+        while let Some(i) = q.pop_front() {
+            let p = chart[i];
+            let mut nbrs: Vec<usize> = match dir {
+                Dir::Down => sieve
+                    .cone_points(p)
+                    .filter_map(|q| index.get(&q).copied())
+                    .collect(),
+                Dir::Up => sieve
+                    .support_points(p)
+                    .filter_map(|q| index.get(&q).copied())
+                    .collect(),
+                Dir::Both => sieve
+                    .cone_points(p)
+                    .chain(sieve.support_points(p))
+                    .filter_map(|q| index.get(&q).copied())
+                    .collect(),
+            };
+            nbrs.sort_unstable();
+            nbrs.dedup();
+            for j in nbrs {
+                if !seen[j] {
+                    seen[j] = true;
+                    q.push_back(j);
+                }
+            }
+        }
+
+        let mut out = Vec::with_capacity(seen.iter().filter(|&&b| b).count());
+        for (i, &flag) in seen.iter().enumerate() {
+            if flag {
+                out.push(chart[i]);
+            }
+        }
+        Ok(out)
+    }
+}
+
 // --- old helpers, now using the builder (kept for compatibility) ---
 
 /// Complete transitive closure following `cone` arrows.
+///
+/// - **Preconditions:** `seeds` exist in `sieve`.
+/// - **Complexity:** O(V + E) time, O(V) memory.
+/// - **Determinism:** output sorted ascending.
 pub fn closure<I, S>(sieve: &S, seeds: I) -> Vec<Point>
 where
     S: Sieve<Point = Point>,
@@ -182,6 +379,10 @@ where
 }
 
 /// Complete transitive star following `support` arrows.
+///
+/// - **Preconditions:** `seeds` exist in `sieve`.
+/// - **Complexity:** O(V + E) time, O(V) memory.
+/// - **Determinism:** output sorted ascending.
 pub fn star<I, S>(sieve: &S, seeds: I) -> Vec<Point>
 where
     S: Sieve<Point = Point>,
@@ -194,7 +395,12 @@ where
         .run()
 }
 
-/// Computes the link of a point (definition unchanged).
+/// Link of `p`.
+///
+/// `link(p) = (closure(p) ∩ star(p)) \ {p} \ cone(p) \ support(p)`
+///
+/// - Excludes immediate `cone(p)` and `support(p)` to match the standard topological link.
+/// - **Complexity:** O(V + E) due to closure/star; output sorted for determinism.
 pub fn link<S: Sieve<Point = Point>>(sieve: &S, p: Point) -> Vec<Point> {
     let mut cl = closure(sieve, [p]);
     let mut st = star(sieve, [p]);
@@ -203,11 +409,30 @@ pub fn link<S: Sieve<Point = Point>>(sieve: &S, p: Point) -> Vec<Point> {
     use std::collections::HashSet;
     let cone: HashSet<_> = sieve.cone_points(p).collect();
     let sup: HashSet<_> = sieve.support_points(p).collect();
-    cl.retain(|x| st.binary_search(x).is_ok() && *x != p && !cone.contains(x) && !sup.contains(x));
-    cl
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    let mut j = 0usize;
+    while i < cl.len() && j < st.len() {
+        match cl[i].cmp(&st[j]) {
+            std::cmp::Ordering::Less => i += 1,
+            std::cmp::Ordering::Greater => j += 1,
+            std::cmp::Ordering::Equal => {
+                let x = cl[i];
+                if x != p && !cone.contains(&x) && !sup.contains(&x) {
+                    out.push(x);
+                }
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+    out
 }
 
 /// Optional BFS distance map – used by coarsening / agglomeration.
+///
+/// - **Complexity:** O(V + E) time, O(V) memory.
+/// - **Determinism:** output sorted by point id.
 pub fn depth_map<S: Sieve<Point = Point>>(sieve: &S, seed: Point) -> Vec<(Point, u32)> {
     let out = TraversalBuilder::new(sieve)
         .dir(Dir::Down)
@@ -292,7 +517,7 @@ where
     I: IntoIterator<Item = Point>,
     C: crate::algs::communicator::Communicator + Sync,
 {
-    use crate::algs::completion::closure_fetch::{fetch_adjacency, ReqKind};
+    use crate::algs::completion::closure_fetch::{ReqKind, fetch_adjacency};
 
     const TAG: u16 = 0xA100;
 
@@ -360,7 +585,7 @@ where
             }
         }
 
-            if policy.batch > 0 {
+        if policy.batch > 0 {
             let total: usize = batch.values().map(|v| v.len()).sum();
             if total >= policy.batch {
                 if let Ok(adj) = fetch_adjacency(&batch, ReqKind::Cone, comm, TAG) {
@@ -382,104 +607,38 @@ where
 
 // --- ordered traversals using strata chart ---
 
-/// Deterministic transitive closure following `cone` arrows, emitting points in
-/// chart order (height-major, then point order).
+/// Deterministic transitive closure following `cone` arrows.
+///
+/// - **Preconditions:** `seeds` exist in `sieve`.
+/// - **Complexity:** one `compute_strata` plus O(V + E).
+/// - **Determinism:** process and output follow chart order.
 pub fn closure_ordered<I, S>(sieve: &mut S, seeds: I) -> Result<Vec<S::Point>, MeshSieveError>
 where
     S: Sieve,
     S::Point: PointLike,
     I: IntoIterator<Item = S::Point>,
 {
-    let cache = compute_strata(&*sieve)?;
-    let chart = cache.chart_points;
-    let index_map = cache.chart_index;
-    let n = chart.len();
-    let mut seen = vec![false; n];
-    let mut stack: Vec<usize> = Vec::new();
-
-    for p in seeds {
-        if let Some(i) = index_map.get(&p).copied() {
-            if !seen[i] {
-                seen[i] = true;
-                stack.push(i);
-            }
-        }
-    }
-
-    while let Some(i) = stack.pop() {
-        let p = chart[i];
-        let mut nbrs: Vec<usize> = Vec::new();
-        for q in sieve.cone_points(p) {
-            if let Some(j) = index_map.get(&q).copied() {
-                nbrs.push(j);
-            }
-        }
-        nbrs.sort_unstable();
-        nbrs.dedup();
-        for j in nbrs.into_iter().rev() {
-            if !seen[j] {
-                seen[j] = true;
-                stack.push(j);
-            }
-        }
-    }
-
-    let mut out = Vec::new();
-    for (i, flag) in seen.iter().enumerate() {
-        if *flag {
-            out.push(chart[i]);
-        }
-    }
-    Ok(out)
+    OrderedTraversalBuilder::new(sieve)
+        .dir(Dir::Down)
+        .dfs()
+        .seeds(seeds)
+        .run()
 }
 
-/// Deterministic transitive star following `support` arrows, emitting points in
-/// chart order (height-major, then point order).
+/// Deterministic transitive star following `support` arrows.
+///
+/// - **Preconditions:** `seeds` exist in `sieve`.
+/// - **Complexity:** one `compute_strata` plus O(V + E).
+/// - **Determinism:** process and output follow chart order.
 pub fn star_ordered<I, S>(sieve: &mut S, seeds: I) -> Result<Vec<S::Point>, MeshSieveError>
 where
     S: Sieve,
     S::Point: PointLike,
     I: IntoIterator<Item = S::Point>,
 {
-    let cache = compute_strata(&*sieve)?;
-    let chart = cache.chart_points;
-    let index_map = cache.chart_index;
-    let n = chart.len();
-    let mut seen = vec![false; n];
-    let mut stack: Vec<usize> = Vec::new();
-
-    for p in seeds {
-        if let Some(i) = index_map.get(&p).copied() {
-            if !seen[i] {
-                seen[i] = true;
-                stack.push(i);
-            }
-        }
-    }
-
-    while let Some(i) = stack.pop() {
-        let p = chart[i];
-        let mut nbrs: Vec<usize> = Vec::new();
-        for q in sieve.support_points(p) {
-            if let Some(j) = index_map.get(&q).copied() {
-                nbrs.push(j);
-            }
-        }
-        nbrs.sort_unstable();
-        nbrs.dedup();
-        for j in nbrs.into_iter().rev() {
-            if !seen[j] {
-                seen[j] = true;
-                stack.push(j);
-            }
-        }
-    }
-
-    let mut out = Vec::new();
-    for (i, flag) in seen.iter().enumerate() {
-        if *flag {
-            out.push(chart[i]);
-        }
-    }
-    Ok(out)
+    OrderedTraversalBuilder::new(sieve)
+        .dir(Dir::Up)
+        .dfs()
+        .seeds(seeds)
+        .run()
 }
