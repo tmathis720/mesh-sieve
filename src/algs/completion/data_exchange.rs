@@ -243,8 +243,8 @@ mod tests {
         // Setup: two ranks (0 and 1), each with one value to send/receive
         let base_tag = 42;
         // Use RayonComm for realistic intra-process comm
-        let comm0 = crate::algs::communicator::RayonComm::new(0);
-        let comm1 = crate::algs::communicator::RayonComm::new(1);
+        let comm0 = crate::algs::communicator::RayonComm::new(0, 2);
+        let comm1 = crate::algs::communicator::RayonComm::new(1, 2);
 
         // Build Atlas and Section for each rank
         let mut atlas0 = Atlas::default();
