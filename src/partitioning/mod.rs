@@ -178,12 +178,8 @@ where
     let clusters: Vec<u32> = if cfg.enable_phase1 {
         louvain_cluster(graph, cfg)
     } else {
-        // Dense, contiguous cluster IDs when Phase 1 disabled
-        verts
-            .iter()
-            .enumerate()
-            .map(|(i, _)| (i as u32 % cfg.n_parts as u32))
-            .collect()
+        // Each vertex starts in its own cluster when Phase 1 is skipped
+        verts.iter().map(|&v| v as u32).collect()
     };
 
     // Defensive checks
