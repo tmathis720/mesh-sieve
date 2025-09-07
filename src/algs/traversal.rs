@@ -14,6 +14,7 @@
 //! ## Complexity (ordered)
 //! - One `compute_strata` precomputation (cached in the Sieve) plus O(V + E).
 
+use crate::algs::traversal_core::{self as core, Neigh, Dir as CoreDir, Strategy as CoreStrategy};
 use crate::mesh_error::MeshSieveError;
 use crate::overlap::overlap::{Overlap, local};
 use crate::topology::bounds::PointLike;
@@ -38,6 +39,31 @@ pub enum Strategy {
     BFS,
 }
 
+struct SieveNeigh<'a, S: Sieve> {
+    sieve: &'a S,
+}
+
+impl<'a, S: Sieve> Neigh<'a, S::Point> for SieveNeigh<'a, S>
+where
+    S::Point: Copy,
+{
+    type Iter = Box<dyn Iterator<Item = S::Point> + 'a>;
+    fn down(&'a self, p: S::Point) -> Self::Iter {
+        Box::new(self.sieve.cone_points(p))
+    }
+    fn up(&'a self, p: S::Point) -> Self::Iter {
+        Box::new(self.sieve.support_points(p))
+    }
+}
+
+fn map_dir(d: Dir) -> CoreDir {
+    match d {
+        Dir::Down => CoreDir::Down,
+        Dir::Up => CoreDir::Up,
+        Dir::Both => CoreDir::Both,
+    }
+}
+
 /// Builder for unordered traversals over a [`Sieve`].
 ///
 /// - **Determinism:** returns the visited set sorted ascending.
@@ -54,7 +80,7 @@ pub struct TraversalBuilder<'a, S: Sieve> {
 
 impl<'a, S: Sieve> TraversalBuilder<'a, S>
 where
-    S::Point: Ord + Copy,
+    S::Point: Ord + Copy + std::hash::Hash + Eq,
 {
     pub fn new(sieve: &'a S) -> Self {
         Self {
@@ -103,83 +129,25 @@ where
     }
 
     fn run_dfs(self) -> Vec<S::Point> {
-        let TraversalBuilder {
-            sieve,
-            seeds,
-            dir,
-            strat: _,
-            max_depth,
-            early_stop,
-        } = self;
-        let seed_vec: Vec<S::Point> = seeds;
-        let mut seen: HashSet<S::Point> = HashSet::with_capacity(seed_vec.len().saturating_mul(2));
-        seen.extend(seed_vec.iter().copied());
-        let mut stack: Vec<(S::Point, u32)> = seed_vec.into_iter().map(|p| (p, 0)).collect();
-
-        while let Some((p, d)) = stack.pop() {
-            if let Some(f) = early_stop
-                && f(p)
-            {
-                break;
-            }
-            if max_depth.is_some_and(|md| d >= md) {
-                continue;
-            }
-            for q in step_neighbors(sieve, dir, p) {
-                if seen.insert(q) {
-                    stack.push((q, d + 1));
-                }
-            }
-        }
-        let mut out: Vec<_> = seen.into_iter().collect();
-        out.sort_unstable();
-        out
+        let opts = core::Opts {
+            dir: map_dir(self.dir),
+            strat: CoreStrategy::DFS,
+            max_depth: self.max_depth,
+            deterministic: true,
+            early_stop: self.early_stop,
+        };
+        core::traverse(&SieveNeigh { sieve: self.sieve }, self.seeds, opts)
     }
 
     fn run_bfs(self) -> Vec<S::Point> {
-        let TraversalBuilder {
-            sieve,
-            seeds,
-            dir,
-            strat: _,
-            max_depth,
-            early_stop,
-        } = self;
-        let seed_vec: Vec<S::Point> = seeds;
-        let mut seen: HashSet<S::Point> = HashSet::with_capacity(seed_vec.len().saturating_mul(2));
-        seen.extend(seed_vec.iter().copied());
-        let mut q: VecDeque<(S::Point, u32)> = seed_vec.into_iter().map(|p| (p, 0)).collect();
-
-        while let Some((p, d)) = q.pop_front() {
-            if let Some(f) = early_stop
-                && f(p)
-            {
-                break;
-            }
-            if max_depth.is_some_and(|md| d >= md) {
-                continue;
-            }
-            for qn in step_neighbors(sieve, dir, p) {
-                if seen.insert(qn) {
-                    q.push_back((qn, d + 1));
-                }
-            }
-        }
-        let mut out: Vec<_> = seen.into_iter().collect();
-        out.sort_unstable();
-        out
-    }
-}
-
-fn step_neighbors<'a, S: Sieve>(
-    sieve: &'a S,
-    dir: Dir,
-    p: S::Point,
-) -> Box<dyn Iterator<Item = S::Point> + 'a> {
-    match dir {
-        Dir::Down => Box::new(sieve.cone_points(p)),
-        Dir::Up => Box::new(sieve.support_points(p)),
-        Dir::Both => Box::new(sieve.cone_points(p).chain(sieve.support_points(p))),
+        let opts = core::Opts {
+            dir: map_dir(self.dir),
+            strat: CoreStrategy::BFS,
+            max_depth: self.max_depth,
+            deterministic: true,
+            early_stop: self.early_stop,
+        };
+        core::traverse(&SieveNeigh { sieve: self.sieve }, self.seeds, opts)
     }
 }
 

@@ -15,6 +15,7 @@
 //! - One `compute_strata` precomputation (cached in the Sieve) plus O(V + E).
 
 use super::traversal::{Dir, Strategy};
+use crate::algs::traversal_core as core;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::bounds::PointLike;
 use crate::topology::point::PointId;
@@ -25,28 +26,18 @@ use std::collections::{HashSet, VecDeque};
 
 pub type Point = PointId;
 
-/// Generic DFS over point-only neighbors.
-fn dfs_points<S, I, F>(sieve: &S, seeds: I, mut nbrs: F) -> Vec<Point>
-where
-    S: Sieve<Point = Point> + SieveRef,
-    I: IntoIterator<Item = Point>,
-    F: for<'a> FnMut(&'a S, Point) -> Box<dyn Iterator<Item = Point> + 'a>,
-{
-    let seed_vec: Vec<Point> = seeds.into_iter().collect();
-    let mut seen: HashSet<Point> = HashSet::with_capacity(seed_vec.len().saturating_mul(2));
-    seen.extend(seed_vec.iter().copied());
-    let mut stack: Vec<Point> = seed_vec;
+struct RefNeigh<'a, S: Sieve<Point = Point> + SieveRef> {
+    sieve: &'a S,
+}
 
-    while let Some(p) = stack.pop() {
-        for q in nbrs(sieve, p) {
-            if seen.insert(q) {
-                stack.push(q);
-            }
-        }
+impl<'a, S: Sieve<Point = Point> + SieveRef> core::Neigh<'a, Point> for RefNeigh<'a, S> {
+    type Iter = Box<dyn Iterator<Item = Point> + 'a>;
+    fn down(&'a self, p: Point) -> Self::Iter {
+        Box::new(SieveRef::cone_points(self.sieve, p))
     }
-    let mut out: Vec<Point> = seen.into_iter().collect();
-    out.sort_unstable();
-    out
+    fn up(&'a self, p: Point) -> Self::Iter {
+        Box::new(SieveRef::support_points(self.sieve, p))
+    }
 }
 
 /// Transitive closure using `cone_points()` (no payload clones).
@@ -60,7 +51,17 @@ where
     S: Sieve<Point = Point> + SieveRef,
     I: IntoIterator<Item = Point>,
 {
-    dfs_points(sieve, seeds, |s, p| Box::new(SieveRef::cone_points(s, p)))
+    core::traverse(
+        &RefNeigh { sieve },
+        seeds,
+        core::Opts {
+            dir: core::Dir::Down,
+            strat: core::Strategy::DFS,
+            max_depth: None,
+            deterministic: true,
+            early_stop: None,
+        },
+    )
 }
 
 /// Transitive star using `support_points()` (no payload clones).
@@ -74,9 +75,17 @@ where
     S: Sieve<Point = Point> + SieveRef,
     I: IntoIterator<Item = Point>,
 {
-    dfs_points(sieve, seeds, |s, p| {
-        Box::new(SieveRef::support_points(s, p))
-    })
+    core::traverse(
+        &RefNeigh { sieve },
+        seeds,
+        core::Opts {
+            dir: core::Dir::Up,
+            strat: core::Strategy::DFS,
+            max_depth: None,
+            deterministic: true,
+            early_stop: None,
+        },
+    )
 }
 
 /// BFS depth map using `cone_points()` (no payload clones).

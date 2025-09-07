@@ -3,7 +3,7 @@
 //! Used by `closure_completed(...)`.
 
 use crate::algs::communicator::{Communicator, Wait};
-use crate::algs::wire::{WIRE_VERSION, WireAdj, WireCount, WireHdr, WirePoint};
+use crate::algs::wire::{WIRE_VERSION, WireAdj, WireCount, WireHdr, WirePointRepr};
 use crate::mesh_error::MeshSieveError;
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
@@ -24,7 +24,8 @@ pub fn fetch_adjacency<C: Communicator>(
     comm: &C,
     base_tag: u16,
 ) -> Result<HashMap<PointId, Vec<PointId>>, MeshSieveError> {
-    use bytemuck::{Zeroable, cast_slice, cast_slice_mut};
+    use crate::algs::wire::{cast_slice, cast_slice_mut};
+    use bytemuck::Zeroable;
 
     // 0) Post receives for reply header + counts
     let mut recv_counts = Vec::new();
@@ -46,11 +47,11 @@ pub fn fetch_adjacency<C: Communicator>(
 
     // 1) Send requests (header + point list)
     let mut pending_sends = Vec::new();
-    let mut _keep_pts: Vec<Vec<WirePoint>> = Vec::new();
+    let mut _keep_pts: Vec<Vec<WirePointRepr>> = Vec::new();
     let mut _keep_hdrs: Vec<WireHdr> = Vec::new();
     let mut _keep_cnts: Vec<WireCount> = Vec::new();
     for (&rank, pts) in requests {
-        let body: Vec<WirePoint> = pts.iter().map(|p| WirePoint::of(p.get())).collect();
+        let body: Vec<WirePointRepr> = pts.iter().map(|p| WirePointRepr::of(p.get())).collect();
         let hdr = WireHdr::new(kind as u16);
         let cnt = WireCount::new(body.len());
         pending_sends.push(comm.isend(rank, base_tag, cast_slice(std::slice::from_ref(&hdr))));
@@ -152,7 +153,8 @@ pub fn fetch_adjacency<C: Communicator>(
 }
 
 use crate::algs::communicator::PollWait;
-use bytemuck::{Zeroable, cast_slice, cast_slice_mut};
+use crate::algs::wire::{cast_slice, cast_slice_mut};
+use bytemuck::Zeroable;
 
 enum Stage<C: Communicator> {
     WaitingHdr {
@@ -168,7 +170,7 @@ enum Stage<C: Communicator> {
         h: C::RecvHandle,
         hdr: WireHdr,
         cnt: WireCount,
-        pts: Vec<WirePoint>,
+        pts: Vec<WirePointRepr>,
     },
 }
 
@@ -255,7 +257,7 @@ where
                         if raw.len() == bytes.len() {
                             bytes.copy_from_slice(&raw);
                             let n = cnt.get();
-                            let mut pts = vec![WirePoint::zeroed(); n];
+                            let mut pts = vec![WirePointRepr::zeroed(); n];
                             let hp = self.comm.irecv(
                                 ps.peer,
                                 self.base_tag,
@@ -280,7 +282,7 @@ where
                 }
                 Stage::WaitingPts { h, hdr, cnt, pts } => {
                     if let Some(raw) = h.try_wait() {
-                        if raw.len() == cnt.get() * std::mem::size_of::<WirePoint>() {
+                        if raw.len() == cnt.get() * std::mem::size_of::<WirePointRepr>() {
                             cast_slice_mut(pts.as_mut_slice()).copy_from_slice(&raw);
                             let mut wires = Vec::<WireAdj>::new();
                             wires.reserve(cnt.get() * 4);
