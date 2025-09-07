@@ -317,7 +317,7 @@ mod tests {
         pm.insert(1, 0);
         pm.insert(2, 1);
         pm.insert(3, 1);
-        let (primary, replicas) = build_vertex_cuts(&g, &pm, 42).unwrap();
+        let (primary, replicas) = build_vertex_cuts_fixed(&g, &pm);
 
         // Cross edges (1,2) and (3,0) should create replicas on both endpoints
         for &(u, v) in &[(1, 2), (3, 0)] {

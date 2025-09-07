@@ -240,9 +240,11 @@ mod test_barrier {
 #[cfg(feature = "mpi-support")]
 mod mpi_backend {
     use super::*;
+    use mpi::collective::CommunicatorCollectives;
     use mpi::environment::Universe;
+    use mpi::point_to_point::{Destination, Source};
     use mpi::topology::{Communicator as _, SimpleCommunicator};
-    use mpi::traits::*;
+    use mpi::traits::Equivalence;
 
     pub struct MpiComm {
         _universe: Universe,
@@ -360,8 +362,6 @@ mod mpi_backend {
         }
     }
 
-    // re-export
-    pub use MpiComm;
 }
 
 #[cfg(feature = "mpi-support")]

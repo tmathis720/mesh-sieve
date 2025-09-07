@@ -3,7 +3,9 @@
 //! - RF: average number of parts each vertex appears in. If `P(v)` is the set of parts
 //!   containing vertex `v` (primary or replica), then
 //!
-//!       RF = (1 / |V|) * ∑_{v∈V} |P(v)|
+//! ```text
+//! RF = (1 / |V|) * ∑_{v∈V} |P(v)|
+//! ```
 //!
 //!   In unit tests we compute RF exactly from `(primary_owner, replicas)` returned by
 //!   `vertex_cut::build_vertex_cuts`. The debug/CI `RF(g, pm)` helper approximates RF
@@ -12,7 +14,9 @@
 //! - Load balance factor (LB): if `L_p` is the load of part `p` (default: sum of degrees
 //!   of vertices owned by `p`), then
 //!
-//!       LB = max_p L_p / (min_p L_p + ε)
+//! ```text
+//! LB = max_p L_p / (min_p L_p + ε)
+//! ```
 //!
 //!   We enforce `LB ≤ 1 + epsilon` in bin-packing; see `PartitionerConfig::epsilon`.
 //!
