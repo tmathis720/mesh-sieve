@@ -41,9 +41,12 @@ where
         has_owned = true;
         for (_dst, rem) in ovlp.cone(local(p)) {
             if rem.rank != my_rank {
+                let remote_pt = rem
+                    .remote_point
+                    .ok_or(MeshSieveError::OverlapLinkMissing(p, rem.rank))?;
                 out.entry(rem.rank)
                     .or_default()
-                    .push((p, rem.remote_point.expect("overlap unresolved")));
+                    .push((p, remote_pt));
             }
         }
     }
