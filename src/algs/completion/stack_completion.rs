@@ -6,23 +6,8 @@
 
 use std::collections::HashMap;
 use crate::algs::communicator::Wait;
+use crate::algs::wire::{WireCount, WireStackTriple, WIRE_PAYLOAD_MAX};
 use crate::topology::sieve::sieve_trait::Sieve;
-
-/// A tightly-packed triple of (base, cap, payload).
-///
-/// Used for efficient serialization of stack arrows.
-#[repr(C, packed)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct WireTriple<P, Q, Pay>
-where
-    P: Copy + bytemuck::Pod + bytemuck::Zeroable,
-    Q: Copy + bytemuck::Pod + bytemuck::Zeroable,
-    Pay: Copy + bytemuck::Pod + bytemuck::Zeroable,
-{
-    base: P,
-    cap:  Q,
-    pay:  Pay,
-}
 
 /// Trait for extracting rank from overlap payloads.
 pub trait HasRank {
@@ -72,6 +57,9 @@ where
     R: HasRank + Copy + Send + 'static,
 {
     const BASE_TAG: u16 = 0xC0DE;
+    assert!(std::mem::size_of::<P>() == 8);
+    assert!(std::mem::size_of::<Q>() == 8);
+    assert!(std::mem::size_of::<Pay>() <= WIRE_PAYLOAD_MAX);
     // 1. Find all neighbors (ranks) to communicate with
     let mut nb_links: HashMap<usize, Vec<(P, Q, Pay)>> = HashMap::new();
     // Only treat as owned if the base point has at least one non-default payload
@@ -103,68 +91,70 @@ where
     // 2. Exchange sizes (always post send/recv for all neighbors)
     let mut recv_size = HashMap::new();
     for &nbr in &all_neighbors {
-        let mut buf = [0u8; 4];
-        let h = comm.irecv(nbr, BASE_TAG, &mut buf);
-        recv_size.insert(nbr, (h, buf));
+        let mut cnt = WireCount::new(0);
+        let h = comm.irecv(nbr, BASE_TAG, bytemuck::cast_slice_mut(std::slice::from_mut(&mut cnt)));
+        recv_size.insert(nbr, (h, cnt));
     }
-    // --- keep each `to_le_bytes()` alive until we wait on its Request ---
     let mut pending_size_sends = Vec::with_capacity(all_neighbors.len());
     let mut size_send_bufs   = Vec::with_capacity(all_neighbors.len());
     for &nbr in &all_neighbors {
-        let count = nb_links.get(&nbr).map_or(0, |v| v.len()) as u32;
-        let buf   = count.to_le_bytes();              // stash
-        let h     = comm.isend(nbr, BASE_TAG, &buf);  // non‐blocking
+        let count = WireCount::new(nb_links.get(&nbr).map_or(0, |v| v.len()));
+        let h     = comm.isend(nbr, BASE_TAG, bytemuck::cast_slice(std::slice::from_ref(&count)));
         pending_size_sends.push(h);
-        size_send_bufs.push(buf);                      // keep it alive
+        size_send_bufs.push(count);
     }
     let mut sizes_in = HashMap::new();
-    for (nbr, (h, mut buf)) in recv_size {
+    for (nbr, (h, mut cnt)) in recv_size {
         let data = h.wait().ok_or_else(|| crate::mesh_error::CommError(format!("failed to receive size from rank {}", nbr)))?;
-        buf.copy_from_slice(&data);
-        sizes_in.insert(nbr, u32::from_le_bytes(buf) as usize);
+        let bytes = bytemuck::cast_slice_mut(std::slice::from_mut(&mut cnt));
+        bytes.copy_from_slice(&data);
+        sizes_in.insert(nbr, cnt.get());
     }
-    // now that everyone’s recv’d their count, we can finish our non-blocking sends
     for send_h in pending_size_sends {
         let _ = send_h.wait();
     }
-    // (and now `size_send_bufs` can go out of scope and free its buffers)
     // 3. Exchange data (always post send/recv for all neighbors)
-    use bytemuck::cast_slice;
-    use bytemuck::cast_slice_mut;
+    use bytemuck::{bytes_of, bytes_of_mut, cast_slice, cast_slice_mut, Zeroable};
     let mut recv_data = HashMap::new();
     for &nbr in &all_neighbors {
         let n_items = sizes_in.get(&nbr).copied().unwrap_or(0);
-        let mut buf = vec![WireTriple::<P, Q, Pay> { base: P::default(), cap: Q::default(), pay: Pay::default() }; n_items];
-        let h = comm.irecv(nbr, BASE_TAG + 1, cast_slice_mut(&mut buf));
+        let mut buf = vec![WireStackTriple::zeroed(); n_items];
+        let h = comm.irecv(nbr, BASE_TAG + 1, cast_slice_mut(buf.as_mut_slice()));
         recv_data.insert(nbr, (h, buf));
     }
-    // --- keep each `wire` Vec alive until its Request completes ---
     let mut pending_data_sends = Vec::with_capacity(all_neighbors.len());
     let mut data_send_bufs     = Vec::with_capacity(all_neighbors.len());
     for &nbr in &all_neighbors {
         let triples = nb_links.get(&nbr).map_or(&[][..], |v| &v[..]);
-        let wire: Vec<WireTriple<P, Q, Pay>> = triples.iter()
-            .map(|&(b, c, p)| WireTriple { base: b, cap: c, pay: p })
+        let wire: Vec<WireStackTriple> = triples
+            .iter()
+            .map(|&(b, c, p)| {
+                let base_u64: u64 = bytemuck::cast(b);
+                let cap_u64: u64 = bytemuck::cast(c);
+                WireStackTriple::new(base_u64, cap_u64, bytes_of(&p))
+            })
             .collect();
         let bytes = cast_slice(&wire);
         let h = comm.isend(nbr, BASE_TAG + 1, bytes);
         pending_data_sends.push(h);
-        data_send_bufs.push(wire);  // stash the Vec so it doesn't drop early
+        data_send_bufs.push(wire);
     }
     for (_nbr, (h, mut buf)) in recv_data {
         let raw = h.wait().ok_or_else(|| crate::mesh_error::CommError("failed to receive stack data".to_string()))?;
-        let buf_bytes = cast_slice_mut(&mut buf);
+        let buf_bytes = cast_slice_mut(buf.as_mut_slice());
         buf_bytes.copy_from_slice(&raw);
-        let incoming: &[WireTriple<P,Q,Pay>] = &buf;
-        for &WireTriple { base, cap, pay } in incoming {
+        for w in &buf {
+            let base: P = bytemuck::cast(w.base());
+            let cap: Q = bytemuck::cast(w.cap());
+            let mut pay = Pay::zeroed();
+            let pay_slice = bytes_of_mut(&mut pay);
+            pay_slice.copy_from_slice(&w.pay[..pay_slice.len()]);
             let _ = stack.add_arrow(base, cap, pay);
         }
     }
-    // now drain those data‐phase sends
     for send_h in pending_data_sends {
         let _ = send_h.wait();
     }
-    // (and now `data_send_bufs` can drop safely)
     Ok(())
 }
 

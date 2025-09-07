@@ -5,6 +5,7 @@
 //! and symmetric communication patterns.
 
 use crate::algs::communicator::Wait;
+use crate::algs::wire::WireCount;
 use crate::mesh_error::MeshSieveError;
 use std::collections::{HashMap, HashSet};
 
@@ -19,44 +20,44 @@ where
     C: crate::algs::communicator::Communicator + Sync,
 {
     // 1) post all receives (storing each buffer in our map)
-    let mut recv_size: HashMap<usize, (C::RecvHandle, [u8; 4])> = HashMap::new();
+    let mut recv_size: HashMap<usize, (C::RecvHandle, WireCount)> = HashMap::new();
     for &nbr in links.keys() {
-        let mut buf = [0u8; 4];
-        let h = comm.irecv(nbr, base_tag, &mut buf);
-        recv_size.insert(nbr, (h, buf));
+        let mut cnt = WireCount::new(0);
+        let h = comm.irecv(nbr, base_tag, bytemuck::cast_slice_mut(std::slice::from_mut(&mut cnt)));
+        recv_size.insert(nbr, (h, cnt));
     }
 
     // 2) post all sends
     let mut pending_sends = Vec::with_capacity(links.len());
     for (&nbr, items) in links.iter() {
-        let count = items.len() as u32;
-        let buf = count.to_le_bytes();
-        pending_sends.push(comm.isend(nbr, base_tag, &buf));
+        let count = WireCount::new(items.len());
+        pending_sends.push(comm.isend(nbr, base_tag, bytemuck::cast_slice(std::slice::from_ref(&count))));
     }
 
     // 3) wait for all recvs, collect counts (but do not early–return)
     let mut sizes_in = HashMap::new();
     let mut maybe_err = None;
-    for (nbr, (h, mut buf)) in recv_size {
+    for (nbr, (h, mut cnt)) in recv_size {
         if maybe_err.is_some() {
             break;
         }
         match h.wait() {
             Some(data) => {
-                if data.len() != buf.len() {
+                if data.len() != std::mem::size_of::<WireCount>() {
                     maybe_err = Some(MeshSieveError::CommError {
                         neighbor: nbr,
                         source: format!(
                             "expected {} bytes for size header, got {}",
-                            buf.len(),
+                            std::mem::size_of::<WireCount>(),
                             data.len()
                         )
                         .into(),
                     });
                     break;
                 }
-                buf.copy_from_slice(&data);
-                sizes_in.insert(nbr, u32::from_le_bytes(buf));
+                let bytes = bytemuck::cast_slice_mut(std::slice::from_mut(&mut cnt));
+                bytes.copy_from_slice(&data);
+                sizes_in.insert(nbr, cnt.get() as u32);
             }
             None => {
                 maybe_err = Some(MeshSieveError::CommError {
@@ -93,46 +94,46 @@ where
     C: crate::algs::communicator::Communicator + Sync,
 {
     // 1) post all receives
-    let mut recv_size: HashMap<usize, (C::RecvHandle, [u8; 4])> = HashMap::new();
+    let mut recv_size: HashMap<usize, (C::RecvHandle, WireCount)> = HashMap::new();
     for &nbr in all_neighbors {
-        let mut buf = [0u8; 4];
-        let h = comm.irecv(nbr, base_tag, &mut buf);
-        recv_size.insert(nbr, (h, buf));
+        let mut cnt = WireCount::new(0);
+        let h = comm.irecv(nbr, base_tag, bytemuck::cast_slice_mut(std::slice::from_mut(&mut cnt)));
+        recv_size.insert(nbr, (h, cnt));
     }
 
     // 2) post all sends and stash buffers so they're alive until sends complete
     let mut pending_sends = Vec::with_capacity(all_neighbors.len());
     let mut send_bufs = Vec::with_capacity(all_neighbors.len());
     for &nbr in all_neighbors {
-        let count = links.get(&nbr).map_or(0, |v| v.len()) as u32;
-        let buf = count.to_le_bytes();
-        pending_sends.push(comm.isend(nbr, base_tag, &buf));
-        send_bufs.push(buf);
+        let count = WireCount::new(links.get(&nbr).map_or(0, |v| v.len()));
+        pending_sends.push(comm.isend(nbr, base_tag, bytemuck::cast_slice(std::slice::from_ref(&count))));
+        send_bufs.push(count);
     }
 
     // 3) wait for all recvs, collect counts (but do not early–return)
     let mut sizes_in = HashMap::new();
     let mut maybe_err = None;
-    for (nbr, (h, mut buf)) in recv_size {
+    for (nbr, (h, mut cnt)) in recv_size {
         if maybe_err.is_some() {
             break;
         }
         match h.wait() {
             Some(data) => {
-                if data.len() != buf.len() {
+                if data.len() != std::mem::size_of::<WireCount>() {
                     maybe_err = Some(MeshSieveError::CommError {
                         neighbor: nbr,
                         source: format!(
                             "expected {} bytes for size header, got {}",
-                            buf.len(),
+                            std::mem::size_of::<WireCount>(),
                             data.len()
                         )
                         .into(),
                     });
                     break;
                 }
-                buf.copy_from_slice(&data);
-                sizes_in.insert(nbr, u32::from_le_bytes(buf));
+                let bytes = bytemuck::cast_slice_mut(std::slice::from_mut(&mut cnt));
+                bytes.copy_from_slice(&data);
+                sizes_in.insert(nbr, cnt.get() as u32);
             }
             None => {
                 maybe_err = Some(MeshSieveError::CommError {
