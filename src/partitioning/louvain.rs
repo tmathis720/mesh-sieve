@@ -1,3 +1,4 @@
+#![cfg(feature = "mpi-support")]
 //! Louvain-style clustering for distributed graph partitioning.
 //!
 //! ## Objective (Newman modularity with balance factor)

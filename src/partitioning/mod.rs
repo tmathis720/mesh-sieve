@@ -43,9 +43,7 @@ pub mod binpack;
 pub mod error;
 #[cfg(feature = "mpi-support")]
 pub mod graph_traits;
-#[cfg(feature = "mpi-support")]
 pub mod louvain;
-#[cfg(feature = "mpi-support")]
 pub mod metrics;
 #[cfg(feature = "mpi-support")]
 pub mod parallel;
@@ -54,7 +52,6 @@ pub mod seed_select;
 #[cfg(feature = "mpi-support")]
 pub mod vertex_cut;
 
-#[cfg(feature = "mpi-support")]
 pub use self::metrics::*;
 
 #[cfg(feature = "mpi-support")]
