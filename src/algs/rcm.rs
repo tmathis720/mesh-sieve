@@ -8,6 +8,18 @@ use crate::algs::communicator::Communicator;
 use crate::prelude::Sieve;
 use std::collections::HashMap;
 
+/// Which neighbor relation to use for RCM.
+/// `Undirected` = union(cone, support), unique and sorted (deterministic).
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum RcmAdjacency {
+    /// Only outgoing arrows (cone).
+    Down,
+    /// Only incoming arrows (support).
+    Up,
+    /// Union of outgoing and incoming arrows.
+    Undirected,
+}
+
 /// Compute a distributed‐RCM ordering of the point‐graph in `sieve`.
 /// Returns a Vec<Point> of length = number of points, giving the new 0‐based labels.
 ///
@@ -24,61 +36,130 @@ use std::collections::HashMap;
 /// ```text
 /// // See examples/distributed_rcm.rs for usage.
 /// ```
-pub fn distributed_rcm<S, C>(
+/// Back-compatible default: undirected adjacency (cone ∪ support).
+pub fn distributed_rcm<S, C>(sieve: &S, comm: &C) -> Vec<<S as Sieve>::Point>
+where
+    S: Sieve,
+    <S as Sieve>::Point: Ord,
+    C: Communicator,
+{
+    distributed_rcm_with(sieve, comm, RcmAdjacency::Undirected)
+}
+
+/// Explicit-adjacency variant of RCM.
+pub fn distributed_rcm_with<S, C>(
     sieve: &S,
     comm: &C,
+    adj: RcmAdjacency,
 ) -> Vec<<S as Sieve>::Point>
 where
     S: Sieve,
     <S as Sieve>::Point: Ord,
     C: Communicator,
 {
-    let prims = RcmPrims::new(sieve, comm);
+    let prims = RcmPrims::new_with(sieve, comm, adj);
+    run_rcm(prims)
+}
+
+fn run_rcm<S, C>(prims: RcmPrims<S, C>) -> Vec<<S as Sieve>::Point>
+where
+    S: Sieve,
+    <S as Sieve>::Point: Ord,
+    C: Communicator,
+{
     let n = prims.idx_to_point.len();
     if n == 0 {
         return Vec::new();
     }
-    // 1. Find pseudo-peripheral root
+
+    // 1. Pseudo-peripheral root
     let root_idx = find_pseudo_peripheral_root(&prims);
-    // 2. RCM proper (Algorithm 3)
+
+    // 2. RCM BFS
     let mut labels = vec![-1isize; n];
-    labels[root_idx] = 0;
-    let mut nv = 1isize;
-    let mut frontier = vec![root_idx];
     let mut visited = vec![false; n];
+    let mut frontier = vec![root_idx];
     visited[root_idx] = true;
+    labels[root_idx] = 0;
+    let mut next_label: isize = 1;
+
     while !frontier.is_empty() {
-        // a. SET current frontier labels
-        for &v in &frontier {
-            labels[v] = nv;
+        let mut next_pairs = Vec::new();
+        for &u in &frontier {
+            let parent_label = labels[u];
+            for &v in &prims.adj[u] {
+                if !visited[v] {
+                    next_pairs.push((v, parent_label));
+                }
+            }
         }
-        nv += frontier.len() as isize;
-        // b. SPMSPV: get (v, parent_label) for all unvisited neighbors
-        let mut next_pairs = prims.spmspv(&frontier, &labels, &visited);
-        // c. Remove already visited
-        next_pairs.retain(|&(v, _)| labels[v] == -1);
-        // d. REDUCE: min label for each v
-        let reduced = RcmPrims::<S, C>::reduce_min_label(&next_pairs);
-        // e. SORTPERM: sort by (parent_label, degree, v)
-        let triples: Vec<(isize, usize, usize)> = reduced
-            .iter()
-            .map(|(&v, &label)| (label, prims.degree[v], v))
+
+        // Reduce to smallest parent label per vertex
+        next_pairs.sort_unstable_by_key(|&(v, lbl)| (v, lbl));
+        next_pairs.dedup_by_key(|pair| pair.0);
+
+        // Order by (parent_label, degree, vertex)
+        let mut triples: Vec<(isize, usize, usize)> = next_pairs
+            .into_iter()
+            .map(|(v, lbl)| (lbl, prims.degree[v], v))
             .collect();
-        let ordered_vs = RcmPrims::<S, C>::sortperm(&triples);
-        // f. Mark as visited and set labels
+        triples.sort_unstable();
+        let ordered_vs: Vec<usize> = triples.into_iter().map(|t| t.2).collect();
+
         for &v in &ordered_vs {
             visited[v] = true;
+            labels[v] = next_label;
+            next_label += 1;
         }
+
         frontier = ordered_vs;
     }
-    // 3. Return points in reverse label order
+
+    debug_validate_labels_contiguous(&labels);
+
+    // Reverse by label
     let mut label_point: Vec<(isize, <S as Sieve>::Point)> = labels
         .iter()
         .enumerate()
         .map(|(i, &l)| (l, prims.idx_to_point[i]))
         .collect();
     label_point.sort_by_key(|&(l, _)| -l);
-    label_point.iter().map(|&(_, p)| p).collect()
+    let perm: Vec<_> = label_point.into_iter().map(|(_, p)| p).collect();
+
+    debug_validate_permutation(&prims.idx_to_point, &perm);
+
+    perm
+}
+
+#[inline]
+fn debug_validate_labels_contiguous(labels: &[isize]) {
+    #[cfg(any(debug_assertions, feature = "check-rcm"))]
+    {
+        let n = labels.len();
+        let mut seen = vec![false; n];
+        for &l in labels {
+            assert!(l >= 0 && (l as usize) < n, "RCM: non-contiguous or out-of-range label {l}");
+            let i = l as usize;
+            assert!(!seen[i], "RCM: duplicate label {i}");
+            seen[i] = true;
+        }
+        assert!(seen.into_iter().all(|b| b), "RCM: not all labels set");
+    }
+}
+
+#[inline]
+fn debug_validate_permutation<P: Eq + Copy + std::hash::Hash + std::fmt::Debug>(
+    universe: &[P],
+    perm: &[P],
+) {
+    #[cfg(any(debug_assertions, feature = "check-rcm"))]
+    {
+        use std::collections::HashSet;
+        assert_eq!(perm.len(), universe.len(), "RCM: perm length mismatch");
+        let a: HashSet<_> = universe.iter().copied().collect();
+        let b: HashSet<_> = perm.iter().copied().collect();
+        assert_eq!(a, b, "RCM: perm is not a reordering of base points");
+    }
 }
 
 /// Primitives and mappings for distributed RCM computation.
@@ -89,8 +170,12 @@ pub struct RcmPrims<'a, S: Sieve, C: Communicator> {
     pub point_to_idx: HashMap<<S as Sieve>::Point, usize>,
     /// Map from local vertex index to Point
     pub idx_to_point: Vec<<S as Sieve>::Point>,
-    /// Degree vector: degree[i] = out-degree of vertex i
+    /// Degree vector: degree[i] = adj[i].len()
     pub degree: Vec<usize>,
+    /// Adjacency list by local index, sorted and deduplicated
+    pub adj: Vec<Vec<usize>>,
+    /// Mode used to build adjacency
+    pub mode: RcmAdjacency,
 }
 
 impl<'a, S, C> RcmPrims<'a, S, C>
@@ -101,80 +186,58 @@ where
 {
     /// Build RcmPrims from a Sieve and Communicator
     pub fn new(sieve: &'a S, comm: &'a C) -> Self {
-        // Collect all base points (vertices)
+        Self::new_with(sieve, comm, RcmAdjacency::Undirected)
+    }
+
+    pub fn new_with(sieve: &'a S, comm: &'a C, mode: RcmAdjacency) -> Self {
+        // 1) collect base points and maps
         let all_points: Vec<<S as Sieve>::Point> = sieve.base_points().collect();
         let n = all_points.len();
-        // Map Point <-> idx
+
         let mut point_to_idx = HashMap::with_capacity(n);
         let mut idx_to_point = Vec::with_capacity(n);
         for (i, p) in all_points.iter().enumerate() {
             point_to_idx.insert(*p, i);
             idx_to_point.push(*p);
         }
-        // Build degree vector
-        let mut degree = vec![0; n];
-        for (i, p) in all_points.iter().enumerate() {
-            degree[i] = sieve.cone(*p).count();
-        }
-        Self {
-            sieve,
-            comm,
-            point_to_idx,
-            idx_to_point,
-            degree,
-        }
-    }
 
-    /// IND: Identity mapping (frontier is Vec<usize> of vertex indices)
-    pub fn ind(frontier: &[usize]) -> Vec<usize> {
-        frontier.to_vec()
-    }
+        // 2) build adjacency according to mode
+        let mut adj = vec![Vec::<usize>::new(); n];
+        for (i, &p) in idx_to_point.iter().enumerate() {
+            let mut nbr_pts: Vec<<S as Sieve>::Point> = match mode {
+                RcmAdjacency::Down => sieve.cone_points(p).collect(),
+                RcmAdjacency::Up => sieve.support_points(p).collect(),
+                RcmAdjacency::Undirected => {
+                    let mut v: Vec<_> = sieve.cone_points(p).collect();
+                    v.extend(sieve.support_points(p));
+                    v
+                }
+            };
 
-    /// SELECT: Filter a frontier by a predicate and visited set
-    pub fn select(f: &[usize], visited: &[bool], cond: impl Fn(usize) -> bool) -> Vec<usize> {
-        f.iter().copied().filter(|&v| !visited[v] && cond(v)).collect()
-    }
+            nbr_pts.retain(|&q| q != p);
+            nbr_pts.sort_unstable();
+            nbr_pts.dedup();
 
-    /// SET: Set labels for a dense label vector
-    pub fn set_labels(labels: &mut [isize], indices: &[usize], value: isize) {
-        for &v in indices {
-            labels[v] = value;
-        }
-    }
-
-    /// SPMSPV: Given a frontier, find all unvisited neighbors and their parent labels
-    /// (local part; distributed part to be handled in full algorithm)
-    pub fn spmspv(&self, frontier: &[usize], labels: &[isize], visited: &[bool]) -> Vec<(usize, isize)> {
-        let mut out = Vec::new();
-        for &u in frontier {
-            let point = self.idx_to_point[u];
-            for (v_point, _) in self.sieve.cone(point) {
-                if let Some(&v) = self.point_to_idx.get(&v_point) {
-                    if !visited[v] {
-                        out.push((v, labels[u]));
-                    }
+            let mut nbr_idx = Vec::with_capacity(nbr_pts.len());
+            for q in nbr_pts {
+                if let Some(&j) = point_to_idx.get(&q) {
+                    nbr_idx.push(j);
                 }
             }
+            nbr_idx.sort_unstable();
+            adj[i] = nbr_idx;
         }
-        // In distributed: AllGather/AlltoAll and min-reduce by v
-        out
+
+        let degree = adj.iter().map(|v| v.len()).collect();
+
+        Self { sieve, comm, point_to_idx, idx_to_point, degree, adj, mode }
     }
 
-    /// REDUCE: Reduce (v, label) pairs by v -> min(label)
-    pub fn reduce_min_label(pairs: &[(usize, isize)]) -> HashMap<usize, isize> {
-        let mut map: HashMap<usize, isize> = HashMap::new();
-        for &(v, label) in pairs {
-            map.entry(v).and_modify(|l: &mut isize| *l = (*l).min(label)).or_insert(label);
-        }
-        map
+    #[inline]
+    pub fn neighbors_idx(&self, u: usize) -> &[usize] {
+        &self.adj[u]
     }
 
-    /// SORTPERM: Sort (label, degree, v) triples and return ordered vertex indices
-    pub fn sortperm(triples: &[(isize, usize, usize)]) -> Vec<usize> {
-        let mut sorted = triples.to_vec();
-        sorted.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
-        sorted.into_iter().map(|t| t.2).collect()
-    }
 }
 
 /// Find a pseudo-peripheral root vertex using Algorithm 2 (Azad et al.).
@@ -185,34 +248,34 @@ where
     C: Communicator,
 {
     let n = prims.idx_to_point.len();
-    let mut visited = vec![false; n];
-    // Pick an arbitrary start vertex (first base point)
-    let mut r = 0;
-    let mut last_lvl = 0;
+    if n == 0 { return 0; }
+    let mut r = 0usize;
+    let mut last_lvl = 0usize;
     loop {
-        // Level structure via BFS
-        let mut level = vec![vec![r]];
-        visited.fill(false);
-        visited[r] = true;
-        while !level.last().unwrap().is_empty() {
+        let mut level: Vec<Vec<usize>> = vec![vec![r]];
+        let mut seen = vec![false; n];
+        seen[r] = true;
+
+        while let Some(curr) = level.last() {
+            if curr.is_empty() { break; }
             let mut next = Vec::new();
-            for &u in level.last().unwrap() {
-                for (v_point, _) in prims.sieve.cone(prims.idx_to_point[u]) {
-                    if let Some(&v) = prims.point_to_idx.get(&v_point) {
-                        if !visited[v] {
-                            visited[v] = true;
-                            next.push(v);
-                        }
+            for &u in curr {
+                for &v in &prims.adj[u] {
+                    if !seen[v] {
+                        seen[v] = true;
+                        next.push(v);
                     }
                 }
             }
             if next.is_empty() { break; }
+            next.sort_unstable();
+            next.dedup();
             level.push(next);
         }
+
         let lvl = level.len();
-        // From last level, pick vertex of minimum degree
-        let last_level = &level[lvl - 1];
-        let &r_prime = last_level.iter().min_by_key(|&&v| prims.degree[v]).unwrap_or(&r);
+        let last_layer = &level[lvl - 1];
+        let &r_prime = last_layer.iter().min_by_key(|&&v| prims.degree[v]).unwrap_or(&r);
         if lvl <= last_lvl { break; }
         last_lvl = lvl;
         r = r_prime;
@@ -225,12 +288,12 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
-    // Minimal mock Sieve for testing: undirected graph as adjacency list
     use crate::topology::cache::InvalidateCache;
 
     #[derive(Debug, Default)]
     struct MockSieve {
-        adj: Vec<HashSet<usize>>,
+        cone_adj: Vec<HashSet<usize>>,
+        support_adj: Vec<HashSet<usize>>,
     }
 
     impl InvalidateCache for MockSieve {
@@ -244,27 +307,25 @@ mod tests {
         type SupportIter<'a> = Box<dyn Iterator<Item = (Self::Point, Self::Payload)> + 'a>;
 
         fn base_points(&self) -> Box<dyn Iterator<Item = Self::Point> + '_> {
-            Box::new(0..self.adj.len())
+            Box::new(0..self.cone_adj.len())
         }
         fn cone<'a>(&'a self, p: Self::Point) -> Self::ConeIter<'a> {
-            Box::new(self.adj[p].iter().map(move |&q| (q, ())))
+            Box::new(self.cone_adj[p].iter().map(move |&q| (q, ())))
         }
-        fn support<'a>(&'a self, _p: Self::Point) -> Self::SupportIter<'a> {
-            // For undirected mock, support is the same as cone
-            Box::new(std::iter::empty())
+        fn support<'a>(&'a self, p: Self::Point) -> Self::SupportIter<'a> {
+            Box::new(self.support_adj[p].iter().map(move |&q| (q, ())))
         }
         fn add_arrow(&mut self, src: Self::Point, dst: Self::Point, _payload: Self::Payload) {
-            self.adj[src].insert(dst);
+            self.cone_adj[src].insert(dst);
+            self.support_adj[dst].insert(src);
         }
         fn remove_arrow(&mut self, src: Self::Point, dst: Self::Point) -> Option<Self::Payload> {
-            if self.adj[src].remove(&dst) {
-                Some(())
-            } else {
-                None
-            }
+            let removed = self.cone_adj[src].remove(&dst);
+            self.support_adj[dst].remove(&src);
+            if removed { Some(()) } else { None }
         }
         fn cap_points(&self) -> Box<dyn Iterator<Item = Self::Point> + '_> {
-            Box::new(0..self.adj.len())
+            Box::new(0..self.support_adj.len())
         }
     }
 
@@ -290,16 +351,15 @@ mod tests {
     }
 
     fn make_line_graph(n: usize) -> MockSieve {
-        let mut adj = vec![HashSet::new(); n];
-        for i in 0..n {
-            if i > 0 {
-                adj[i].insert(i - 1);
-            }
-            if i + 1 < n {
-                adj[i].insert(i + 1);
-            }
+        let mut s = MockSieve {
+            cone_adj: vec![HashSet::new(); n],
+            support_adj: vec![HashSet::new(); n],
+        };
+        for i in 0..n - 1 {
+            s.add_arrow(i, i + 1, ());
+            s.add_arrow(i + 1, i, ());
         }
-        MockSieve { adj }
+        s
     }
 
     #[test]
@@ -316,7 +376,7 @@ mod tests {
 
     #[test]
     fn test_rcm_empty_graph() {
-        let sieve = MockSieve { adj: vec![] };
+        let sieve = MockSieve { cone_adj: vec![], support_adj: vec![] };
         let comm = NoComm;
         let order = distributed_rcm(&sieve, &comm);
         assert!(order.is_empty());
@@ -335,16 +395,51 @@ mod tests {
     #[test]
     fn test_rcm_star_graph() {
         // Star: 0 connected to 1,2,3,4
-        let mut adj = vec![HashSet::new(); 5];
+        let mut s = MockSieve { cone_adj: vec![HashSet::new(); 5], support_adj: vec![HashSet::new(); 5] };
         for i in 1..5 {
-            adj[0].insert(i);
-            adj[i].insert(0);
+            s.add_arrow(0, i, ());
+            s.add_arrow(i, 0, ());
         }
-        let sieve = MockSieve { adj };
+        let sieve = s;
         let comm = NoComm;
         let order = distributed_rcm(&sieve, &comm);
         let mut sorted = order.clone();
         sorted.sort();
         assert_eq!(sorted, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn rcm_default_is_undirected() {
+        // Directed edges 0->1, 2->1 to exercise support edges
+        let mut s = MockSieve { cone_adj: vec![HashSet::new(); 3], support_adj: vec![HashSet::new(); 3] };
+        s.add_arrow(0, 1, ());
+        s.add_arrow(2, 1, ());
+        let comm = NoComm;
+        let def = distributed_rcm(&s, &comm);
+        let und = distributed_rcm_with(&s, &comm, RcmAdjacency::Undirected);
+        assert_eq!(def, und);
+    }
+
+    #[test]
+    fn rcm_labels_contiguous() {
+        let sieve = make_line_graph(4);
+        let comm = NoComm;
+        let perm = distributed_rcm(&sieve, &comm);
+        let mut set = HashSet::new();
+        for p in &perm {
+            set.insert(*p);
+        }
+        assert_eq!(set.len(), sieve.base_points().count());
+    }
+
+    #[test]
+    fn rcm_explicit_modes_match_expectations() {
+        let sieve = make_line_graph(5);
+        let comm = NoComm;
+        let und = distributed_rcm_with(&sieve, &comm, RcmAdjacency::Undirected);
+        let dn = distributed_rcm_with(&sieve, &comm, RcmAdjacency::Down);
+        let up = distributed_rcm_with(&sieve, &comm, RcmAdjacency::Up);
+        assert_eq!(und.len(), dn.len());
+        assert_eq!(und.len(), up.len());
     }
 }
