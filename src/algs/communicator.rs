@@ -349,11 +349,11 @@ mod test_barrier {
 #[cfg(feature = "mpi-support")]
 mod mpi_backend {
     use super::*;
+    use core::ptr::NonNull;
     use mpi::collective::CommunicatorCollectives;
     use mpi::environment::Universe;
     use mpi::point_to_point::{Destination, Source};
     use mpi::topology::{Communicator as _, SimpleCommunicator};
-    use mpi::traits::Equivalence;
 
     pub struct MpiComm {
         _universe: Universe,
@@ -395,7 +395,7 @@ mod mpi_backend {
                 .immediate_send_with_tag(StaticScope, slice, tag as i32);
             MpiSendHandle {
                 req: Some(req),
-                buf: raw,
+                buf: Some(unsafe { NonNull::new_unchecked(raw) }),
             }
         }
 
@@ -411,7 +411,7 @@ mod mpi_backend {
                 .immediate_receive_into_with_tag(StaticScope, slice_mut, tag as i32);
             MpiRecvHandle {
                 req: Some(req),
-                buf: raw,
+                buf: Some(unsafe { NonNull::new_unchecked(raw) }),
                 len,
             }
         }
@@ -429,18 +429,17 @@ mod mpi_backend {
 
     pub struct MpiSendHandle {
         req: Option<mpi::request::Request<'static, [u8], mpi::request::StaticScope>>,
-        buf: *mut [u8],
+        buf: Option<NonNull<[u8]>>,
     }
     impl Wait for MpiSendHandle {
         fn wait(mut self) -> Option<Vec<u8>> {
             if let Some(r) = self.req.take() {
                 let _ = r.wait();
             }
-            if !self.buf.is_null() {
+            if let Some(ptr) = self.buf.take() {
                 unsafe {
-                    drop(Box::from_raw(self.buf));
+                    drop(Box::from_raw(ptr.as_ptr()));
                 }
-                self.buf = core::ptr::null_mut();
             }
             None
         }
@@ -452,9 +451,9 @@ mod mpi_backend {
                 #[cfg(debug_assertions)]
                 eprintln!("[MpiSendHandle::drop] send not explicitly waited");
             }
-            if !self.buf.is_null() {
+            if let Some(ptr) = self.buf.take() {
                 unsafe {
-                    drop(Box::from_raw(self.buf));
+                    drop(Box::from_raw(ptr.as_ptr()));
                 }
             }
         }
@@ -462,7 +461,7 @@ mod mpi_backend {
 
     pub struct MpiRecvHandle {
         req: Option<mpi::request::Request<'static, [u8], mpi::request::StaticScope>>,
-        buf: *mut [u8],
+        buf: Option<NonNull<[u8]>>,
         len: usize,
     }
     impl Wait for MpiRecvHandle {
@@ -470,10 +469,10 @@ mod mpi_backend {
             if let Some(r) = self.req.take() {
                 let _ = r.wait();
             }
-            let boxed: Box<[u8]> = unsafe { Box::from_raw(self.buf) };
+            let ptr = self.buf.take().expect("buffer missing");
+            let boxed: Box<[u8]> = unsafe { Box::from_raw(ptr.as_ptr()) };
             let mut v = Vec::from(boxed);
             v.truncate(self.len);
-            self.buf = core::ptr::null_mut();
             Some(v)
         }
     }
@@ -484,9 +483,9 @@ mod mpi_backend {
                 #[cfg(debug_assertions)]
                 eprintln!("[MpiRecvHandle::drop] recv not explicitly waited");
             }
-            if !self.buf.is_null() {
+            if let Some(ptr) = self.buf.take() {
                 unsafe {
-                    drop(Box::from_raw(self.buf));
+                    drop(Box::from_raw(ptr.as_ptr()));
                 }
             }
         }
