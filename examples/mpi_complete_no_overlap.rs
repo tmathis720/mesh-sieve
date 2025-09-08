@@ -38,7 +38,7 @@ fn main() {
     }
     let mut ovlp = Overlap::default();
     let delta = CopyDelta;
-    complete_section(&mut sec, &mut ovlp, &comm, &delta, rank, size);
+    complete_section(&mut sec, &mut ovlp, &comm, rank);
     if rank == 2 {
         match sec.try_restrict(PointId::new(2).unwrap()) {
             Ok(values) => assert_eq!(values[0], 42),

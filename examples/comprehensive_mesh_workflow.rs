@@ -487,7 +487,7 @@ fn test_distributed_completion(
 
         // Test section completion
         let delta = CopyDelta;
-        if let Err(e) = complete_section(&mut section, &mut overlap, comm, &delta, rank, size) {
+        if let Err(e) = complete_section(&mut section, &mut overlap, comm, rank) {
             println!("[rank {}] Section completion failed: {:?}", rank, e);
         } else {
             println!("[rank {}] Section completion succeeded", rank);
