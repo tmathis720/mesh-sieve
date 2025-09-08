@@ -56,7 +56,6 @@ where
 }
 
 /// Optional zero-clone variant for backends that implement `SieveRef`.
-#[cfg(feature = "sieve_ref_fast_dag")]
 pub fn check_dag_ref<S>(s: &S) -> Result<(), MeshSieveError>
 where
     S: Sieve + crate::topology::sieve::SieveRef,

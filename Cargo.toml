@@ -51,7 +51,6 @@ default = []            # keep core lean
 mpi-support = ["dep:mpi", "rayon", "dep:rand", "dep:ahash"]
 mpi-derive = ["mpi/derive"]
 metis-support = ["metis", "metis-sys", "libffi-sys","bindgen","pkg-config"]
-sieve_ref_fast_dag = []
 strict-invariants = []
 check-invariants = []
 check-empty-part = []

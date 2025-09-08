@@ -43,7 +43,6 @@ fn check_dag_oriented_backend() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[cfg(feature = "sieve_ref_fast_dag")]
 #[test]
 fn check_dag_ref_accepts_simple_dag() -> Result<(), Box<dyn std::error::Error>> {
     use crate::topology::utils::check_dag_ref;
