@@ -212,7 +212,6 @@ pub mod onizuka_partitioning {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rayon::prelude::*;
 
     #[test]
     fn tls_rng_initialized_on_all_workers() {

@@ -7,7 +7,7 @@ use std::hash::{Hash, Hasher};
 
 use crate::partitioning::graph_traits::PartitionableGraph;
 use crate::partitioning::metrics::edge_cut;
-use crate::partitioning::{PartitionMap, PartitionerConfig, PartitionerError, partition};
+use crate::partitioning::{PartitionMap, PartitionerConfig, partition};
 
 #[test]
 fn e2e_cycle_4_nodes_k2() {
