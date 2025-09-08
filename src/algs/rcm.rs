@@ -133,7 +133,7 @@ where
 
 #[inline]
 fn debug_validate_labels_contiguous(labels: &[isize]) {
-    #[cfg(any(debug_assertions, feature = "check-rcm"))]
+    #[cfg(any(debug_assertions))]
     {
         let n = labels.len();
         let mut seen = vec![false; n];
@@ -155,7 +155,7 @@ fn debug_validate_permutation<P: Eq + Copy + std::hash::Hash + std::fmt::Debug>(
     universe: &[P],
     perm: &[P],
 ) {
-    #[cfg(any(debug_assertions, feature = "check-rcm"))]
+    #[cfg(any(debug_assertions))]
     {
         use std::collections::HashSet;
         assert_eq!(perm.len(), universe.len(), "RCM: perm length mismatch");
