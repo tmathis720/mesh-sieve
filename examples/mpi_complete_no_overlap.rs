@@ -37,8 +37,8 @@ fn main() {
             .expect("Failed to set section value");
     }
     let mut ovlp = Overlap::default();
-    let delta = CopyDelta;
-    complete_section(&mut sec, &mut ovlp, &comm, rank);
+    complete_section::<u32, CopyDelta, MpiComm>(&mut sec, &ovlp, &comm, rank)
+        .expect("section completion failed");
     if rank == 2 {
         match sec.try_restrict(PointId::new(2).unwrap()) {
             Ok(values) => assert_eq!(values[0], 42),
