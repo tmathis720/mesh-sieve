@@ -40,8 +40,12 @@ fn main() {
         }
     }
     impl mesh_sieve::algs::completion::stack_completion::WirePoint for PodU64 {
-        fn to_wire(self) -> u64 { self.0 }
-        fn from_wire(w: u64) -> Self { PodU64(w) }
+        fn to_wire(self) -> u64 {
+            self.0
+        }
+        fn from_wire(w: u64) -> Self {
+            PodU64(w)
+        }
     }
     let comm = MpiComm::default();
     let world = &comm.world;

@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use crate::algs::wire::{cast_slice, cast_slice_mut, WirePoint};
+use crate::algs::wire::{WirePoint, cast_slice, cast_slice_mut};
 use bytemuck::{Pod, Zeroable};
 
 use crate::algs::communicator::{CommTag, StackCommTags, Wait};
@@ -29,7 +29,6 @@ impl HasRank for crate::overlap::overlap::Remote {
     }
 }
 
-
 /// Fixed width `(base, cap, payload)` triple used on the wire.
 #[repr(C)]
 #[derive(Copy, Clone, Zeroable)]
@@ -44,7 +43,11 @@ where
 
 impl<Pay: Copy + Pod + Zeroable> WireTriple64<Pay> {
     fn new(base: u64, cap: u64, pay: Pay) -> Self {
-        Self { base_le: base.to_le(), cap_le: cap.to_le(), pay }
+        Self {
+            base_le: base.to_le(),
+            cap_le: cap.to_le(),
+            pay,
+        }
     }
 }
 
@@ -152,9 +155,7 @@ where
     let mut maybe_err: Option<MeshSieveError> = None;
     for (nbr, h, mut buf) in recv_data {
         match h.wait() {
-            Some(raw)
-                if raw.len() == buf.len() * std::mem::size_of::<WireTriple64<Pay>>() =>
-            {
+            Some(raw) if raw.len() == buf.len() * std::mem::size_of::<WireTriple64<Pay>>() => {
                 if maybe_err.is_none() {
                     cast_slice_mut(&mut buf).copy_from_slice(&raw);
                     for w in &buf {
@@ -189,7 +190,11 @@ where
         let _ = s.wait();
     }
 
-    if let Some(e) = maybe_err { Err(e) } else { Ok(()) }
+    if let Some(e) = maybe_err {
+        Err(e)
+    } else {
+        Ok(())
+    }
 }
 
 /// Convenience wrapper using a legacy default base tag (0xC0DE).
@@ -210,13 +215,5 @@ where
     R: HasRank + Copy + Send + 'static,
 {
     let tags = StackCommTags::from_base(CommTag::new(0xC0DE));
-    complete_stack_with_tags::<P, Q, Pay, C, S, O, R>(
-        stack,
-        overlap,
-        comm,
-        my_rank,
-        n_ranks,
-        tags,
-    )
+    complete_stack_with_tags::<P, Q, Pay, C, S, O, R>(stack, overlap, comm, my_rank, n_ranks, tags)
 }
-

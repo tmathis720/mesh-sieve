@@ -14,7 +14,7 @@
 //! ## Complexity (ordered)
 //! - One `compute_strata` precomputation (cached in the Sieve) plus O(V + E).
 
-use crate::algs::traversal_core::{self as core, Neigh, Dir as CoreDir, Strategy as CoreStrategy};
+use crate::algs::traversal_core::{self as core, Dir as CoreDir, Neigh, Strategy as CoreStrategy};
 use crate::mesh_error::MeshSieveError;
 use crate::overlap::overlap::{Overlap, local};
 use crate::topology::bounds::PointLike;

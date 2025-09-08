@@ -1,5 +1,5 @@
 use mesh_sieve::algs::communicator::CommTag;
-use mesh_sieve::algs::wire::{expect_exact_len, WirePoint};
+use mesh_sieve::algs::wire::{WirePoint, expect_exact_len};
 use mesh_sieve::topology::point::PointId;
 
 #[test]
@@ -21,6 +21,6 @@ fn wirepoint_roundtrip() {
 
 #[test]
 fn expect_exact_len_err() {
-    assert!(expect_exact_len(3,4).is_err());
-    assert!(expect_exact_len(4,4).is_ok());
+    assert!(expect_exact_len(3, 4).is_err());
+    assert!(expect_exact_len(4, 4).is_ok());
 }

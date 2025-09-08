@@ -20,7 +20,11 @@ pub fn cast_slice_from_mut<T: Pod>(v: &mut [u8]) -> &mut [T] {
 }
 
 pub fn expect_exact_len(actual: usize, expected: usize) -> Result<(), String> {
-    if actual == expected { Ok(()) } else { Err(format!("expected {} bytes, got {}", expected, actual)) }
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(format!("expected {expected} bytes, got {actual}"))
+    }
 }
 
 #[repr(transparent)]
@@ -221,7 +225,9 @@ const _: () = {
 
 impl WirePoint for crate::topology::point::PointId {
     #[inline]
-    fn to_wire(self) -> u64 { self.get() }
+    fn to_wire(self) -> u64 {
+        self.get()
+    }
     #[inline]
     fn from_wire(w: u64) -> Self {
         crate::topology::point::PointId::new(w).expect("invalid PointId on wire")

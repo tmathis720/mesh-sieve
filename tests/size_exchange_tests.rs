@@ -1,9 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use mesh_sieve::algs::communicator::{CommTag, Communicator, NoComm, RayonComm, Wait};
-use mesh_sieve::algs::completion::size_exchange::{
-    exchange_sizes, exchange_sizes_symmetric,
-};
+use mesh_sieve::algs::completion::size_exchange::{exchange_sizes, exchange_sizes_symmetric};
 
 #[test]
 fn zero_neighbors_asymmetric() {
@@ -55,4 +53,3 @@ fn commtag_round_trip() {
     let tag = CommTag::new(val);
     assert_eq!(tag.as_u16(), val);
 }
-

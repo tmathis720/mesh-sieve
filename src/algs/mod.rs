@@ -12,8 +12,8 @@ pub mod metis_partition;
 pub mod partition;
 pub mod rcm;
 pub mod reduction;
-pub mod traversal_core;
 pub mod traversal;
+pub mod traversal_core;
 pub mod traversal_ref;
 pub mod wire;
 

@@ -1,12 +1,14 @@
 mod util;
 use util::*;
 
-use mesh_sieve::algs::communicator::{Communicator, Wait, NoComm};
 use bytemuck::{Pod, Zeroable, cast_slice};
+use mesh_sieve::algs::communicator::{Communicator, NoComm, Wait};
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, Debug, PartialEq, Eq)]
-struct WireU64 { x: u64 }
+struct WireU64 {
+    x: u64,
+}
 
 #[test]
 fn no_comm_is_nop() {
@@ -31,8 +33,12 @@ fn rayon_comm_roundtrip_and_tag_isolation() {
     let rxa = c1.irecv(0, TAG_A, &mut buf_a);
     let rxb = c1.irecv(0, TAG_B, &mut buf_b);
 
-    let wa = [WireU64 { x: 0xDEAD_BEEF_F00D_F00D }];
-    let wb = [WireU64 { x: 0x0123_4567_89AB_CDEF }];
+    let wa = [WireU64 {
+        x: 0xDEAD_BEEF_F00D_F00D,
+    }];
+    let wb = [WireU64 {
+        x: 0x0123_4567_89AB_CDEF,
+    }];
     c0.isend(1, TAG_B, cast_slice(&wb));
     c0.isend(1, TAG_A, cast_slice(&wa));
 

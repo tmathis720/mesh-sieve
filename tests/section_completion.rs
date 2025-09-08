@@ -1,10 +1,10 @@
 mod util;
-use util::*;
 use mesh_sieve::{
     algs::completion::section_completion::complete_section,
     data::{atlas::Atlas, section::Section},
     overlap::{delta::ValueDelta, overlap::Overlap},
 };
+use util::*;
 
 #[derive(Clone, Default, PartialEq, Debug)]
 struct Vec3([f64; 3]);
@@ -13,7 +13,9 @@ struct Vec3([f64; 3]);
 struct AvgDelta;
 impl ValueDelta<Vec3> for AvgDelta {
     type Part = [f64; 3];
-    fn restrict(v: &Vec3) -> Self::Part { v.0 }
+    fn restrict(v: &Vec3) -> Self::Part {
+        v.0
+    }
     fn fuse(local: &mut Vec3, incoming: Self::Part) {
         for i in 0..3 {
             local.0[i] = 0.5 * (local.0[i] + incoming[i]);

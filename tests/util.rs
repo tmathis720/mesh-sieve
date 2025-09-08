@@ -5,7 +5,9 @@ use mesh_sieve::{
     topology::sieve::{InMemorySieve, Sieve},
 };
 
-pub fn pid(u: u64) -> PointId { PointId::new(u).unwrap() }
+pub fn pid(u: u64) -> PointId {
+    PointId::new(u).unwrap()
+}
 
 /// Build a sieve from arrows (u -> v) with unit payload ().
 pub fn sieve_from(arrows: &[(u64, u64)]) -> InMemorySieve<PointId, ()> {

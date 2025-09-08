@@ -1,10 +1,12 @@
 mod util;
-use util::*;
-use mesh_sieve::algs::rcm::{distributed_rcm, distributed_rcm_with, RcmAdjacency};
 use mesh_sieve::algs::communicator::NoComm;
+use mesh_sieve::algs::rcm::{RcmAdjacency, distributed_rcm, distributed_rcm_with};
 use mesh_sieve::topology::sieve::Sieve;
+use util::*;
 
-fn path_sieve(n: usize) -> mesh_sieve::topology::sieve::InMemorySieve<mesh_sieve::topology::point::PointId, ()> {
+fn path_sieve(
+    n: usize,
+) -> mesh_sieve::topology::sieve::InMemorySieve<mesh_sieve::topology::point::PointId, ()> {
     let mut s = mesh_sieve::topology::sieve::InMemorySieve::<_, ()>::default();
     for i in 0..n - 1 {
         s.add_arrow(pid((i + 1) as u64), pid((i + 2) as u64), ());
