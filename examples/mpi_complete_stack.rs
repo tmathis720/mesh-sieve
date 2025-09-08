@@ -39,7 +39,7 @@ fn main() {
             self.rank as u32
         }
     }
-    impl mesh_sieve::algs::completion::stack_completion::WirePoint for PodU64 {
+    impl mesh_sieve::algs::wire::WirePoint for PodU64 {
         fn to_wire(self) -> u64 {
             self.0
         }

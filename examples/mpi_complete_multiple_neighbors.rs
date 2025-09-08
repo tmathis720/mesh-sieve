@@ -91,8 +91,8 @@ pub fn main() {
         sec.try_set(PointId::new(2).unwrap(), &[2])
             .expect("Failed to set value for PointId 2");
     }
-    let delta = CopyDelta;
-    let _ = complete_section(&mut sec, &mut ovlp, &comm, &delta, rank, size);
+    complete_section::<u32, CopyDelta, MpiComm>(&mut sec, &ovlp, &comm, rank)
+        .expect("section completion failed");
     match rank {
         0 => {
             assert_eq!(

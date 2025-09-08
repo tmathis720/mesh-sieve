@@ -65,13 +65,12 @@ fn main() {
     }
 
     // Debug: print neighbour links before exchange
-    let links =
-        mesh_sieve::algs::completion::neighbour_links::neighbour_links(&sec, &mut ovlp, rank);
+    let links = mesh_sieve::algs::completion::neighbour_links::neighbour_links(&sec, &ovlp, rank);
     println!("[rank {}] neighbour_links: {:?}", rank, links);
 
     // 6) Perform the two-phase exchange
-    let delta = CopyDelta;
-    complete_section(&mut sec, &mut ovlp, &comm, &delta, rank, size);
+    complete_section::<u32, CopyDelta, MpiComm>(&mut sec, &ovlp, &comm, rank)
+        .expect("section completion failed");
 
     // 7) Check the result
     if rank == 0 {
