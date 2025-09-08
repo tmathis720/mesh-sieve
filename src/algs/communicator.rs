@@ -436,8 +436,11 @@ mod mpi_backend {
             if let Some(r) = self.req.take() {
                 let _ = r.wait();
             }
-            unsafe {
-                drop(Box::from_raw(self.buf));
+            if !self.buf.is_null() {
+                unsafe {
+                    drop(Box::from_raw(self.buf));
+                }
+                self.buf = core::ptr::null_mut();
             }
             None
         }
@@ -446,12 +449,14 @@ mod mpi_backend {
         fn drop(&mut self) {
             if let Some(r) = self.req.take() {
                 let _ = r.test();
+                #[cfg(debug_assertions)]
+                eprintln!("[MpiSendHandle::drop] send not explicitly waited");
             }
-            unsafe {
-                drop(Box::from_raw(self.buf));
+            if !self.buf.is_null() {
+                unsafe {
+                    drop(Box::from_raw(self.buf));
+                }
             }
-            #[cfg(debug_assertions)]
-            eprintln!("[MpiSendHandle::drop] send not explicitly waited");
         }
     }
 
@@ -468,6 +473,7 @@ mod mpi_backend {
             let boxed: Box<[u8]> = unsafe { Box::from_raw(self.buf) };
             let mut v = Vec::from(boxed);
             v.truncate(self.len);
+            self.buf = core::ptr::null_mut();
             Some(v)
         }
     }
@@ -475,12 +481,14 @@ mod mpi_backend {
         fn drop(&mut self) {
             if let Some(r) = self.req.take() {
                 let _ = r.test();
+                #[cfg(debug_assertions)]
+                eprintln!("[MpiRecvHandle::drop] recv not explicitly waited");
             }
-            unsafe {
-                drop(Box::from_raw(self.buf));
+            if !self.buf.is_null() {
+                unsafe {
+                    drop(Box::from_raw(self.buf));
+                }
             }
-            #[cfg(debug_assertions)]
-            eprintln!("[MpiRecvHandle::drop] recv not explicitly waited");
         }
     }
 }
