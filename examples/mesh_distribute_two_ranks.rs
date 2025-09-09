@@ -42,7 +42,8 @@ fn main() {
         }
     };
 
-    // 4) Each rank should see its submesh plus one overlap arrow
+    // 4) Each rank should see only its submesh. The two arrows are disjoint and
+    // the partition matches arrow boundaries, so no overlap links are produced.
     let my_pts: Vec<_> = local.points().collect();
     println!("[rank {}] local points: {:?}", rank, my_pts);
     let partition_pt = OvlGraph::partition_node_id(rank);
@@ -55,14 +56,14 @@ fn main() {
         .collect();
     println!("[rank {}] overlap points: {:?}", rank, ovl_pts);
 
-    // Assert: rank 0 sees only PointId(1)→PointId(2) locally,
-    //         plus an overlap link from 3→partition(1)
+    // Assert: rank 0 sees only PointId(1)→PointId(2) locally and no overlap.
+    // Likewise, rank 1 sees PointId(3)→PointId(4) locally and no overlap.
     if rank == 0 {
         assert!(local.points().any(|p| p == PointId::new(1).unwrap()));
         assert!(ovl_pts.is_empty());
     } else {
         assert!(local.points().any(|p| p == PointId::new(3).unwrap()));
-        assert!(ovl_pts.contains(&PointId::new(1).unwrap()));
+        assert!(ovl_pts.is_empty());
     }
 
     println!("[rank {}] distribute_mesh test passed", rank);
