@@ -1,4 +1,5 @@
 //! Run with: cargo run --example partition --features metis-support
+//! passes on version 1.3.0
 use mesh_sieve::algs::dual_graph::{DualGraph, build_dual};
 #[cfg(feature = "metis-support")]
 use mesh_sieve::algs::metis_partition::MetisPartition;

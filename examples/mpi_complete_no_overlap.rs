@@ -1,5 +1,5 @@
 // cargo mpirun -n 3 --features mpi-support --example mpi_complete_no_overlap
-// Version 1.2.0: Passing
+// Version 1.3.0: Passing
 // This example demonstrates how to complete a Section in MPI without overlap.
 // It uses the `complete_section` function to ensure that a Section can be completed
 // correctly when no overlap exists, and that the Section is correctly completed

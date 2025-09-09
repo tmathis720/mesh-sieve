@@ -31,6 +31,17 @@ where
     #[cfg(any(debug_assertions, feature = "check-invariants"))]
     overlap.validate_invariants()?;
 
+    // Fast-path: if there are no neighbors (excluding self), nothing to exchange.
+    // Mirrors the behavior in sieve completion: treat as a successful no-op.
+    {
+        use std::collections::BTreeSet;
+        let mut nb: BTreeSet<usize> = overlap.neighbor_ranks().collect();
+        nb.remove(&my_rank);
+        if nb.is_empty() {
+            return Ok(());
+        }
+    }
+
     // 1) discover which points each neighbor needs
     let links =
         neighbour_links::<V>(section, overlap, my_rank).map_err(|e| MeshSieveError::CommError {
@@ -125,16 +136,14 @@ mod tests {
     }
 
     #[test]
-    fn no_neighbors_errors() {
+    fn no_neighbors_is_noop() {
         let mut section = make_section(&[]);
         let ovlp = Overlap::new();
         let comm = NoComm;
         let tags = SectionCommTags::from_base(CommTag::new(0x4200));
         let res =
             complete_section_with_tags::<i32, CopyDelta, _>(&mut section, &ovlp, &comm, 0, tags);
-        assert!(matches!(
-            res,
-            Err(MeshSieveError::CommError { neighbor: 0, .. })
-        ));
+        // With no neighbors, completion is a no-op and succeeds.
+        assert!(res.is_ok());
     }
 }

@@ -1,5 +1,6 @@
 // --- MPI test: complete_stack_two_ranks ---
 // cargo mpirun -n 2 --features mpi-support --example mpi_complete_stack
+// passes on version 1.3.0
 // This example tests the `complete_stack` function with two MPI ranks.
 // It ensures that a Stack can be completed correctly when two ranks have overlapping points,
 // and that the Stack is correctly completed with values from both ranks.

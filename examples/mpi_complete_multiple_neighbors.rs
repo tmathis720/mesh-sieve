@@ -1,6 +1,6 @@
 // --- MPI test: complete_section_multiple_neighbors ---
 // cargo mpirun -n 3 --features mpi-support --example mpi_complete_multiple_neighbors
-// Version 1.2.0: passing
+// Version 1.3.0: passing
 //! This example tests the `complete_section` function with multiple neighbors.
 //! It ensures that a Section can be completed correctly when multiple ranks have neighbors
 //! that share the same point, and that the Section is correctly completed
@@ -34,6 +34,9 @@ pub fn main() {
         0 => {
             atlas.try_insert(PointId::new(1).unwrap(), 1).unwrap();
             atlas.try_insert(PointId::new(2).unwrap(), 1).unwrap();
+            // also allocate ghost slots for neighbors so symmetric exchange can fuse
+            atlas.try_insert(PointId::new(101).unwrap(), 1).unwrap();
+            atlas.try_insert(PointId::new(201).unwrap(), 1).unwrap();
             // Use add_arrow to avoid closure enforcement issues
             // partition_point(1) = PointId(2), partition_point(2) = PointId(3)
             Sieve::add_arrow(
