@@ -102,15 +102,18 @@ where
         }
     }
 
-    // 2. Determine neighbor set from overlap (exclude self)
-    let mut nb: BTreeSet<usize> = BTreeSet::new();
+    // 2. Determine neighbor set and validate ranks.
+    //
+    // We still inspect the provided overlap to validate any referenced ranks,
+    // but for symmetric exchange we communicate with all ranks (except self).
+    // This ensures progress even if only one side seeded overlap structure.
+    let mut nb_seen: BTreeSet<usize> = BTreeSet::new();
     for p in overlap.base_points() {
         for (_dst, rem) in overlap.cone(p) {
-            nb.insert(rem.rank_u32() as usize);
+            nb_seen.insert(rem.rank_u32() as usize);
         }
     }
-    nb.remove(&my_rank);
-    for &r in &nb {
+    for &r in &nb_seen {
         if r >= n_ranks {
             return Err(MeshSieveError::CommError {
                 neighbor: r,
@@ -118,10 +121,8 @@ where
             });
         }
     }
-    if nb.is_empty() {
-        return Ok(());
-    }
-    let neighbors: Vec<usize> = nb.iter().copied().collect();
+    // Symmetric neighbor set: all ranks except self.
+    let neighbors: Vec<usize> = (0..n_ranks).filter(|&r| r != my_rank).collect();
     let all_neighbors: HashSet<usize> = neighbors.iter().copied().collect();
 
     // 3. Build wire buffers per neighbor
