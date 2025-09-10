@@ -1,6 +1,6 @@
 use mesh_sieve::data::{atlas::Atlas, bundle::Bundle, section::Section};
 use mesh_sieve::overlap::delta::CopyDelta;
-use mesh_sieve::topology::arrow::Orientation;
+use mesh_sieve::topology::arrow::Polarity;
 use mesh_sieve::topology::point::PointId;
 use mesh_sieve::topology::stack::{InMemoryStack, Stack};
 
@@ -17,9 +17,9 @@ fn bundle_refine_with_forward_and_reverse() -> Result<(), Box<dyn std::error::Er
     let mut section = Section::<i32>::new(atlas.clone());
     section.try_set(b, &[1, 2, 3])?;
 
-    let mut stack = InMemoryStack::<PointId, PointId, Orientation>::default();
-    stack.add_arrow(b, c1, Orientation::Forward)?;
-    stack.add_arrow(b, c2, Orientation::Reverse)?;
+    let mut stack = InMemoryStack::<PointId, PointId, Polarity>::default();
+    stack.add_arrow(b, c1, Polarity::Forward)?;
+    stack.add_arrow(b, c2, Polarity::Reverse)?;
 
     let mut bundle = Bundle { stack, section, delta: CopyDelta };
     bundle.refine([b])?;
@@ -40,9 +40,9 @@ fn bundle_assemble_elementwise_average() -> Result<(), Box<dyn std::error::Error
     atlas.try_insert(c2, 3)?;
     let mut section = Section::<f64>::new(atlas.clone());
 
-    let mut stack = InMemoryStack::<PointId, PointId, Orientation>::default();
-    stack.add_arrow(b, c1, Orientation::Forward)?;
-    stack.add_arrow(b, c2, Orientation::Forward)?;
+    let mut stack = InMemoryStack::<PointId, PointId, Polarity>::default();
+    stack.add_arrow(b, c1, Polarity::Forward)?;
+    stack.add_arrow(b, c2, Polarity::Forward)?;
     let mut bundle = Bundle { stack, section, delta: CopyDelta };
 
     bundle.section.try_set(c1, &[2.0, 4.0, 6.0])?;

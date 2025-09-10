@@ -3,8 +3,9 @@
 //! In mesh algorithms (Knepley & Karpeev, 2009), an *arrow* represents an incidence
 //! relation between two topological entities (e.g., cell → face, face → edge),
 //! optionally carrying data (payload). This module defines the `Arrow` type,
-//! utility constructors, payload mapping, and a simple `Orientation` enum for
-//! vertical arrows in a `Stack`.
+//! utility constructors, payload mapping, and a simple `Polarity` enum for
+//! vertical arrows in a `Stack`. For group-valued orientations, see
+//! [`crate::topology::orientation`].
 
 use crate::{mesh_error::MeshSieveError, topology::point::PointId};
 // use crate::mesh_error::MeshSieveError;
@@ -105,19 +106,120 @@ impl Default for Arrow<()> {
 }
 
 //------------------------------------------------------------------------------
-// Orientation: for vertical arrows in a Stack
+//------------------------------------------------------------------------------
+// Polarity: for vertical arrows in a Stack
 //------------------------------------------------------------------------------
 
-/// Sign or permutation for vertical incidence arrows in a `Stack`.
+/// Binary direction for vertical incidence in a `Stack`.
 ///
-/// Used to record orientation when lifting/pulling degrees-of-freedom.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Orientation {
-    /// No change in orientation (e.g., aligned sign +1).
-    Forward,
-    /// Opposite orientation (e.g., sign flip -1).
-    Reverse,
+/// This is **not** the general orientation group used by `OrientedSieve`.
+/// For group-valued face/edge orientations use types in
+/// `crate::topology::orientation` (e.g., `Sign`, `D3`, `D4`, `Perm<K>`).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[repr(u8)]
+pub enum Polarity {
+    /// No change (aligned, “+”).
+    Forward = 0,
+    /// Opposite (reversed, “−”).
+    Reverse = 1,
 }
+
+impl Default for Polarity {
+    #[inline]
+    fn default() -> Self {
+        Polarity::Forward
+    }
+}
+
+impl Polarity {
+    /// Invert the polarity.
+    #[inline]
+    pub fn invert(self) -> Self {
+        match self {
+            Polarity::Forward => Polarity::Reverse,
+            Polarity::Reverse => Polarity::Forward,
+        }
+    }
+
+    /// Compose two polarities (XOR semantics).
+    #[inline]
+    pub fn compose(self, other: Self) -> Self {
+        // SAFETY: repr(u8) with 0/1 enables fast XOR-like combine
+        match ((self as u8) ^ (other as u8)) & 1 {
+            0 => Polarity::Forward,
+            _ => Polarity::Reverse,
+        }
+    }
+
+    /// Map to boolean: `false`=Forward, `true`=Reverse.
+    #[inline]
+    pub fn as_bool(self) -> bool {
+        matches!(self, Polarity::Reverse)
+    }
+
+    /// Build from boolean: `false`→Forward, `true`→Reverse.
+    #[inline]
+    pub fn from_bool(b: bool) -> Self {
+        if b { Polarity::Reverse } else { Polarity::Forward }
+    }
+
+    /// Map to sign: `+1` for Forward, `-1` for Reverse.
+    #[inline]
+    pub fn sign(self) -> i8 {
+        if self.as_bool() { -1 } else { 1 }
+    }
+}
+
+impl core::ops::Not for Polarity {
+    type Output = Self;
+    #[inline]
+    fn not(self) -> Self::Output {
+        self.invert()
+    }
+}
+
+impl core::ops::BitXor for Polarity {
+    type Output = Self;
+    #[inline]
+    fn bitxor(self, rhs: Self) -> Self::Output {
+        self.compose(rhs)
+    }
+}
+
+impl From<bool> for Polarity {
+    #[inline]
+    fn from(b: bool) -> Self {
+        Polarity::from_bool(b)
+    }
+}
+impl From<Polarity> for bool {
+    #[inline]
+    fn from(p: Polarity) -> bool {
+        p.as_bool()
+    }
+}
+
+// Interop with group-valued 1D orientation (BitFlip/Sign)
+impl From<Polarity> for crate::topology::orientation::Sign {
+    #[inline]
+    fn from(p: Polarity) -> Self {
+        crate::topology::orientation::BitFlip(p.as_bool())
+    }
+}
+impl From<crate::topology::orientation::Sign> for Polarity {
+    #[inline]
+    fn from(s: crate::topology::orientation::Sign) -> Self {
+        Polarity::from_bool(s.0)
+    }
+}
+
+// --- Back-compat alias (soft deprecation) ------------------------------------
+#[allow(deprecated)]
+#[deprecated(
+    since = "0.X.Y",
+    note = "Renamed to `Polarity` to avoid confusion with `sieve::oriented::Orientation`."
+)]
+pub use Polarity as Orientation;
 
 //------------------------------------------------------------------------------
 // Unit Tests
@@ -192,19 +294,6 @@ mod tests {
         );
         let b = a.clone();
         assert_eq!(a, b);
-    }
-
-    #[test]
-    fn orientation_traits() {
-        let f = Orientation::Forward;
-        let r = Orientation::Reverse;
-        let f2 = f;
-        assert_eq!(f, f2);
-        use std::collections::HashSet;
-        let mut s = HashSet::new();
-        s.insert(f);
-        s.insert(r);
-        assert!(s.contains(&Orientation::Forward));
     }
 
     #[test]

@@ -36,7 +36,7 @@ fn main() {
     // use mesh_sieve::overlap::overlap::{Overlap, Remote};
     use mesh_sieve::algs::dual_graph::build_dual;
     use mesh_sieve::prelude::*;
-    use mesh_sieve::topology::arrow::Orientation;
+    use mesh_sieve::topology::arrow::Polarity;
     use mesh_sieve::topology::point::PointId;
     use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
     use mesh_sieve::topology::stack::{InMemoryStack, Stack};
@@ -156,7 +156,7 @@ fn build_hierarchical_tetrahedral_mesh() -> (
 ) {
     use mesh_sieve::prelude::Stack;
     use mesh_sieve::prelude::*;
-    use mesh_sieve::topology::arrow::Orientation;
+    use mesh_sieve::topology::arrow::Polarity;
 
     println!("[rank 0] Building hierarchical tetrahedral mesh...");
 
@@ -212,7 +212,7 @@ fn build_hierarchical_tetrahedral_mesh() -> (
 
     // Create refined mesh with DOF hierarchy
     let mut refined_mesh = mesh.clone();
-    let mut stack = InMemoryStack::<PointId, PointId, Orientation>::new();
+    let mut stack = InMemoryStack::<PointId, PointId, Polarity>::new();
 
     // Add refinement: each face gets 3 DOF points
     for (i, &face) in faces.iter().enumerate() {
@@ -221,9 +221,9 @@ fn build_hierarchical_tetrahedral_mesh() -> (
             let dof_id = PointId::new(1000 + i as u64 * 10 + j as u64).unwrap();
             atlas.try_insert(dof_id, 1).unwrap();
             let orientation = if j % 2 == 0 {
-                Orientation::Forward
+                Polarity::Forward
             } else {
-                Orientation::Reverse
+                Polarity::Reverse
             };
             let _ = stack.add_arrow(face, dof_id, orientation);
             mesh_sieve::topology::Sieve::add_point(&mut refined_mesh, dof_id);
@@ -503,7 +503,7 @@ fn test_distributed_completion(
 fn test_bundle_operations(rank: usize) {
     println!("[rank {}] Testing Bundle operations...", rank);
     use mesh_sieve::prelude::*;
-    use mesh_sieve::topology::arrow::Orientation;
+    use mesh_sieve::topology::arrow::Polarity;
 
     // Create test bundle
     let mut atlas = Atlas::default();
@@ -518,9 +518,9 @@ fn test_bundle_operations(rank: usize) {
     let mut section = Section::<f64>::new(atlas);
     section.try_set(base1, &[1.0, 2.0]).unwrap();
 
-    let mut stack = InMemoryStack::<PointId, PointId, Orientation>::new();
-    let _ = stack.add_arrow(base1, cap1, Orientation::Forward);
-    let _ = stack.add_arrow(base1, cap2, Orientation::Reverse);
+    let mut stack = InMemoryStack::<PointId, PointId, Polarity>::new();
+    let _ = stack.add_arrow(base1, cap1, Polarity::Forward);
+    let _ = stack.add_arrow(base1, cap2, Polarity::Reverse);
 
     let mut bundle = Bundle {
         stack,

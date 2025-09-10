@@ -17,8 +17,8 @@ pub use helpers::{
 pub use helpers::{try_restrict_closure_vec_parallel, try_restrict_star_vec_parallel};
 pub use sieved_array::SievedArray;
 
-/// A sifter is a vector of (PointId, Orientation) pairs for refinement.
+/// A sifter is a vector of (PointId, Polarity) pairs for refinement.
 pub type Sifter = Vec<(
     crate::topology::point::PointId,
-    crate::topology::arrow::Orientation,
+    crate::topology::arrow::Polarity,
 )>;

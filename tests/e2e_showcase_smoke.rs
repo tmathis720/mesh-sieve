@@ -1,7 +1,7 @@
 use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::refine::sieved_array::SievedArray;
 use mesh_sieve::data::section::Section;
-use mesh_sieve::topology::arrow::Orientation;
+use mesh_sieve::topology::arrow::Polarity;
 use mesh_sieve::topology::point::PointId;
 use mesh_sieve::topology::sieve::Sieve;
 
@@ -31,8 +31,8 @@ fn orientation_and_overlap_smoke() {
     }
     let mut fine = SievedArray::<PointId, f64>::new(atlas.clone());
     let sifter = vec![
-        (q0, vec![(q0, Orientation::Forward)]),
-        (q1, vec![(q1, Orientation::Reverse)]),
+        (q0, vec![(q0, Polarity::Forward)]),
+        (q1, vec![(q1, Polarity::Reverse)]),
     ];
     fine.try_refine_with_sifter(&coarse, &sifter).unwrap();
     let q1_src = sec.try_restrict(q1).unwrap().to_vec();
@@ -100,8 +100,8 @@ fn parallel_refine_parity() {
         src.try_set(p, sl).unwrap();
     }
     let sifter = vec![
-        (q0, vec![(q0, Orientation::Forward)]),
-        (q1, vec![(q1, Orientation::Reverse)]),
+        (q0, vec![(q0, Polarity::Forward)]),
+        (q1, vec![(q1, Polarity::Reverse)]),
     ];
     let mut serial = SievedArray::<PointId, f64>::new(atlas.clone());
     let mut parallel = SievedArray::<PointId, f64>::new(atlas.clone());
