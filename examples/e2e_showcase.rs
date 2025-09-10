@@ -1,7 +1,7 @@
 use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::refine::sieved_array::SievedArray;
 use mesh_sieve::data::section::Section;
-use mesh_sieve::topology::arrow::Orientation;
+use mesh_sieve::topology::arrow::Polarity;
 use mesh_sieve::topology::point::PointId;
 use mesh_sieve::topology::sieve::Sieve;
 
@@ -28,15 +28,15 @@ fn check_parallel_refine_matches_serial(
     q1: PointId,
 ) {
     use mesh_sieve::data::refine::sieved_array::SievedArray;
-    use mesh_sieve::topology::arrow::Orientation;
+    use mesh_sieve::topology::arrow::Polarity;
 
     let mut src = SievedArray::<PointId, f64>::new(atlas.clone());
     for (p, sl) in sec.iter() {
         src.try_set(p, sl).unwrap();
     }
     let sifter = vec![
-        (q0, vec![(q0, Orientation::Forward)]),
-        (q1, vec![(q1, Orientation::Reverse)]),
+        (q0, vec![(q0, Polarity::Forward)]),
+        (q1, vec![(q1, Polarity::Reverse)]),
     ];
 
     let mut serial = SievedArray::<PointId, f64>::new(atlas.clone());
@@ -90,8 +90,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         coarse.try_set(p, sl)?;
     }
     let sifter = vec![
-        (q0, vec![(q0, Orientation::Forward)]),
-        (q1, vec![(q1, Orientation::Reverse)]),
+        (q0, vec![(q0, Polarity::Forward)]),
+        (q1, vec![(q1, Polarity::Reverse)]),
     ];
 
     fine.try_refine_with_sifter(&coarse, &sifter)?;

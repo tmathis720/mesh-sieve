@@ -14,11 +14,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// A `Stack` links a *base* Sieve to a *cap* Sieve via vertical arrows.
-/// Each arrow carries a payload (e.g., orientation or permutation).
+/// Each arrow carries a payload (e.g., polarity or permutation).
 ///
 /// - `Point`:   The point type in the base mesh (commonly `PointId`).
 /// - `CapPt`:   The point type in the cap mesh (commonly `PointId`).
-/// - `Payload`: Data attached to each arrow (e.g., `Orientation`).
+/// - `Payload`: Data attached to each arrow (e.g., `Polarity`).
 ///
 /// Some implementations (such as [`ComposedStack`]) do not expose a concrete
 /// base or cap Sieve. Calling [`Stack::base`] or [`Stack::cap`] on such stacks
@@ -355,6 +355,28 @@ where
 ///
 /// Traversal composes payloads via a `compose_payload` function.
 ///
+/// # Examples
+///
+/// Using [`Polarity`] payloads (XOR composition):
+/// ```
+/// use mesh_sieve::topology::arrow::Polarity;
+/// use mesh_sieve::topology::stack::{ComposedStack, InMemoryStack, Stack};
+/// use mesh_sieve::topology::point::PointId;
+/// let s1 = InMemoryStack::<PointId, PointId, Polarity>::new();
+/// let s2 = InMemoryStack::<PointId, PointId, Polarity>::new();
+/// let _cs = ComposedStack::new(&s1, &s2, |a, b| (*a) ^ (*b));
+/// ```
+///
+/// Using group-valued [`orientation::Sign`] with trait composition:
+/// ```
+/// use mesh_sieve::topology::orientation::Sign;
+/// use mesh_sieve::topology::sieve::oriented::Orientation as _;
+/// use mesh_sieve::topology::stack::{ComposedStack, InMemoryStack, Stack};
+/// use mesh_sieve::topology::point::PointId;
+/// let s1 = InMemoryStack::<PointId, PointId, Sign>::new();
+/// let s2 = InMemoryStack::<PointId, PointId, Sign>::new();
+/// let _cs = ComposedStack::new(&s1, &s2, |a, b| Sign::compose(*a, *b));
+/// ```
 pub struct ComposedStack<'a, S1, S2, F>
 where
     S1: Stack,

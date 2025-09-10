@@ -6,7 +6,7 @@
 
 use crate::data::atlas::Atlas;
 use crate::data::refine::delta::SliceDelta;
-use crate::topology::arrow::Orientation;
+use crate::topology::arrow::Polarity;
 use crate::topology::point::PointId;
 
 /// A generic array of values indexed by mesh points, supporting refinement and assembly.
@@ -154,7 +154,7 @@ where
     pub fn try_refine_with_sifter(
         &mut self,
         coarse: &SievedArray<P, V>,
-        refinement: &[(P, Vec<(P, Orientation)>)],
+        refinement: &[(P, Vec<(P, Polarity)>)],
     ) -> Result<(), crate::mesh_error::MeshSieveError> {
         use crate::mesh_error::MeshSieveError;
 
@@ -214,7 +214,7 @@ where
     ) -> Result<(), crate::mesh_error::MeshSieveError> {
         let sifter: Vec<_> = refinement
             .iter()
-            .map(|(c, fs)| (*c, fs.iter().map(|f| (*f, Orientation::Forward)).collect()))
+            .map(|(c, fs)| (*c, fs.iter().map(|f| (*f, Polarity::Forward)).collect()))
             .collect();
         self.try_refine_with_sifter(coarse, &sifter)
     }
@@ -223,7 +223,7 @@ where
     pub fn refine_with_sifter(
         &mut self,
         coarse: &SievedArray<P, V>,
-        refinement: &[(P, Vec<(P, Orientation)>)],
+        refinement: &[(P, Vec<(P, Polarity)>)],
     ) {
         self.try_refine_with_sifter(coarse, refinement).unwrap()
     }
@@ -319,7 +319,7 @@ where
     pub fn try_refine_with_sifter_parallel(
         &mut self,
         coarse: &Self,
-        refinement: &[(P, Vec<(P, Orientation)>)],
+        refinement: &[(P, Vec<(P, Polarity)>)],
     ) -> Result<(), crate::mesh_error::MeshSieveError> {
         use crate::mesh_error::MeshSieveError;
         use std::collections::HashMap;
@@ -389,7 +389,7 @@ mod tests {
     use crate::data::atlas::Atlas;
     use crate::data::refine::sieved_array::SievedArray;
     use crate::mesh_error::MeshSieveError;
-    use crate::topology::arrow::Orientation;
+    use crate::topology::arrow::Polarity;
     use crate::topology::point::PointId;
 
     fn pt(i: u64) -> PointId {
@@ -429,7 +429,7 @@ mod tests {
         coarse.try_set(pt(1), &[10, 20]).unwrap();
         let refinement = vec![(
             pt(1),
-            vec![(pt(2), Orientation::Forward), (pt(3), Orientation::Reverse)],
+            vec![(pt(2), Polarity::Forward), (pt(3), Polarity::Reverse)],
         )];
         fine.try_refine_with_sifter(&coarse, &refinement).unwrap();
         assert_eq!(fine.try_get(pt(2)).unwrap(), &[10, 20]);
@@ -520,7 +520,7 @@ mod tests {
         let mut coarse = make_sieved();
         let mut fine = make_sieved();
         coarse.try_set(pt(1), &[2, 3]).unwrap();
-        let refinement = vec![(pt(1), vec![(pt(2), Orientation::Forward)])];
+        let refinement = vec![(pt(1), vec![(pt(2), Polarity::Forward)])];
         fine.try_refine_with_sifter_parallel(&coarse, &refinement)
             .expect("parallel refinement failed");
         assert_eq!(fine.try_get(pt(2)).unwrap(), &[2, 3]);

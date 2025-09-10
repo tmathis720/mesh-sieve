@@ -100,12 +100,12 @@ where
 ///
 /// # Fields
 /// - `stack`: vertical arrows from base mesh points → cap (DOF) points,
-///      carrying an `Orientation` payload if needed.
+///      carrying a `Polarity` payload if needed.
 /// - `section`: contiguous storage of data `V` for each point in the atlas.
 /// - `delta`: rules for extracting (`restrict`) and merging (`fuse`) values.
 pub struct Bundle<V, D = CopyDelta> {
     /// Vertical connectivity: base points → cap (DOF) points.
-    pub stack: InMemoryStack<PointId, PointId, crate::topology::arrow::Orientation>,
+    pub stack: InMemoryStack<PointId, PointId, crate::topology::arrow::Polarity>,
     /// Field data storage, indexed by `PointId`.
     pub section: Section<V>,
     /// Delta strategy for refine/assemble operations.
@@ -130,7 +130,7 @@ where
     ///
     /// # Determinism
     /// Deterministic **per cap point slice**, independent of traversal order, provided
-    /// the vertical mapping `base -> {caps}` has no duplicates. Orientation handling
+    /// the vertical mapping `base -> {caps}` has no duplicates. Polarity handling
     /// is local to each write.
     ///
     /// # Errors
@@ -236,7 +236,7 @@ mod tests {
     use super::*;
     use crate::data::atlas::Atlas;
     use crate::overlap::delta::CopyDelta;
-    use crate::topology::arrow::Orientation;
+    use crate::topology::arrow::Polarity;
     #[test]
     fn bundle_basic_refine_and_assemble() {
         let mut atlas = Atlas::default();
@@ -247,16 +247,16 @@ mod tests {
         let mut section = Section::<i32>::new(atlas.clone());
         section.try_set(PointId::new(1).unwrap(), &[10]).unwrap();
         section.try_set(PointId::new(2).unwrap(), &[20]).unwrap();
-        let mut stack = InMemoryStack::<PointId, PointId, Orientation>::new();
+        let mut stack = InMemoryStack::<PointId, PointId, Polarity>::new();
         let _ = stack.add_arrow(
             PointId::new(1).unwrap(),
             PointId::new(101).unwrap(),
-            Orientation::Forward,
+            Polarity::Forward,
         );
         let _ = stack.add_arrow(
             PointId::new(2).unwrap(),
             PointId::new(102).unwrap(),
-            Orientation::Forward,
+            Polarity::Forward,
         );
         let mut bundle = Bundle {
             stack,
@@ -312,7 +312,7 @@ mod tests {
     fn empty_bundle_noop() {
         let atlas = Atlas::default();
         let section = Section::<i32>::new(atlas.clone());
-        let stack = InMemoryStack::<PointId, PointId, Orientation>::new();
+        let stack = InMemoryStack::<PointId, PointId, Polarity>::new();
         let mut bundle = Bundle {
             stack,
             section,
@@ -332,11 +332,11 @@ mod tests {
         section
             .try_set(PointId::new(1).unwrap(), &[10, 20])
             .unwrap();
-        let mut stack = InMemoryStack::<PointId, PointId, Orientation>::new();
+        let mut stack = InMemoryStack::<PointId, PointId, Polarity>::new();
         let _ = stack.add_arrow(
             PointId::new(1).unwrap(),
             PointId::new(101).unwrap(),
-            Orientation::Forward,
+            Polarity::Forward,
         );
         let mut bundle = Bundle {
             stack,
@@ -359,11 +359,11 @@ mod tests {
         atlas.try_insert(PointId::new(101).unwrap(), 2).unwrap();
         let mut section = Section::<i32>::new(atlas.clone());
         section.try_set(PointId::new(1).unwrap(), &[1, 2]).unwrap();
-        let mut stack = InMemoryStack::<PointId, PointId, Orientation>::new();
+        let mut stack = InMemoryStack::<PointId, PointId, Polarity>::new();
         let _ = stack.add_arrow(
             PointId::new(1).unwrap(),
             PointId::new(101).unwrap(),
-            Orientation::Reverse,
+            Polarity::Reverse,
         );
         let mut bundle = Bundle {
             stack,
@@ -391,16 +391,16 @@ mod tests {
         let mut section = Section::<i32>::new(atlas.clone());
         section.try_set(PointId::new(101).unwrap(), &[5]).unwrap();
         section.try_set(PointId::new(102).unwrap(), &[7]).unwrap();
-        let mut stack = InMemoryStack::<PointId, PointId, Orientation>::new();
+        let mut stack = InMemoryStack::<PointId, PointId, Polarity>::new();
         let _ = stack.add_arrow(
             PointId::new(1).unwrap(),
             PointId::new(101).unwrap(),
-            Orientation::Forward,
+            Polarity::Forward,
         );
         let _ = stack.add_arrow(
             PointId::new(1).unwrap(),
             PointId::new(102).unwrap(),
-            Orientation::Forward,
+            Polarity::Forward,
         );
         let mut bundle = Bundle {
             stack,
@@ -427,16 +427,16 @@ mod tests {
         let mut section = Section::<i32>::new(atlas.clone());
         section.try_set(PointId::new(101).unwrap(), &[8]).unwrap();
         section.try_set(PointId::new(102).unwrap(), &[9]).unwrap();
-        let mut stack = InMemoryStack::<PointId, PointId, Orientation>::new();
+        let mut stack = InMemoryStack::<PointId, PointId, Polarity>::new();
         let _ = stack.add_arrow(
             PointId::new(1).unwrap(),
             PointId::new(101).unwrap(),
-            Orientation::Forward,
+            Polarity::Forward,
         );
         let _ = stack.add_arrow(
             PointId::new(1).unwrap(),
             PointId::new(102).unwrap(),
-            Orientation::Forward,
+            Polarity::Forward,
         );
         let bundle = Bundle {
             stack,
@@ -459,7 +459,7 @@ mod tests {
     fn refine_unknown_base_errors() {
         let atlas = Atlas::default();
         let section = Section::<i32>::new(atlas.clone());
-        let stack = InMemoryStack::<PointId, PointId, Orientation>::new();
+        let stack = InMemoryStack::<PointId, PointId, Polarity>::new();
         let mut bundle = Bundle {
             stack,
             section,

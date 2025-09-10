@@ -5,7 +5,7 @@ use mesh_sieve::data::refine::sieved_array::SievedArray;
 #[cfg(feature = "rayon")]
 use mesh_sieve::mesh_error::MeshSieveError;
 #[cfg(feature = "rayon")]
-use mesh_sieve::topology::arrow::Orientation;
+use mesh_sieve::topology::arrow::Polarity;
 #[cfg(feature = "rayon")]
 use mesh_sieve::topology::point::PointId;
 
@@ -36,7 +36,7 @@ fn parallel_refine_matches_serial() {
 
     let refinement = vec![(
         c,
-        vec![(f1, Orientation::Forward), (f2, Orientation::Reverse)],
+        vec![(f1, Polarity::Forward), (f2, Polarity::Reverse)],
     )];
     fine_serial
         .try_refine_with_sifter(&coarse, &refinement)
@@ -69,7 +69,7 @@ fn parallel_refine_short_circuits_on_error() {
     fine.try_set(f_bad, &[9]).unwrap();
     let refinement = vec![(
         c,
-        vec![(f_ok, Orientation::Forward), (f_bad, Orientation::Forward)],
+        vec![(f_ok, Polarity::Forward), (f_bad, Polarity::Forward)],
     )];
     let err = fine
         .try_refine_with_sifter_parallel(&coarse, &refinement)
@@ -94,8 +94,8 @@ fn parallel_refine_detects_duplicates() {
     coarse.try_set(c2, &[3, 4]).unwrap();
     let mut fine = make_sieved(&[(f, 2)]);
     let refinement = vec![
-        (c1, vec![(f, Orientation::Forward)]),
-        (c2, vec![(f, Orientation::Forward)]),
+        (c1, vec![(f, Polarity::Forward)]),
+        (c2, vec![(f, Polarity::Forward)]),
     ];
     let err = fine
         .try_refine_with_sifter_parallel(&coarse, &refinement)
@@ -118,8 +118,8 @@ fn parallel_refine_is_deterministic() {
     coarse.try_set(c1, &[5, 6]).unwrap();
     coarse.try_set(c2, &[7, 8]).unwrap();
     let refinement = vec![
-        (c1, vec![(f1, Orientation::Forward)]),
-        (c2, vec![(f2, Orientation::Reverse)]),
+        (c1, vec![(f1, Polarity::Forward)]),
+        (c2, vec![(f2, Polarity::Reverse)]),
     ];
     // serial reference
     let mut reference = make_sieved(&[(f1, 2), (f2, 2)]);

@@ -1,7 +1,7 @@
-//! A “delta” maps sources→dest slices, e.g. via Orientation permutation.
+//! A “delta” maps sources→dest slices, e.g. via polarity permutation.
 //!
 //! This module defines the [`SliceDelta`] trait for slice-level transformations and
-//! provides an implementation for [`Orientation`] to permute or reverse slices.
+//! provides an implementation for [`Polarity`] to permute or reverse slices.
 //!
 //! # Naming
 //! [`SliceDelta`] is the preferred name. A deprecated [`Delta`] alias is provided
@@ -20,7 +20,7 @@
 //! ```
 
 use crate::mesh_error::MeshSieveError;
-use crate::topology::arrow::Orientation;
+use crate::topology::arrow::Polarity;
 
 /// Trait for applying a transformation (delta) from a source slice to a destination slice.
 ///
@@ -36,7 +36,7 @@ pub trait SliceDelta<V: Clone>: Sync {
 #[deprecated(note = "Renamed to SliceDelta; Delta will be removed in a future major release")]
 pub use SliceDelta as Delta;
 
-impl<V: Clone> SliceDelta<V> for Orientation {
+impl<V: Clone> SliceDelta<V> for Polarity {
     fn apply(&self, src: &[V], dest: &mut [V]) -> Result<(), MeshSieveError> {
         let expected = src.len();
         let found = dest.len();
@@ -44,10 +44,10 @@ impl<V: Clone> SliceDelta<V> for Orientation {
             return Err(MeshSieveError::DeltaLengthMismatch { expected, found });
         }
         match self {
-            Orientation::Forward => {
+            Polarity::Forward => {
                 dest.clone_from_slice(src);
             }
-            Orientation::Reverse => {
+            Polarity::Reverse => {
                 for (d, s) in dest.iter_mut().zip(src.iter().rev()) {
                     *d = s.clone();
                 }
@@ -60,13 +60,13 @@ impl<V: Clone> SliceDelta<V> for Orientation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::topology::arrow::Orientation;
+    use crate::topology::arrow::Polarity;
 
     #[test]
     fn orientation_forward_noop() {
         let src = vec![1, 2, 3];
         let mut dst = src.clone();
-        assert!(Orientation::Forward.apply(&src, &mut dst).is_ok());
+        assert!(Polarity::Forward.apply(&src, &mut dst).is_ok());
         assert_eq!(dst, src);
     }
 
@@ -74,7 +74,7 @@ mod tests {
     fn orientation_reverse_reverses() {
         let src = vec![1, 2, 3, 4];
         let mut dst = vec![0; 4];
-        assert!(Orientation::Reverse.apply(&src, &mut dst).is_ok());
+        assert!(Polarity::Reverse.apply(&src, &mut dst).is_ok());
         assert_eq!(dst, vec![4, 3, 2, 1]);
     }
 
@@ -82,7 +82,7 @@ mod tests {
     fn orientation_reverse_empty() {
         let src: Vec<i32> = vec![];
         let mut dst: Vec<i32> = vec![];
-        assert!(Orientation::Reverse.apply(&src, &mut dst).is_ok());
+        assert!(Polarity::Reverse.apply(&src, &mut dst).is_ok());
         assert!(dst.is_empty());
     }
 
@@ -90,7 +90,7 @@ mod tests {
     fn orientation_mismatch_errors() {
         let src = vec![1, 2, 3];
         let mut dst = vec![0; 2];
-        let err = Orientation::Forward.apply(&src, &mut dst).unwrap_err();
+        let err = Polarity::Forward.apply(&src, &mut dst).unwrap_err();
         assert_eq!(
             err,
             crate::mesh_error::MeshSieveError::DeltaLengthMismatch {

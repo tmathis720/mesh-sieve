@@ -2,7 +2,7 @@ use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::bundle::Bundle;
 use mesh_sieve::data::section::Section;
 use mesh_sieve::overlap::delta::CopyDelta;
-use mesh_sieve::topology::arrow::Orientation;
+use mesh_sieve::topology::arrow::Polarity;
 use mesh_sieve::topology::point::PointId;
 use mesh_sieve::topology::stack::{InMemoryStack, Stack};
 
@@ -16,8 +16,8 @@ fn refine_disjoint_slices_no_allocations() -> Result<(), Box<dyn std::error::Err
     let mut section = Section::<i32>::new(atlas);
     section.try_set(b, &[10, 20, 30])?;
 
-    let mut stack = InMemoryStack::<PointId, PointId, Orientation>::default();
-    stack.add_arrow(b, c, Orientation::Forward)?;
+    let mut stack = InMemoryStack::<PointId, PointId, Polarity>::default();
+    stack.add_arrow(b, c, Polarity::Forward)?;
 
     let mut bundle = Bundle {
         stack,
@@ -39,8 +39,8 @@ fn refine_overlapping_slices_safe_reverse() -> Result<(), Box<dyn std::error::Er
     let mut section = Section::<i32>::new(atlas);
     section.try_set(p, &[1, 2, 3, 4])?;
 
-    let mut stack = InMemoryStack::<PointId, PointId, Orientation>::default();
-    stack.add_arrow(p, p, Orientation::Reverse)?;
+    let mut stack = InMemoryStack::<PointId, PointId, Polarity>::default();
+    stack.add_arrow(p, p, Polarity::Reverse)?;
 
     let mut bundle = Bundle {
         stack,

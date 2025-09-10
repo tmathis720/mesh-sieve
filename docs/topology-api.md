@@ -16,7 +16,7 @@ This guide explains the design and usage of `mesh-sieve`’s topology layer: poi
 
 ## Module map
 
-* `arrow` – arrow type (with payload) and a small `Orientation` enum for stacks.
+* `arrow` – arrow type (with payload) and a small `Polarity` enum for stacks.
 * `point` – `PointId` newtype over `NonZeroU64`.
 * `orientation` – compact orientation groups (bit flip, rotations, dihedral, permutations) implementing `sieve::oriented::Orientation` (group structure).
 * `sieve` – core trait and implementations:
