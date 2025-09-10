@@ -18,8 +18,8 @@ fn refine_disjoint_slices_no_allocations() -> Result<(), Box<dyn std::error::Err
     section.try_set(b, &[10, 20, 30])?;
 
     let mut stack = InMemoryStack::<PointId, PointId, Polarity>::default();
-    stack.base.add_arrow(b, b, ());
-    stack.cap.add_arrow(c, c, ());
+    stack.base_mut().unwrap().add_arrow(b, b, ());
+    stack.cap_mut().unwrap().add_arrow(c, c, ());
     stack.add_arrow(b, c, Polarity::Forward)?;
 
     let mut bundle = Bundle {
@@ -43,8 +43,8 @@ fn refine_overlapping_slices_safe_reverse() -> Result<(), Box<dyn std::error::Er
     section.try_set(p, &[1, 2, 3, 4])?;
 
     let mut stack = InMemoryStack::<PointId, PointId, Polarity>::default();
-    stack.base.add_arrow(p, p, ());
-    stack.cap.add_arrow(p, p, ());
+    stack.base_mut().unwrap().add_arrow(p, p, ());
+    stack.cap_mut().unwrap().add_arrow(p, p, ());
     stack.add_arrow(p, p, Polarity::Reverse)?;
 
     let mut bundle = Bundle {

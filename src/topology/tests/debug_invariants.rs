@@ -26,8 +26,8 @@ fn orientation_mismatch_panics_in_debug() {
 #[should_panic]
 fn stack_mirror_missing_panics_in_debug() {
     let mut st = InMemoryStack::<u32, u32, ()>::new();
-    st.base.add_arrow(1, 1, ());
-    st.cap.add_arrow(2, 2, ());
+    st.base_mut().unwrap().add_arrow(1, 1, ());
+    st.cap_mut().unwrap().add_arrow(2, 2, ());
     st.add_arrow(1, 2, ()).unwrap();
     st.down.get_mut(&2).unwrap().clear();
     st.debug_assert_invariants();
