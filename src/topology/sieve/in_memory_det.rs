@@ -238,7 +238,7 @@ impl<P: PointLike, T: PayloadLike> MutableSieve for InMemorySieveDeterministic<P
 }
 
 impl<P: PointLike, T: PayloadLike> InMemorySieveDeterministic<P, T> {
-    #[cfg(debug_assertions)]
+    #[cfg(any(debug_assertions, feature = "strict-invariants"))]
     pub(crate) fn debug_assert_invariants(&self) {
         use std::collections::HashMap;
         let out_view: HashMap<P, Vec<(P, ())>> = self
@@ -249,7 +249,7 @@ impl<P: PointLike, T: PayloadLike> InMemorySieveDeterministic<P, T> {
         crate::topology::_debug_invariants::assert_no_dups_per_src(&out_view);
         let out_total: usize = self.adjacency_out.values().map(|v| v.len()).sum();
         let in_total: usize = self.adjacency_in.values().map(|v| v.len()).sum();
-        debug_assert_eq!(out_total, in_total, "out != in");
+        crate::topology::_debug_invariants::inv_assert_eq!(out_total, in_total, "out != in");
     }
 }
 

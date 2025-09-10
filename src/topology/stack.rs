@@ -284,7 +284,7 @@ where
         for (b, v) in &self.up {
             let mut seen = HashSet::new();
             for (c, _) in v {
-                debug_assert!(
+                crate::topology::_debug_invariants::inv_assert!(
                     seen.insert(*c),
                     "duplicate vertical arrow base={b:?} cap={c:?}"
                 );
@@ -293,7 +293,7 @@ where
         for (c, v) in &self.down {
             let mut seen = HashSet::new();
             for (b, _) in v {
-                debug_assert!(
+                crate::topology::_debug_invariants::inv_assert!(
                     seen.insert(*b),
                     "duplicate vertical arrow cap={c:?} base={b:?}"
                 );
@@ -302,15 +302,19 @@ where
 
         let out_total: usize = self.up.values().map(|v| v.len()).sum();
         let in_total: usize = self.down.values().map(|v| v.len()).sum();
-        debug_assert_eq!(out_total, in_total, "stack up/down totals differ");
+        crate::topology::_debug_invariants::inv_assert_eq!(
+            out_total,
+            in_total,
+            "stack up/down totals differ",
+        );
 
         for (b, ups) in &self.up {
-            debug_assert!(
+            crate::topology::_debug_invariants::inv_assert!(
                 self.base.adjacency_out.contains_key(b) || self.base.adjacency_in.contains_key(b),
                 "vertical base point {b:?} not present in base sieve"
             );
             for (c, _) in ups {
-                debug_assert!(
+                crate::topology::_debug_invariants::inv_assert!(
                     self.cap.adjacency_out.contains_key(c) || self.cap.adjacency_in.contains_key(c),
                     "vertical cap point {c:?} not present in cap sieve"
                 );
@@ -318,16 +322,19 @@ where
                     .down
                     .get(c)
                     .is_some_and(|v| v.iter().any(|(bb, _)| *bb == *b));
-                debug_assert!(has, "stack mirror missing: up {b:?}->{c:?} has no down");
+                crate::topology::_debug_invariants::inv_assert!(
+                    has,
+                    "stack mirror missing: up {b:?}->{c:?} has no down",
+                );
             }
         }
         for (c, downs) in &self.down {
-            debug_assert!(
+            crate::topology::_debug_invariants::inv_assert!(
                 self.cap.adjacency_out.contains_key(c) || self.cap.adjacency_in.contains_key(c),
                 "vertical cap point {c:?} not present in cap sieve"
             );
             for (b, _) in downs {
-                debug_assert!(
+                crate::topology::_debug_invariants::inv_assert!(
                     self.base.adjacency_out.contains_key(b)
                         || self.base.adjacency_in.contains_key(b),
                     "vertical base point {b:?} not present in base sieve"
@@ -336,7 +343,10 @@ where
                     .up
                     .get(b)
                     .is_some_and(|v| v.iter().any(|(cc, _)| *cc == *c));
-                debug_assert!(has, "stack mirror missing: down {b:?}->{c:?} has no up");
+                crate::topology::_debug_invariants::inv_assert!(
+                    has,
+                    "stack mirror missing: down {b:?}->{c:?} has no up",
+                );
             }
         }
     }

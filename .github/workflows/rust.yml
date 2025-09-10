@@ -93,6 +93,16 @@ jobs:
       - name: Run tests with invariant checks
         run: cargo test --release --verbose --features "check-invariants"
 
+  test-release-strict:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build (release + strict invariants)
+        run: cargo build --workspace --release --features strict-invariants
+      - name: Test (release + strict invariants)
+        run: cargo test --workspace --release --features strict-invariants
+
   # Separate job for benchmarks and integration tests
   benchmarks:
     runs-on: ubuntu-latest

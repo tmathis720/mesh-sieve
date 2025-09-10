@@ -100,5 +100,11 @@ Other examples:
 * Add symmetric comms tests for section/sieve/stack completion.
 * Update docs with examples for `closure_completed`, communicator setup, and overlap construction.
 
+## Invariant checks
+
+- By default, internal invariants are verified only in debug builds via `debug_assertions`.
+- Continuous integration also exercises these checks in optimized builds by enabling the `strict-invariants` feature.
+- End users incur zero overhead in normal release builds where this feature is disabled.
+
 ## License
 MIT License. See [LICENSE](LICENSE) for details.
