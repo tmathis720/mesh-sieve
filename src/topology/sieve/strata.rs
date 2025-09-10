@@ -5,8 +5,10 @@
 //! for any sieve instance.
 //!
 //! # Errors
-//! Returns `Err(MeshSieveError::MissingPointInCone(p))` if a `cone` points to `p` not in `points()`,
-//! or `Err(MeshSieveError::CycleDetected)` if the topology contains a cycle.
+//! * [`MeshSieveError::MissingPointInCone`]: an arrow references a point **not present in
+//!   `base_points ∪ cap_points`**. The error aggregates all such points (examples provided) and is
+//!   raised before any topological pass.
+//! * [`MeshSieveError::CycleDetected`]: the topology contains a cycle.
 
 use crate::mesh_error::MeshSieveError;
 use crate::topology::bounds::PointLike;
@@ -81,45 +83,86 @@ impl<P: PointLike> Default for StrataCache<P> {
 /// - Space: **O(|V| + |E|)** for intermediate degree maps and result vectors.
 ///
 /// # Errors
-/// Returns `Err(MeshSieveError::MissingPointInCone(p))` if a `cone` points to `p` not in `points()`,
-/// or `Err(MeshSieveError::CycleDetected)` if the topology contains a cycle.
+/// * [`MeshSieveError::MissingPointInCone`]: any arrow `(src → dst)` references a point not present
+///   in `base_points ∪ cap_points`. The error aggregates all such points and is raised before any
+///   topological pass.
+/// * [`MeshSieveError::CycleDetected`]: the topology contains a cycle.
 pub fn compute_strata<S>(s: &S) -> Result<StrataCache<S::Point>, MeshSieveError>
 where
     S: Sieve,
     S::Point: PointLike,
 {
-    // 1) collect in-degrees over s.points()
-    let mut in_deg = HashMap::new();
-    for p in s.points() {
+    use std::collections::{HashMap, HashSet};
+
+    // 0) Authoritative vertex set: V = base ∪ cap
+    let mut in_deg: HashMap<S::Point, u32> = HashMap::new();
+    for p in s.base_points() {
         in_deg.entry(p).or_insert(0);
+    }
+    for p in s.cap_points() {
+        in_deg.entry(p).or_insert(0);
+    }
+
+    // 1) Validate edges against V and accumulate in-degrees
+    //    We check both directions to catch backends that under-report one role.
+    let mut missing: HashSet<S::Point> = HashSet::new();
+
+    // 1a) cone: sources must be in V by construction; ensure all dst ∈ V
+    let sources: Vec<_> = in_deg.keys().copied().collect();
+    for p in sources {
         for (q, _) in s.cone(p) {
-            *in_deg.entry(q).or_insert(0) += 1;
+            if let Some(d) = in_deg.get_mut(&q) {
+                *d += 1;
+            } else {
+                missing.insert(q);
+            }
         }
     }
-    // 2) Kahn’s topo sort
+
+    // 1b) support: destinations must be in V; ensure all src ∈ V
+    let caps: Vec<_> = in_deg.keys().copied().collect();
+    for q in caps {
+        for (src, _) in s.support(q) {
+            if !in_deg.contains_key(&src) {
+                missing.insert(src);
+            }
+        }
+    }
+
+    if !missing.is_empty() {
+        let mut examples: Vec<_> = missing.iter().copied().collect();
+        examples.sort_unstable();
+        examples.truncate(8);
+        return Err(MeshSieveError::MissingPointInCone(format!(
+            "Topology references points not declared in base_points∪cap_points; examples: {examples:?} ({} missing total)",
+            missing.len()
+        )));
+    }
+
+    // 2) Kahn’s topological sort on V using the validated in-degrees
     let mut stack: Vec<_> = in_deg
         .iter()
-        .filter(|&(_, d)| *d == 0)
-        .map(|(&p, _)| p)
+        .filter_map(|(&p, &d)| (d == 0).then_some(p))
         .collect();
-    let mut topo = Vec::new();
+
+    let mut topo = Vec::with_capacity(in_deg.len());
     while let Some(p) = stack.pop() {
         topo.push(p);
         for (q, _) in s.cone(p) {
-            let d = in_deg
-                .get_mut(&q)
-                .ok_or_else(|| MeshSieveError::MissingPointInCone(format!("{q:?}")))?;
+            // safe: all q ∈ V by validation above
+            let d = in_deg.get_mut(&q).unwrap();
             *d -= 1;
             if *d == 0 {
                 stack.push(q);
             }
         }
     }
-    // 3) detect cycles
+
     if topo.len() != in_deg.len() {
         return Err(MeshSieveError::CycleDetected);
     }
-    // 4) heights
+
+    // 3) Heights (same as before)
     let mut height = HashMap::new();
     for &p in &topo {
         let h = s
@@ -132,9 +175,10 @@ where
     let max_h = *height.values().max().unwrap_or(&0);
     let mut strata = vec![Vec::new(); (max_h + 1) as usize];
     for (&p, &h) in &height {
-        strata[h as usize].push(p)
+        strata[h as usize].push(p);
     }
-    // 5) depths
+
+    // 4) Depths (same as before)
     let mut depth = HashMap::new();
     for &p in topo.iter().rev() {
         let d = s
@@ -145,16 +189,14 @@ where
         depth.insert(p, d);
     }
 
-    // 6) sort strata for deterministic chart
-    for level in &mut strata {
-        level.sort_unstable();
+    // 5) Deterministic chart (same as before)
+    for lev in &mut strata {
+        lev.sort_unstable();
     }
-    // 7) flatten strata into chart
     let mut chart_points = Vec::with_capacity(height.len());
-    for level in &strata {
-        chart_points.extend(level.iter().copied());
+    for lev in &strata {
+        chart_points.extend(lev.iter().copied());
     }
-    // 8) reverse index
     let mut chart_index = HashMap::with_capacity(chart_points.len());
     for (i, p) in chart_points.iter().copied().enumerate() {
         chart_index.insert(p, i);
