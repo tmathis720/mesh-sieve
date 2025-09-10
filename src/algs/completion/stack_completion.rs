@@ -67,7 +67,7 @@ where
     Q: WirePoint + Default + Eq + std::hash::Hash + Copy + Send + 'static,
     Pay: Copy + Pod + Zeroable + Default + PartialEq + Send + 'static,
     C: crate::algs::communicator::Communicator + Sync,
-    S: crate::topology::stack::Stack<Point = P, CapPt = Q, Payload = Pay>,
+    S: crate::topology::stack::Stack<Point = P, CapPt = Q, VerticalPayload = Pay>,
     O: Sieve<Point = P, Payload = R> + Sync,
     R: HasRank + Copy + Send + 'static,
 {
@@ -211,7 +211,7 @@ where
     Q: WirePoint + Default + Eq + std::hash::Hash + Copy + Send + 'static,
     Pay: Copy + Pod + Zeroable + Default + PartialEq + Send + 'static,
     C: crate::algs::communicator::Communicator + Sync,
-    S: crate::topology::stack::Stack<Point = P, CapPt = Q, Payload = Pay>,
+    S: crate::topology::stack::Stack<Point = P, CapPt = Q, VerticalPayload = Pay>,
     O: Sieve<Point = P, Payload = R> + Sync,
     R: HasRank + Copy + Send + 'static,
 {
