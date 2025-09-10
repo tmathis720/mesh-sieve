@@ -1,33 +1,71 @@
-use mesh_sieve::topology::sieve::frozen_csr::FrozenSieveCsr;
-use mesh_sieve::topology::sieve::{InMemorySieve, Sieve, SieveRef};
+use mesh_sieve::mesh_error::MeshSieveError;
+use mesh_sieve::topology::sieve::{InMemorySieve, Sieve, try_freeze_csr};
 
 #[test]
-fn frozen_matches_inmemory_neighbors() {
-    let mut s = InMemorySieve::<u32, i32>::default();
-    s.add_arrow(1, 2, 7);
-    s.add_arrow(1, 3, 8);
-    s.add_arrow(3, 4, 9);
-
-    let f = FrozenSieveCsr::from_sieve(s.clone());
-
-    let mut a: Vec<_> = s.cone_ref(1).map(|(q, w)| (q, *w)).collect();
-    let mut b: Vec<_> = f.cone_ref(1).map(|(q, w)| (q, *w)).collect();
-    a.sort();
-    b.sort();
-    assert_eq!(a, b);
+fn try_freeze_ok() {
+    let mut s = InMemorySieve::<u32, ()>::default();
+    s.add_arrow(1, 2, ());
+    s.add_arrow(2, 3, ());
+    let csr = try_freeze_csr(s).expect("should freeze");
+    let v: Vec<_> = csr.cone(1).map(|(q, _)| q).collect();
+    assert_eq!(v, vec![2]);
 }
 
 #[test]
-fn frozen_is_deterministic() {
+fn unknown_point_is_non_panicking_and_empty() {
     let mut s = InMemorySieve::<u32, ()>::default();
-    s.add_arrow(1, 3, ());
     s.add_arrow(1, 2, ());
-    s.add_arrow(2, 5, ());
-    s.add_arrow(2, 4, ());
+    let csr = try_freeze_csr(s).unwrap();
 
-    let f = FrozenSieveCsr::from_sieve(s);
-    let v1: Vec<_> = f.closure_iter([1]).collect();
-    let v2: Vec<_> = f.closure_iter([1]).collect();
-    assert_eq!(v1, v2);
-    assert_eq!(v1, vec![1, 3, 2, 5, 4]);
+    let v: Vec<_> = csr.cone(99).collect();
+    assert!(v.is_empty());
+
+    let err = csr.cone_checked(99).err().unwrap();
+    assert!(matches!(err, MeshSieveError::UnknownPoint(_)));
+}
+
+#[test]
+fn try_freeze_err_on_missing_point_in_cone() {
+    use mesh_sieve::topology::cache::InvalidateCache;
+    use mesh_sieve::topology::sieve::sieve_trait::Sieve as SieveTrait;
+
+    struct Bad;
+    impl SieveTrait for Bad {
+        type Point = u32;
+        type Payload = ();
+        type ConeIter<'a> = std::iter::Once<(u32, ())>;
+        type SupportIter<'a> = std::iter::Empty<(u32, ())>;
+        fn cone<'a>(&'a self, _p: u32) -> Self::ConeIter<'a> {
+            std::iter::once((42, ()))
+        }
+        fn support<'a>(&'a self, _p: u32) -> Self::SupportIter<'a> {
+            std::iter::empty()
+        }
+        fn add_arrow(&mut self, _: u32, _: u32, _: ()) {
+            unimplemented!()
+        }
+        fn remove_arrow(&mut self, _: u32, _: u32) -> Option<()> {
+            unimplemented!()
+        }
+        fn base_points<'a>(&'a self) -> Box<dyn Iterator<Item = u32> + 'a> {
+            Box::new([1u32].into_iter())
+        }
+        fn cap_points<'a>(&'a self) -> Box<dyn Iterator<Item = u32> + 'a> {
+            Box::new(std::iter::empty())
+        }
+        fn points_chart_order(&mut self) -> Result<Vec<u32>, MeshSieveError> {
+            Ok(vec![1])
+        }
+    }
+    impl InvalidateCache for Bad {
+        fn invalidate_cache(&mut self) {}
+    }
+    impl Default for Bad {
+        fn default() -> Self {
+            Bad
+        }
+    }
+
+    let err = try_freeze_csr::<_, u32, ()>(Bad).unwrap_err();
+    assert!(matches!(err, MeshSieveError::MissingPointInCone(_)));
 }

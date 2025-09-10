@@ -11,6 +11,7 @@ use std::sync::Arc;
 use super::query_ext::SieveQueryExt;
 use super::sieve_ref::SieveRef;
 use super::sieve_trait::Sieve;
+use crate::mesh_error::MeshSieveError;
 use crate::topology::bounds::{PayloadLike, PointLike};
 use crate::topology::cache::InvalidateCache;
 
@@ -67,7 +68,8 @@ where
     T: PayloadLike,
 {
     /// Build from any [`Sieve`], enforcing deterministic order.
-    pub fn from_sieve<S>(mut s: S) -> Self
+    /// Returns an error if the input mentions a destination point not present in the chart.
+    pub fn try_from_sieve<S>(mut s: S) -> Result<Self, MeshSieveError>
     where
         S: Sieve<Point = P, Payload = T>,
     {
@@ -77,19 +79,22 @@ where
             Err(_) => s.points_sorted(),
         };
         let n = point_of.len();
+
         let mut index_of = HashMap::with_capacity(n);
         for (i, p) in point_of.iter().copied().enumerate() {
             index_of.insert(p, i as u32);
         }
 
-        // 2) degree counts
+        // 2) degree counts with checked lookups
         let mut out_deg = vec![0u32; n];
         let mut in_deg = vec![0u32; n];
         for (i, p) in point_of.iter().copied().enumerate() {
             for (q, _) in s.cone(p) {
-                let qi = *index_of.get(&q).expect("destination must exist") as usize;
+                let Some(&qi) = index_of.get(&q) else {
+                    return Err(MeshSieveError::MissingPointInCone(format!("{q:?}")));
+                };
                 out_deg[i] += 1;
-                in_deg[qi] += 1;
+                in_deg[qi as usize] += 1;
             }
         }
 
@@ -110,13 +115,17 @@ where
         let mut out_write = out_offsets.clone();
         let mut in_write = in_offsets.clone();
 
-        // 3) populate arrays
+        // 3) populate arrays (neighbors sorted)
         for (i, p) in point_of.iter().copied().enumerate() {
             let mut neigh: Vec<(u32, T)> = s
                 .cone(p)
-                .map(|(q, pay)| (*index_of.get(&q).unwrap(), pay))
+                .map(|(q, pay)| {
+                    let &qi = index_of.get(&q).expect("checked above");
+                    (qi, pay)
+                })
                 .collect();
             neigh.sort_unstable_by_key(|(qi, _)| *qi);
+
             for (qi, pay) in neigh {
                 let pos = out_write[i] as usize;
                 out_dsts[pos] = qi;
@@ -133,7 +142,7 @@ where
         let out_pay: Vec<T> = out_pay.into_iter().map(|o| o.unwrap()).collect();
         let in_pay: Vec<T> = in_pay.into_iter().map(|o| o.unwrap()).collect();
 
-        Self {
+        Ok(Self {
             point_of: point_of.into(),
             index_of,
             out_offsets: out_offsets.into(),
@@ -142,18 +151,109 @@ where
             in_offsets: in_offsets.into(),
             in_srcs: in_srcs.into(),
             in_pay: in_pay.into(),
-        }
+        })
+    }
+
+    #[deprecated(note = "Use try_from_sieve; this will become fallible in a future release")]
+    pub fn from_sieve<S>(s: S) -> Self
+    where
+        S: Sieve<Point = P, Payload = T>,
+    {
+        Self::try_from_sieve(s).expect("FrozenSieveCsr::from_sieve(): invalid input sieve")
     }
 }
 
-/// Freeze any [`Sieve`] into a [`FrozenSieveCsr`].
+/// Freeze any [`Sieve`] into a [`FrozenSieveCsr`], returning an error if the
+/// input references a destination point missing from the chart.
+pub fn try_freeze_csr<S, P, T>(s: S) -> Result<FrozenSieveCsr<P, T>, MeshSieveError>
+where
+    S: Sieve<Point = P, Payload = T>,
+    P: PointLike,
+    T: PayloadLike,
+{
+    FrozenSieveCsr::try_from_sieve(s)
+}
+
+#[deprecated(note = "Use try_freeze_csr; this will become fallible in a future release")]
 pub fn freeze_csr<S, P, T>(s: S) -> FrozenSieveCsr<P, T>
 where
     S: Sieve<Point = P, Payload = T>,
     P: PointLike,
     T: PayloadLike,
 {
-    FrozenSieveCsr::from_sieve(s)
+    try_freeze_csr(s).expect("freeze_csr(): invalid input sieve")
+}
+
+impl<P, T> FrozenSieveCsr<P, T>
+where
+    P: PointLike,
+{
+    #[inline]
+    fn index_of_checked(&self, p: P) -> Result<usize, MeshSieveError> {
+        self.index_of
+            .get(&p)
+            .copied()
+            .map(|i| i as usize)
+            .ok_or_else(|| MeshSieveError::UnknownPoint(format!("{p:?}")))
+    }
+}
+
+impl<P, T> FrozenSieveCsr<P, T>
+where
+    P: PointLike,
+    T: PayloadLike,
+{
+    pub fn cone_checked<'a>(&'a self, p: P) -> Result<ConeIter<'a, P, T>, MeshSieveError> {
+        let i = self.index_of_checked(p)?;
+        let lo = self.out_offsets[i] as usize;
+        let hi = self.out_offsets[i + 1] as usize;
+        Ok(ConeIter {
+            sieve: self,
+            pos: lo,
+            end: hi,
+        })
+    }
+
+    pub fn support_checked<'a>(&'a self, p: P) -> Result<SupportIter<'a, P, T>, MeshSieveError> {
+        let i = self.index_of_checked(p)?;
+        let lo = self.in_offsets[i] as usize;
+        let hi = self.in_offsets[i + 1] as usize;
+        Ok(SupportIter {
+            sieve: self,
+            pos: lo,
+            end: hi,
+        })
+    }
+}
+
+impl<P, T> FrozenSieveCsr<P, T>
+where
+    P: PointLike,
+{
+    pub fn cone_ref_checked<'a>(&'a self, p: P) -> Result<ConeRefIter<'a, P, T>, MeshSieveError> {
+        let i = self.index_of_checked(p)?;
+        let lo = self.out_offsets[i] as usize;
+        let hi = self.out_offsets[i + 1] as usize;
+        Ok(ConeRefIter {
+            sieve: self,
+            pos: lo,
+            end: hi,
+        })
+    }
+
+    pub fn support_ref_checked<'a>(
+        &'a self,
+        p: P,
+    ) -> Result<SupportRefIter<'a, P, T>, MeshSieveError> {
+        let i = self.index_of_checked(p)?;
+        let lo = self.in_offsets[i] as usize;
+        let hi = self.in_offsets[i + 1] as usize;
+        Ok(SupportRefIter {
+            sieve: self,
+            pos: lo,
+            end: hi,
+        })
+    }
 }
 
 // --- iterators --------------------------------------------------------------------
@@ -286,24 +386,40 @@ where
         Self: 'a;
 
     fn cone<'a>(&'a self, p: P) -> Self::ConeIter<'a> {
-        let i = *self.index_of.get(&p).expect("unknown point") as usize;
-        let lo = self.out_offsets[i] as usize;
-        let hi = self.out_offsets[i + 1] as usize;
-        ConeIter {
-            sieve: self,
-            pos: lo,
-            end: hi,
+        if let Some(&i) = self.index_of.get(&p) {
+            let i = i as usize;
+            let lo = self.out_offsets[i] as usize;
+            let hi = self.out_offsets[i + 1] as usize;
+            ConeIter {
+                sieve: self,
+                pos: lo,
+                end: hi,
+            }
+        } else {
+            ConeIter {
+                sieve: self,
+                pos: 0,
+                end: 0,
+            }
         }
     }
 
     fn support<'a>(&'a self, p: P) -> Self::SupportIter<'a> {
-        let i = *self.index_of.get(&p).expect("unknown point") as usize;
-        let lo = self.in_offsets[i] as usize;
-        let hi = self.in_offsets[i + 1] as usize;
-        SupportIter {
-            sieve: self,
-            pos: lo,
-            end: hi,
+        if let Some(&i) = self.index_of.get(&p) {
+            let i = i as usize;
+            let lo = self.in_offsets[i] as usize;
+            let hi = self.in_offsets[i + 1] as usize;
+            SupportIter {
+                sieve: self,
+                pos: lo,
+                end: hi,
+            }
+        } else {
+            SupportIter {
+                sieve: self,
+                pos: 0,
+                end: 0,
+            }
         }
     }
 
@@ -353,24 +469,40 @@ where
         Self: 'a;
 
     fn cone_ref<'a>(&'a self, p: P) -> Self::ConeRefIter<'a> {
-        let i = *self.index_of.get(&p).expect("unknown point") as usize;
-        let lo = self.out_offsets[i] as usize;
-        let hi = self.out_offsets[i + 1] as usize;
-        ConeRefIter {
-            sieve: self,
-            pos: lo,
-            end: hi,
+        if let Some(&i) = self.index_of.get(&p) {
+            let i = i as usize;
+            let lo = self.out_offsets[i] as usize;
+            let hi = self.out_offsets[i + 1] as usize;
+            ConeRefIter {
+                sieve: self,
+                pos: lo,
+                end: hi,
+            }
+        } else {
+            ConeRefIter {
+                sieve: self,
+                pos: 0,
+                end: 0,
+            }
         }
     }
 
     fn support_ref<'a>(&'a self, p: P) -> Self::SupportRefIter<'a> {
-        let i = *self.index_of.get(&p).expect("unknown point") as usize;
-        let lo = self.in_offsets[i] as usize;
-        let hi = self.in_offsets[i + 1] as usize;
-        SupportRefIter {
-            sieve: self,
-            pos: lo,
-            end: hi,
+        if let Some(&i) = self.index_of.get(&p) {
+            let i = i as usize;
+            let lo = self.in_offsets[i] as usize;
+            let hi = self.in_offsets[i + 1] as usize;
+            SupportRefIter {
+                sieve: self,
+                pos: lo,
+                end: hi,
+            }
+        } else {
+            SupportRefIter {
+                sieve: self,
+                pos: 0,
+                end: 0,
+            }
         }
     }
 }
@@ -382,12 +514,20 @@ where
 {
     #[inline]
     fn out_degree(&self, p: P) -> usize {
-        let i = *self.index_of.get(&p).expect("unknown point") as usize;
-        (self.out_offsets[i + 1] - self.out_offsets[i]) as usize
+        if let Some(&i) = self.index_of.get(&p) {
+            let i = i as usize;
+            (self.out_offsets[i + 1] - self.out_offsets[i]) as usize
+        } else {
+            0
+        }
     }
     #[inline]
     fn in_degree(&self, p: P) -> usize {
-        let i = *self.index_of.get(&p).expect("unknown point") as usize;
-        (self.in_offsets[i + 1] - self.in_offsets[i]) as usize
+        if let Some(&i) = self.index_of.get(&p) {
+            let i = i as usize;
+            (self.in_offsets[i + 1] - self.in_offsets[i]) as usize
+        } else {
+            0
+        }
     }
 }

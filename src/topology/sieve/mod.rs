@@ -38,7 +38,7 @@ pub mod traversal_iter;
 
 // Re-export the core trait and in‐memory impl at top level
 pub use build_ext::SieveBuildExt;
-pub use frozen_csr::{FrozenSieveCsr, freeze_csr};
+pub use frozen_csr::{FrozenSieveCsr, freeze_csr, try_freeze_csr};
 pub use in_memory::InMemorySieve;
 pub use in_memory_det::InMemorySieveDeterministic;
 pub use in_memory_oriented::InMemoryOrientedSieve;
