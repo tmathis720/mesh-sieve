@@ -219,17 +219,24 @@ where
             for (&src, v) in &s.adjacency_out {
                 for (dst, _, o) in v {
                     let prev = out_map.insert((src, *dst), *o);
-                    debug_assert!(prev.is_none(), "duplicate (src,dst) unexpectedly seen");
+                    crate::topology::_debug_invariants::inv_assert!(
+                        prev.is_none(),
+                        "duplicate (src,dst) unexpectedly seen"
+                    );
                 }
             }
             for (&dst, v) in &s.adjacency_in {
                 for (src, _, o_in) in v {
                     let Some(o_out) = out_map.get(&(*src, dst)) else {
-                        debug_assert!(false, "in mirror without out entry: ({src:?}->{dst:?})");
+                        crate::topology::_debug_invariants::inv_assert!(
+                            false,
+                            "in mirror without out entry: ({src:?}->{dst:?})"
+                        );
                         continue;
                     };
-                    debug_assert_eq!(
-                        o_in, o_out,
+                    crate::topology::_debug_invariants::inv_assert_eq!(
+                        o_in,
+                        o_out,
                         "orientation mismatch for ({src:?}->{dst:?}): in={o_in:?}, out={o_out:?}"
                     );
                 }

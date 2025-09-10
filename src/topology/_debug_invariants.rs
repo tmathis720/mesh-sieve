@@ -2,6 +2,31 @@
 
 use std::collections::{HashMap, HashSet};
 
+/// `inv_assert*` fire in debug builds and whenever the `strict-invariants`
+/// feature is enabled; they compile to no-ops otherwise.
+#[cfg(any(debug_assertions, feature = "strict-invariants"))]
+macro_rules! inv_assert {
+    ($($tt:tt)*) => { assert!($($tt)*); };
+}
+#[cfg(any(debug_assertions, feature = "strict-invariants"))]
+macro_rules! inv_assert_eq {
+    ($($tt:tt)*) => { assert_eq!($($tt)*); };
+}
+#[cfg(not(any(debug_assertions, feature = "strict-invariants")))]
+macro_rules! inv_assert {
+    ($($tt:tt)*) => {
+        ()
+    };
+}
+#[cfg(not(any(debug_assertions, feature = "strict-invariants")))]
+macro_rules! inv_assert_eq {
+    ($($tt:tt)*) => {
+        ()
+    };
+}
+pub(crate) use inv_assert;
+pub(crate) use inv_assert_eq;
+
 #[inline]
 pub fn count_pairs<P: Copy + Eq + std::hash::Hash>(
     it: impl IntoIterator<Item = (P, P)>,
@@ -23,7 +48,7 @@ where
         let mut seen = HashSet::with_capacity(vec.len());
         for (dst, _) in vec {
             let fresh = seen.insert(*dst);
-            debug_assert!(fresh, "duplicate edge detected: src={src:?} dst={dst:?}");
+            inv_assert!(fresh, "duplicate edge detected: src={src:?} dst={dst:?}");
         }
     }
 }
@@ -37,21 +62,22 @@ pub fn counts_equal<P>(
 ) where
     P: Copy + Eq + std::hash::Hash + std::fmt::Debug,
 {
-    debug_assert_eq!(
+    inv_assert_eq!(
         a.len(),
         b.len(),
         "edge multiset cardinality mismatch ({label_a} vs {label_b})",
     );
     for (k, va) in a {
         let Some(vb) = b.get(k) else {
-            debug_assert!(
+            inv_assert!(
                 false,
                 "edge present in {label_a} but missing in {label_b}: {k:?}"
             );
             continue;
         };
-        debug_assert_eq!(
-            va, vb,
+        inv_assert_eq!(
+            va,
+            vb,
             "edge multiplicity mismatch for {k:?}: {label_a}={va}, {label_b}={vb}"
         );
     }

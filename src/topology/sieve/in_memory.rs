@@ -148,7 +148,7 @@ impl<P: PointLike, T: PayloadLike> InMemorySieve<P, T> {
 
         let out_total: usize = self.adjacency_out.values().map(|v| v.len()).sum();
         let in_total: usize = self.adjacency_in.values().map(|v| v.len()).sum();
-        debug_assert_eq!(out_total, in_total, "total out != total in");
+        dbg::inv_assert_eq!(out_total, in_total, "total out != total in");
 
         let out_pairs = dbg::count_pairs(
             self.adjacency_out
@@ -505,8 +505,7 @@ where
             }
         }
         self.invalidate_cache();
-        #[cfg(debug_assertions)]
-        self.debug_assert_invariants();
+        debug_invariants!(self);
     }
 
     fn add_arrows_dedup_from<I>(&mut self, edges: I)
@@ -548,8 +547,7 @@ where
             }
         }
         self.invalidate_cache();
-        #[cfg(debug_assertions)]
-        self.debug_assert_invariants();
+        debug_invariants!(self);
     }
 }
 
