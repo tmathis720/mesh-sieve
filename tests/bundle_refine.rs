@@ -4,6 +4,7 @@ use mesh_sieve::data::section::Section;
 use mesh_sieve::overlap::delta::CopyDelta;
 use mesh_sieve::topology::arrow::Polarity;
 use mesh_sieve::topology::point::PointId;
+use mesh_sieve::topology::sieve::Sieve;
 use mesh_sieve::topology::stack::{InMemoryStack, Stack};
 
 #[test]
@@ -17,6 +18,8 @@ fn refine_disjoint_slices_no_allocations() -> Result<(), Box<dyn std::error::Err
     section.try_set(b, &[10, 20, 30])?;
 
     let mut stack = InMemoryStack::<PointId, PointId, Polarity>::default();
+    stack.base.add_arrow(b, b, ());
+    stack.cap.add_arrow(c, c, ());
     stack.add_arrow(b, c, Polarity::Forward)?;
 
     let mut bundle = Bundle {
@@ -40,6 +43,8 @@ fn refine_overlapping_slices_safe_reverse() -> Result<(), Box<dyn std::error::Er
     section.try_set(p, &[1, 2, 3, 4])?;
 
     let mut stack = InMemoryStack::<PointId, PointId, Polarity>::default();
+    stack.base.add_arrow(p, p, ());
+    stack.cap.add_arrow(p, p, ());
     stack.add_arrow(p, p, Polarity::Reverse)?;
 
     let mut bundle = Bundle {

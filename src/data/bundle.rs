@@ -248,6 +248,18 @@ mod tests {
         section.try_set(PointId::new(1).unwrap(), &[10]).unwrap();
         section.try_set(PointId::new(2).unwrap(), &[20]).unwrap();
         let mut stack = InMemoryStack::<PointId, PointId, Polarity>::new();
+        stack
+            .base
+            .add_arrow(PointId::new(1).unwrap(), PointId::new(1).unwrap(), ());
+        stack
+            .base
+            .add_arrow(PointId::new(2).unwrap(), PointId::new(2).unwrap(), ());
+        stack
+            .cap
+            .add_arrow(PointId::new(101).unwrap(), PointId::new(101).unwrap(), ());
+        stack
+            .cap
+            .add_arrow(PointId::new(102).unwrap(), PointId::new(102).unwrap(), ());
         let _ = stack.add_arrow(
             PointId::new(1).unwrap(),
             PointId::new(101).unwrap(),
@@ -333,6 +345,12 @@ mod tests {
             .try_set(PointId::new(1).unwrap(), &[10, 20])
             .unwrap();
         let mut stack = InMemoryStack::<PointId, PointId, Polarity>::new();
+        stack
+            .base
+            .add_arrow(PointId::new(1).unwrap(), PointId::new(1).unwrap(), ());
+        stack
+            .cap
+            .add_arrow(PointId::new(101).unwrap(), PointId::new(101).unwrap(), ());
         let _ = stack.add_arrow(
             PointId::new(1).unwrap(),
             PointId::new(101).unwrap(),
@@ -360,6 +378,12 @@ mod tests {
         let mut section = Section::<i32>::new(atlas.clone());
         section.try_set(PointId::new(1).unwrap(), &[1, 2]).unwrap();
         let mut stack = InMemoryStack::<PointId, PointId, Polarity>::new();
+        stack
+            .base
+            .add_arrow(PointId::new(1).unwrap(), PointId::new(1).unwrap(), ());
+        stack
+            .cap
+            .add_arrow(PointId::new(101).unwrap(), PointId::new(101).unwrap(), ());
         let _ = stack.add_arrow(
             PointId::new(1).unwrap(),
             PointId::new(101).unwrap(),
@@ -392,6 +416,15 @@ mod tests {
         section.try_set(PointId::new(101).unwrap(), &[5]).unwrap();
         section.try_set(PointId::new(102).unwrap(), &[7]).unwrap();
         let mut stack = InMemoryStack::<PointId, PointId, Polarity>::new();
+        stack
+            .base
+            .add_arrow(PointId::new(1).unwrap(), PointId::new(1).unwrap(), ());
+        stack
+            .cap
+            .add_arrow(PointId::new(101).unwrap(), PointId::new(101).unwrap(), ());
+        stack
+            .cap
+            .add_arrow(PointId::new(102).unwrap(), PointId::new(102).unwrap(), ());
         let _ = stack.add_arrow(
             PointId::new(1).unwrap(),
             PointId::new(101).unwrap(),
@@ -428,6 +461,15 @@ mod tests {
         section.try_set(PointId::new(101).unwrap(), &[8]).unwrap();
         section.try_set(PointId::new(102).unwrap(), &[9]).unwrap();
         let mut stack = InMemoryStack::<PointId, PointId, Polarity>::new();
+        stack
+            .base
+            .add_arrow(PointId::new(1).unwrap(), PointId::new(1).unwrap(), ());
+        stack
+            .cap
+            .add_arrow(PointId::new(101).unwrap(), PointId::new(101).unwrap(), ());
+        stack
+            .cap
+            .add_arrow(PointId::new(102).unwrap(), PointId::new(102).unwrap(), ());
         let _ = stack.add_arrow(
             PointId::new(1).unwrap(),
             PointId::new(101).unwrap(),

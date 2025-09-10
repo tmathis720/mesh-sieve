@@ -43,6 +43,8 @@ fn oriented_upsert_replaces_payload() {
 #[test]
 fn stack_shares_payload_across_directions() {
     let mut st = InMemoryStackArc::<u32, u32, i32>::default();
+    st.base.add_arrow(1, 1, ());
+    st.cap.add_arrow(100, 100, ());
     st.add_arrow_val(1, 100, 9).unwrap();
     let (cap, a) = st.lift(1).next().unwrap();
     let (base, b) = st.drop(100).next().unwrap();

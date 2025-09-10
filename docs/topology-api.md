@@ -265,15 +265,15 @@ Links a **base** sieve to a **cap** sieve with vertical arrows and payload:
 pub trait Stack {
     type Point;    // base point
     type CapPt;    // cap point
-    type Payload: Clone;
-    type BaseSieve: Sieve<Point = Self::Point, Payload = Self::Payload>;
-    type CapSieve:  Sieve<Point = Self::CapPt, Payload = Self::Payload>;
+    type VerticalPayload: Clone;
+    type BaseSieve: Sieve<Point = Self::Point>;
+    type CapSieve:  Sieve<Point = Self::CapPt>;
 
-    fn lift(&self, p: Self::Point)   -> Box<dyn Iterator<Item=(Self::CapPt, Self::Payload)> + '_>;
-    fn drop(&self, q: Self::CapPt)   -> Box<dyn Iterator<Item=(Self::Point, Self::Payload)> + '_>;
+    fn lift(&self, p: Self::Point) -> Box<dyn Iterator<Item=(Self::CapPt, Self::VerticalPayload)> + '_>;
+    fn drop(&self, q: Self::CapPt) -> Box<dyn Iterator<Item=(Self::Point, Self::VerticalPayload)> + '_>;
 
-    fn add_arrow(&mut self, base: Self::Point, cap: Self::CapPt, pay: Self::Payload) -> Result<(), MeshSieveError>;
-    fn remove_arrow(&mut self, base: Self::Point, cap: Self::CapPt) -> Result<Option<Self::Payload>, MeshSieveError>;
+    fn add_arrow(&mut self, base: Self::Point, cap: Self::CapPt, pay: Self::VerticalPayload) -> Result<(), MeshSieveError>;
+    fn remove_arrow(&mut self, base: Self::Point, cap: Self::CapPt) -> Result<Option<Self::VerticalPayload>, MeshSieveError>;
 
     fn base(&self) -> &Self::BaseSieve; // may panic in composed stacks
     fn cap(&self)  -> &Self::CapSieve;
@@ -283,17 +283,17 @@ pub trait Stack {
 }
 ```
 
-### `InMemoryStack<B,C,P>`
+### `InMemoryStack<B,C,V,PB,PC>`
 
-Stores two sieves (`base`, `cap`) and two vertical maps (`up: B→[(C,P)]`, `down: C→[(B,P)]`).
+Stores two sieves (`base`, `cap`) with independent horizontal payloads and two vertical maps (`up: B→[(C,V)]`, `down: C→[(B,V)]`).
 
 * Upsert on `(base,cap)`; mirrors and payloads kept consistent.
-* Cache invalidation: both `base` and `cap` `InvalidateCache` are called on mutation.
-* Debug invariants ensure no duplicates and exact up/down totals.
+* Vertical mutations do **not** invalidate base/cap caches; call `invalidate_base_and_cap` if needed.
+* Debug invariants ensure no duplicates, exact up/down totals, and membership of vertical points in their respective sieves.
 
-### `ComposedStack<'a, S1, S2, F>`
+### `ComposedStack<'a, S1, S2, F, VO>`
 
-Stack composition: **lower: `base→mid`**, **upper: `mid→cap`**. Traversal composes payloads using a provided `compose_payload: Fn(&P,&P)->P`. No mutation or direct base/cap access (panics/`UnsupportedStackOperation`).
+Stack composition: **lower: `base→mid`**, **upper: `mid→cap`**. Traversal composes vertical payloads using a provided `compose_payload: F(&V1,&V2)->VO`. No mutation or direct base/cap access (panics/`UnsupportedStackOperation`).
 
 > Use this to build multi-level vertical relations (e.g., cell→face→edge→DOF) without materializing an explicit mid layer.
 
