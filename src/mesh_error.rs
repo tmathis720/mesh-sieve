@@ -26,6 +26,9 @@ pub enum MeshSieveError {
     /// A point appeared in a cone but wasn’t in the initial point set.
     #[error("Topology error: point `{0}` found in cone but not in point set")]
     MissingPointInCone(String),
+    /// Attempted to access a point that is not present in the CSR chart.
+    #[error("Topology error: point `{0}` not present in chart")]
+    UnknownPoint(String),
     /// The mesh topology contains a cycle; expected a DAG.
     #[error("Topology error: cycle detected in mesh (expected DAG)")]
     CycleDetected,
@@ -191,6 +194,7 @@ impl PartialEq for MeshSieveError {
             | (PartitionPointOverflow, PartitionPointOverflow) => true,
             (UnsupportedStackOperation(a), UnsupportedStackOperation(b)) => a == b,
             (MissingPointInCone(a), MissingPointInCone(b)) => a == b,
+            (UnknownPoint(a), UnknownPoint(b)) => a == b,
             (DuplicatePoint(a), DuplicatePoint(b)) => a == b,
             (MissingAtlasPoint(a), MissingAtlasPoint(b)) => a == b,
             (PointNotInAtlas(a), PointNotInAtlas(b)) => a == b,
