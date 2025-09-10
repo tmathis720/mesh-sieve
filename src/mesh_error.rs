@@ -20,6 +20,9 @@ pub enum MeshSieveError {
     /// Attempted to construct a PointId with a zero value (invalid).
     #[error("PointId must be non-zero (0 is reserved as invalid/sentinel)")]
     InvalidPointId,
+    /// Vertical arrow references a point missing from the base or cap sieve.
+    #[error("stack arrow references missing point in {role}: {point}")]
+    StackMissingPoint { role: &'static str, point: String },
     /// Mutation on a read-only stack (e.g., `ComposedStack`) is not allowed.
     #[error("Unsupported stack operation: {0}")]
     UnsupportedStackOperation(&'static str),

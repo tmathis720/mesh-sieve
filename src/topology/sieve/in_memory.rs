@@ -104,6 +104,12 @@ impl<P: PointLike, T: PayloadLike> InMemorySieve<P, T> {
         self.strata.take();
     }
 
+    /// Point exists if it has an entry in either role (even with zero degree).
+    #[inline]
+    pub fn contains_point(&self, p: P) -> bool {
+        self.adjacency_out.contains_key(&p) || self.adjacency_in.contains_key(&p)
+    }
+
     #[inline]
     fn scrub_outgoing_only(&mut self, src: P) {
         let old: Vec<(P, T)> = std::mem::take(self.adjacency_out.entry(src).or_default());

@@ -4,10 +4,17 @@
 //! a **base** mesh and a **cap** mesh (e.g., from elements to degrees-of-freedom).
 //! This module provides a generic `Stack` trait and an in-memory implementation,
 //! along with facilities for composing multiple stacks.
+//!
+//! [`Stack::add_arrow`] requires that `base` is present in the base sieve and `cap`
+//! is present in the cap sieve. Insert points first via the sieve mutators
+//! (`add_point`, `add_base_point`, `add_cap_point`). In debug and
+//! `strict-invariants` builds, violating this invariant panics; in all builds the
+//! method returns `Err(MeshSieveError::StackMissingPoint{..})` when either point
+//! is missing.
 
 use super::sieve::InMemorySieve;
 use crate::mesh_error::MeshSieveError;
-use crate::topology::_debug_invariants::debug_invariants;
+use crate::topology::_debug_invariants::{debug_invariants, inv_assert};
 use crate::topology::bounds::{PayloadLike, PointLike};
 use crate::topology::cache::InvalidateCache;
 use std::collections::HashMap;
@@ -96,9 +103,9 @@ pub trait Stack {
 #[derive(Clone, Debug)]
 pub struct InMemoryStack<B: PointLike, C: PointLike, V = (), PB = (), PC = ()> {
     /// Underlying base sieve (e.g., mesh connectivity).
-    pub base: InMemorySieve<B, PB>,
+    base: InMemorySieve<B, PB>,
     /// Underlying cap sieve (e.g., DOF connectivity).
-    pub cap: InMemorySieve<C, PC>,
+    cap: InMemorySieve<C, PC>,
     /// Upward adjacency: base -> cap
     pub up: HashMap<B, Vec<(C, V)>>,
     /// Downward adjacency: cap -> base
@@ -189,6 +196,21 @@ where
     }
 
     fn add_arrow(&mut self, base: B, cap: C, pay: V) -> Result<(), MeshSieveError> {
+        if !self.base.contains_point(base) {
+            inv_assert!(false, "stack add_arrow: base point missing: {base:?}");
+            return Err(MeshSieveError::StackMissingPoint {
+                role: "base",
+                point: format!("{base:?}"),
+            });
+        }
+        if !self.cap.contains_point(cap) {
+            inv_assert!(false, "stack add_arrow: cap point missing: {cap:?}");
+            return Err(MeshSieveError::StackMissingPoint {
+                role: "cap",
+                point: format!("{cap:?}"),
+            });
+        }
+
         let ups = self.up.entry(base).or_default();
         if let Some(slot) = ups.iter_mut().find(|(c, _)| *c == cap) {
             slot.1 = pay.clone();
@@ -203,11 +225,20 @@ where
             downs.push((base, pay.clone()));
         }
 
+        InvalidateCache::invalidate_cache(&mut self.base);
+        InvalidateCache::invalidate_cache(&mut self.cap);
         debug_invariants!(self);
         Ok(())
     }
 
     fn remove_arrow(&mut self, base: B, cap: C) -> Result<Option<V>, MeshSieveError> {
+        if !self.base.contains_point(base) {
+            inv_assert!(false, "stack remove_arrow: base point missing: {base:?}");
+        }
+        if !self.cap.contains_point(cap) {
+            inv_assert!(false, "stack remove_arrow: cap point missing: {cap:?}");
+        }
+
         let mut removed = None;
 
         let remove_up = if let Some(vec) = self.up.get_mut(&base) {
@@ -233,6 +264,8 @@ where
         if remove_down {
             self.down.remove(&cap);
         }
+        InvalidateCache::invalidate_cache(&mut self.base);
+        InvalidateCache::invalidate_cache(&mut self.cap);
         debug_invariants!(self);
         Ok(removed)
     }
@@ -598,7 +631,7 @@ mod tests {
     }
 
     #[test]
-    fn vertical_edits_preserve_horizontal_caches() {
+    fn vertical_edits_invalidate_horizontal_caches() {
         let mut s = InMemoryStack::<u32, u32, (), (), ()>::default();
         s.base.add_arrow(1, 2, ());
         s.cap.add_arrow(10, 20, ());
@@ -609,8 +642,8 @@ mod tests {
         assert!(s.base.strata.get().is_some());
         assert!(s.cap.strata.get().is_some());
         s.add_arrow(1, 10, ()).unwrap();
-        assert!(s.base.strata.get().is_some());
-        assert!(s.cap.strata.get().is_some());
+        assert!(s.base.strata.get().is_none());
+        assert!(s.cap.strata.get().is_none());
     }
 
     #[test]
@@ -684,7 +717,10 @@ mod tests {
 
     #[test]
     fn remove_nonexistent_returns_none() {
+        use crate::topology::sieve::MutableSieve;
         let mut s = InMemoryStack::<u32, u32, ()>::new();
+        MutableSieve::add_base_point(s.base_mut().unwrap(), 5);
+        MutableSieve::add_cap_point(s.cap_mut().unwrap(), 50);
         assert_eq!(s.remove_arrow(5, 50).unwrap(), None);
     }
 
@@ -719,6 +755,39 @@ mod tests {
         let s = InMemoryStack::<u8, u8, ()>::new();
         assert!(s.lift(0).next().is_none());
         assert!(s.drop(0).next().is_none());
+    }
+
+    #[test]
+    fn stack_add_arrow_missing_base_rejected() {
+        use crate::topology::sieve::MutableSieve;
+        let mut st = InMemoryStack::<u32, u32, ()>::new();
+        MutableSieve::add_cap_point(st.cap_mut().unwrap(), 20);
+        let res =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| st.add_arrow(10, 20, ())));
+        match res {
+            Ok(Err(e)) => assert!(format!("{e}").contains("base")),
+            Err(_) => (), // panic expected in debug/strict builds
+            Ok(Ok(_)) => panic!("expected failure"),
+        }
+    }
+
+    #[test]
+    fn stack_add_arrow_ok_when_points_exist() {
+        use crate::topology::sieve::MutableSieve;
+        let mut st = InMemoryStack::<u32, u32, ()>::new();
+        MutableSieve::add_base_point(st.base_mut().unwrap(), 10);
+        MutableSieve::add_cap_point(st.cap_mut().unwrap(), 20);
+        st.add_arrow(10, 20, ()).unwrap();
+    }
+
+    #[cfg(any(debug_assertions, feature = "strict-invariants"))]
+    #[test]
+    #[should_panic]
+    fn strict_build_panics_on_missing_cap() {
+        use crate::topology::sieve::MutableSieve;
+        let mut st = InMemoryStack::<u32, u32, ()>::new();
+        MutableSieve::add_base_point(st.base_mut().unwrap(), 10);
+        let _ = st.add_arrow(10, 20, ());
     }
 
     // #[test]
