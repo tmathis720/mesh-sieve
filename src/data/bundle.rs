@@ -184,17 +184,33 @@ where
         use crate::mesh_error::MeshSieveError;
 
         for b in self.stack.base().closure(bases) {
-            let caps: Vec<_> = self.stack.lift(b).map(|(cap, _)| cap).collect();
-            if caps.is_empty() {
-                continue;
-            }
+            // Stream the cap ids; avoid per-base allocation.
+            let mut caps_iter = self.stack.lift(b).map(|(cap, _)| cap);
+
+            // Empty? nothing to assemble for this base.
+            let first_cap = match caps_iter.next() {
+                Some(c) => c,
+                None => continue,
+            };
 
             // Base slice defines the expected length
             let base_len = self.section.try_restrict(b)?.len();
 
-            // Collect and validate cap slices once
-            let mut cap_slices = Vec::with_capacity(caps.len());
-            for &cap in &caps {
+            // Initialize accumulator using the first cap slice after length validation.
+            let first_slice = self.section.try_restrict(first_cap)?;
+            if first_slice.len() != base_len {
+                return Err(MeshSieveError::SliceLengthMismatch {
+                    point: first_cap,
+                    expected: base_len,
+                    found: first_slice.len(),
+                });
+            }
+
+            let mut acc = reducer.make_zero(base_len);
+            reducer.accumulate(&mut acc, first_slice)?;
+            let mut count = 1usize;
+
+            for cap in caps_iter {
                 let sl = self.section.try_restrict(cap)?;
                 if sl.len() != base_len {
                     return Err(MeshSieveError::SliceLengthMismatch {
@@ -203,16 +219,10 @@ where
                         found: sl.len(),
                     });
                 }
-                cap_slices.push((cap, sl));
-            }
-
-            let mut acc = reducer.make_zero(base_len);
-            let mut count = 0usize;
-
-            for (_cap, sl) in cap_slices {
                 reducer.accumulate(&mut acc, sl)?;
                 count += 1;
             }
+
             reducer.finalize(&mut acc, count)?;
             self.section.try_set(b, &acc)?;
         }
