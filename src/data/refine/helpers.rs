@@ -4,12 +4,19 @@
 //! This module provides utility functions for extracting slices of data
 //! associated with points in a mesh, following closure or star traversals
 //! of a [`Sieve`]. It also provides a read-only wrapper for section data.
+//!
+//! The legacy infallible helpers and [`Map`] adapter are gated behind the
+//! `map-adapter` feature (off by default). Prefer the fallible [`FallibleMap`]
+//! trait and `try_*` helpers.
 
-use crate::data::section::{FallibleMap, Map};
+use crate::data::section::FallibleMap;
+#[cfg(feature = "map-adapter")]
+use crate::data::section::Map;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
 
+#[cfg(feature = "map-adapter")]
 /// Restrict a map along the closure of the given seed points.
 ///
 /// Returns an iterator over `(PointId, &[V])` for all points in the closure.
@@ -28,6 +35,7 @@ where
     sieve.closure(seeds).map(move |p| (p, map.get(p)))
 }
 
+#[cfg(feature = "map-adapter")]
 /// Restrict a map along the star of the given seed points.
 ///
 /// Returns an iterator over `(PointId, &[V])` for all points in the star.
@@ -46,6 +54,7 @@ where
     sieve.star(seeds).map(move |p| (p, map.get(p)))
 }
 
+#[cfg(feature = "map-adapter")]
 /// Restrict a map along the closure of the given seed points, collecting results into a vector.
 ///
 /// # Migration
@@ -62,6 +71,7 @@ where
     restrict_closure(sieve, map, seeds).collect()
 }
 
+#[cfg(feature = "map-adapter")]
 /// Restrict a map along the star of the given seed points, collecting results into a vector.
 ///
 /// # Migration
@@ -182,6 +192,7 @@ where
 
 /// Read-only wrapper for a section.
 pub struct ReadOnlyMap<'a, V> {
+    /// Underlying [`Section`] providing slice data.
     pub section: &'a crate::data::section::Section<V>,
 }
 
@@ -202,6 +213,7 @@ impl<'a, V> FallibleMap<V> for ReadOnlyMap<'a, V> {
     }
 }
 
+#[cfg(feature = "map-adapter")]
 impl<'a, V> Map<V> for ReadOnlyMap<'a, V> {
     fn get(&self, p: crate::topology::point::PointId) -> &[V] {
         self.section
@@ -215,7 +227,9 @@ impl<'a, V> Map<V> for ReadOnlyMap<'a, V> {
 mod tests {
     use super::*;
     use crate::data::atlas::Atlas;
-    use crate::data::section::{FallibleMap, Map, Section};
+    use crate::data::section::{FallibleMap, Section};
+    #[cfg(feature = "map-adapter")]
+    use crate::data::section::Map;
     use crate::topology::point::PointId;
     use crate::topology::sieve::in_memory::InMemorySieve;
 
@@ -237,6 +251,52 @@ mod tests {
         sec.try_set(v(1), &[10]).unwrap();
         sec.try_set(v(2), &[20]).unwrap();
         sec.try_set(v(3), &[30]).unwrap();
+
+        // fallible helpers succeed
+        let expected: Vec<_> = s
+            .closure([v(1)])
+            .map(|p| (p, sec.try_restrict(p).unwrap()))
+            .collect();
+        assert_eq!(
+            try_restrict_closure_vec(&s, &sec, [v(1)]).unwrap(),
+            expected
+        );
+
+        // fallible helpers return Err on missing point
+        assert!(matches!(
+            try_restrict_closure_vec(&s, &sec, [v(99)]),
+            Err(MeshSieveError::PointNotInAtlas(pid)) if pid == v(99)
+        ));
+
+        // ReadOnlyMap fallible
+        #[allow(unused_mut)]
+        let mut rom = ReadOnlyMap { section: &sec };
+        assert_eq!(
+            <ReadOnlyMap<'_, i32> as FallibleMap<i32>>::try_get(&rom, v(3)).unwrap(),
+            sec.try_restrict(v(3)).unwrap()
+        );
+        assert!(<ReadOnlyMap<'_, i32> as FallibleMap<i32>>::try_get(&rom, v(99)).is_err());
+
+        #[cfg(feature = "map-adapter")]
+        assert!(<ReadOnlyMap<'_, i32> as Map<i32>>::get_mut(&mut rom, v(3)).is_none());
+    }
+
+    #[cfg(feature = "map-adapter")]
+    #[test]
+    fn restrict_helpers_legacy() {
+        // Build tiny mesh: 1→2→3
+        let mut s = InMemorySieve::<PointId, ()>::default();
+        s.add_arrow(v(1), v(2), ());
+        s.add_arrow(v(2), v(3), ());
+        let mut atlas = Atlas::default();
+        atlas.try_insert(v(1), 1).unwrap();
+        atlas.try_insert(v(2), 1).unwrap();
+        atlas.try_insert(v(3), 1).unwrap();
+        let mut sec = Section::<i32>::new(atlas);
+        sec.try_set(v(1), &[10]).unwrap();
+        sec.try_set(v(2), &[20]).unwrap();
+        sec.try_set(v(3), &[30]).unwrap();
+
         // restrict_closure
         let out: Vec<_> = restrict_closure(&s, &sec, [v(1)]).collect();
         let expected: Vec<_> = s
@@ -252,25 +312,12 @@ mod tests {
             restrict_closure_vec(&s, &sec, [v(2)]),
             restrict_closure(&s, &sec, [v(2)]).collect::<Vec<_>>()
         );
-        // fallible helpers succeed
+        // fallible helpers match legacy
         assert_eq!(
             try_restrict_closure_vec(&s, &sec, [v(1)]).unwrap(),
             restrict_closure_vec(&s, &sec, [v(1)])
         );
-        // fallible helpers return Err on missing point
-        assert!(matches!(
-            try_restrict_closure_vec(&s, &sec, [v(99)]),
-            Err(MeshSieveError::PointNotInAtlas(pid)) if pid == v(99)
-        ));
         // legacy helper panics on missing point
         assert!(std::panic::catch_unwind(|| restrict_closure_vec(&s, &sec, [v(99)])).is_err());
-        // ReadOnlyMap fallible
-        let mut rom = ReadOnlyMap { section: &sec };
-        assert_eq!(
-            <ReadOnlyMap<'_, i32> as FallibleMap<i32>>::try_get(&rom, v(3)).unwrap(),
-            sec.try_restrict(v(3)).unwrap()
-        );
-        assert!(<ReadOnlyMap<'_, i32> as FallibleMap<i32>>::try_get(&rom, v(99)).is_err());
-        assert!(<ReadOnlyMap<'_, i32> as Map<i32>>::get_mut(&mut rom, v(3)).is_none());
     }
 }

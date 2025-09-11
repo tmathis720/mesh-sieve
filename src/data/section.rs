@@ -3,6 +3,10 @@
 //! The `Section<V>` type couples an `Atlas` (mapping points to slices in a
 //! contiguous array) with a `Vec<V>` to hold the actual data. It provides
 //! methods for inserting, accessing, and iterating per-point data slices.
+//!
+//! The legacy infallible [`Map`] adapter and helpers are available only
+//! when the `map-adapter` feature is enabled. New code should prefer the
+//! fallible [`FallibleMap`] trait and `try_*` methods.
 
 use crate::data::DebugInvariants;
 use crate::data::atlas::Atlas;
@@ -64,11 +68,6 @@ impl<V> Section<V> {
             .ok_or(MeshSieveError::MissingSectionPoint(p))
     }
 
-    #[deprecated(note = "Use try_restrict which returns Result instead of panicking")]
-    pub fn restrict(&self, p: PointId) -> &[V] {
-        self.try_restrict(p).unwrap()
-    }
-
     /// Mutable view of the data slice for a given point `p`.
     ///
     /// # Errors
@@ -82,11 +81,6 @@ impl<V> Section<V> {
         self.data
             .get_mut(offset..offset + len)
             .ok_or(MeshSieveError::MissingSectionPoint(p))
-    }
-
-    #[deprecated(note = "Use try_restrict_mut which returns Result instead of panicking")]
-    pub fn restrict_mut(&mut self, p: PointId) -> &mut [V] {
-        self.try_restrict_mut(p).unwrap()
     }
 
     /// Read-only handle to the backing atlas.
@@ -170,11 +164,6 @@ impl<V: Clone> Section<V> {
         #[cfg(any(debug_assertions, feature = "check-invariants"))]
         self.debug_assert_invariants();
         Ok(())
-    }
-
-    #[deprecated(note = "Use try_set which returns Result instead of panicking")]
-    pub fn set(&mut self, p: PointId, val: &[V]) {
-        self.try_set(p, val).unwrap()
     }
 
     /// Remove a point from the section, rebuilding data to keep slices contiguous.
@@ -624,6 +613,7 @@ impl<V> FallibleMap<V> for Section<V> {
     }
 }
 
+#[cfg(feature = "map-adapter")]
 /// Infallible adapter for read/write access; intended for legacy code.
 /// Prefer [`FallibleMap`] in new code.
 ///
@@ -641,6 +631,7 @@ pub trait Map<V> {
     }
 }
 
+#[cfg(feature = "map-adapter")]
 /// Implement `Map` for `Section<V>`.
 impl<V> Map<V> for Section<V> {
     #[inline]
@@ -750,6 +741,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "map-adapter")]
     #[test]
     fn map_trait_section_get_and_mut() {
         use super::Map;
@@ -803,6 +795,7 @@ mod tests {
         assert_eq!(s2.try_restrict(PointId::new(2).unwrap()).unwrap(), &[3.3]);
     }
 
+    #[cfg(feature = "map-adapter")]
     #[test]
     fn section_map_trait_and_readonly() {
         use super::Map;
