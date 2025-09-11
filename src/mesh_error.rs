@@ -58,6 +58,13 @@ pub enum MeshSieveError {
         expected: usize,
         found: usize,
     },
+    /// Slice length changed for a point during atlas mutation.
+    #[error("atlas slice length changed for {point:?}: {old} -> {new}")]
+    AtlasSliceLengthChanged {
+        point: crate::topology::point::PointId,
+        old: usize,
+        new: usize,
+    },
     /// Mismatch between expected and provided slice length for a point (SievedArray).
     #[error(
         "SievedArray error: slice length mismatch at {point:?}: expected {expected}, got {found}"
@@ -214,6 +221,18 @@ impl PartialEq for MeshSieveError {
                     found: f2,
                 },
             ) => p1 == p2 && e1 == e2 && f1 == f2,
+            (
+                AtlasSliceLengthChanged {
+                    point: p1,
+                    old: o1,
+                    new: n1,
+                },
+                AtlasSliceLengthChanged {
+                    point: p2,
+                    old: o2,
+                    new: n2,
+                },
+            ) => p1 == p2 && o1 == o2 && n1 == n2,
             (
                 SievedArraySliceLengthMismatch {
                     point: p1,
