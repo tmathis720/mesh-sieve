@@ -1,8 +1,9 @@
 //! Section: Field data storage over a topology atlas.
 //!
 //! The `Section<V>` type couples an `Atlas` (mapping points to slices in a
-//! contiguous array) with a `Vec<V>` to hold the actual data. It provides
-//! methods for inserting, accessing, and iterating per-point data slices.
+//! contiguous array) with pluggable storage (defaulting to a `Vec`-backed
+//! [`VecStorage`]) to hold the actual data. It provides methods for inserting,
+//! accessing, and iterating per-point data slices.
 //!
 //! A legacy, infallible adapter trait `Map<V>` is available behind the
 //! `map-adapter` feature. Prefer [`FallibleMap`] and `try_*` APIs.
@@ -10,9 +11,11 @@
 use crate::data::DebugInvariants;
 use crate::data::atlas::Atlas;
 use crate::data::refine::delta::SliceDelta;
+use crate::data::storage::{Storage, VecStorage};
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cache::InvalidateCache;
 use crate::topology::point::PointId;
+use core::marker::PhantomData;
 
 /// Precomputed plan for scattering data into a section.
 #[derive(Clone, Debug)]
@@ -31,11 +34,12 @@ pub struct ScatterPlan {
 /// `check-invariants` feature is enabled. They can also be verified manually via
 /// [`validate_invariants`](Self::validate_invariants).
 #[derive(Clone, Debug)]
-pub struct Section<V> {
+pub struct Section<V, S = VecStorage<V>> {
     /// Atlas mapping each `PointId` to (offset, length) in `data`.
     atlas: Atlas,
     /// Contiguous storage of values for all points.
-    data: Vec<V>,
+    data: S,
+    _marker: PhantomData<V>,
 }
 
 /// Policy for handling slice length changes during atlas mutations.
@@ -51,7 +55,10 @@ pub enum ResizePolicy<V> {
     PadWith(V),
 }
 
-impl<V> Section<V> {
+impl<V, S> Section<V, S>
+where
+    S: Storage<V>,
+{
     /// Read-only view of the data slice for a given point `p`.
     ///
     /// # Errors
@@ -63,6 +70,7 @@ impl<V> Section<V> {
             .get(p)
             .ok_or(MeshSieveError::PointNotInAtlas(p))?;
         self.data
+            .as_slice()
             .get(offset..offset + len)
             .ok_or(MeshSieveError::MissingSectionPoint(p))
     }
@@ -78,6 +86,7 @@ impl<V> Section<V> {
             .get(p)
             .ok_or(MeshSieveError::PointNotInAtlas(p))?;
         self.data
+            .as_mut_slice()
             .get_mut(offset..offset + len)
             .ok_or(MeshSieveError::MissingSectionPoint(p))
     }
@@ -103,7 +112,7 @@ impl<V> Section<V> {
 
     /// Read-only view of the entire flat buffer in insertion order.
     pub fn as_flat_slice(&self) -> &[V] {
-        &self.data
+        self.data.as_slice()
     }
 
     /// Apply a closure to every `(PointId, &mut [V])` in insertion order.
@@ -115,7 +124,8 @@ impl<V> Section<V> {
         self.debug_assert_invariants();
         for pid in self.atlas.points() {
             let (off, len) = self.atlas.get(pid).expect("invariants");
-            f(pid, &mut self.data[off..off + len]);
+            let buf = self.data.as_mut_slice();
+            f(pid, &mut buf[off..off + len]);
         }
         crate::topology::cache::InvalidateCache::invalidate_cache(self);
         #[cfg(any(debug_assertions, feature = "check-invariants"))]
@@ -131,7 +141,8 @@ impl<V> Section<V> {
         self.debug_assert_invariants();
         for pid in self.atlas.points() {
             let (off, len) = self.atlas.get(pid).expect("invariants");
-            f(pid, &self.data[off..off + len]);
+            let buf = self.data.as_slice();
+            f(pid, &buf[off..off + len]);
         }
     }
 
@@ -154,10 +165,10 @@ impl<V> Section<V> {
     }
 }
 
-impl<V: Clone> Section<V> {
+impl<V: Clone + Default, S: Storage<V>> Section<V, S> {
     /// Gather the entire section into a flat buffer in insertion order.
     pub fn gather_in_order(&self) -> Vec<V> {
-        self.data.clone()
+        self.data.as_slice().to_vec()
     }
 
     /// Overwrite the data slice at point `p` with the values in `val`.
@@ -197,17 +208,19 @@ impl<V: Clone> Section<V> {
         let old_atlas = self.atlas.clone();
         self.atlas.remove_point(p)?;
         let mut new_data = Vec::with_capacity(self.atlas.total_len());
+        let buf = self.data.as_slice();
         for pid in self.atlas.points() {
             let (old_offset, old_len) = old_atlas
                 .get(pid)
                 .ok_or(MeshSieveError::MissingSectionPoint(pid))?;
-            let old_slice = self
-                .data
+            let old_slice = buf
                 .get(old_offset..old_offset + old_len)
                 .ok_or(MeshSieveError::MissingSectionPoint(pid))?;
             new_data.extend_from_slice(old_slice);
         }
-        self.data = new_data;
+        let mut next = S::with_len(self.atlas.total_len(), V::default());
+        next.as_mut_slice().clone_from_slice(&new_data);
+        self.data = next;
         crate::topology::cache::InvalidateCache::invalidate_cache(self);
         #[cfg(any(debug_assertions, feature = "check-invariants"))]
         self.debug_assert_invariants();
@@ -283,7 +296,7 @@ impl<V: Clone> Section<V> {
         let disjoint = src_end <= doff || dst_end <= soff;
 
         if disjoint {
-            let data = &mut self.data;
+            let data = self.data.as_mut_slice();
             if soff < doff {
                 let (a, b) = data.split_at_mut(doff);
                 let src = &a[soff..src_end];
@@ -296,8 +309,8 @@ impl<V: Clone> Section<V> {
                 delta.apply(src, dst)?;
             }
         } else {
-            let src_copy: Vec<V> = self.data[soff..src_end].to_vec();
-            let dst = &mut self.data[doff..dst_end];
+            let src_copy: Vec<V> = self.data.as_slice()[soff..src_end].to_vec();
+            let dst = &mut self.data.as_mut_slice()[doff..dst_end];
             delta.apply(&src_copy, dst)?;
         }
 
@@ -326,7 +339,7 @@ impl<V: Clone> Section<V> {
         if other.len() == self.data.len()
             && Self::spans_cover_contiguously(atlas_map, self.data.len())
         {
-            self.data.clone_from_slice(other);
+            self.data.as_mut_slice().clone_from_slice(other);
             crate::topology::cache::InvalidateCache::invalidate_cache(self);
             #[cfg(any(debug_assertions, feature = "check-invariants"))]
             self.debug_assert_invariants();
@@ -357,7 +370,7 @@ impl<V: Clone> Section<V> {
             let chunk = other
                 .get(start..end)
                 .ok_or(MeshSieveError::ScatterChunkMismatch { offset: start, len })?;
-            let dest = &mut self.data[offset..offset + len];
+            let dest = &mut self.data.as_mut_slice()[offset..offset + len];
             dest.clone_from_slice(chunk);
             start = end;
         }
@@ -391,7 +404,7 @@ impl<V: Clone> Section<V> {
     }
 }
 
-impl<V: Clone + Default> Section<V> {
+impl<V: Clone + Default, S: Storage<V> + Clone> Section<V, S> {
     /// Construct a new `Section` given an existing `Atlas`.
     ///
     /// Initializes the data buffer with `V::default()` repeated for each
@@ -403,8 +416,12 @@ impl<V: Clone + Default> Section<V> {
     /// # Determinism
     /// Initial layout matches the atlas’ insertion order deterministically.
     pub fn new(atlas: Atlas) -> Self {
-        let data = vec![V::default(); atlas.total_len()];
-        Section { atlas, data }
+        let data = S::with_len(atlas.total_len(), V::default());
+        Section {
+            atlas,
+            data,
+            _marker: PhantomData,
+        }
     }
 
     /// Add a new point to the section, resizing data as needed.
@@ -485,13 +502,13 @@ impl<V: Clone + Default> Section<V> {
 
         // Rebuild data following insertion order of the new atlas
         let mut new_data = Vec::with_capacity(self.atlas.total_len());
+        let old_buf = self.data.as_slice();
         for pid in new_points {
             match before.get(pid) {
                 // Existing point: copy old slice
                 Some((off, len)) => {
                     let end = off + len;
-                    let src = self
-                        .data
+                    let src = old_buf
                         .get(off..end)
                         .ok_or(MeshSieveError::MissingSectionPoint(pid))?;
                     new_data.extend_from_slice(src);
@@ -507,7 +524,9 @@ impl<V: Clone + Default> Section<V> {
             }
         }
 
-        self.data = new_data;
+        let mut next = S::with_len(self.atlas.total_len(), V::default());
+        next.as_mut_slice().clone_from_slice(&new_data);
+        self.data = next;
         crate::topology::cache::InvalidateCache::invalidate_cache(self);
         #[cfg(any(debug_assertions, feature = "check-invariants"))]
         self.debug_assert_invariants();
@@ -548,14 +567,14 @@ impl<V: Clone + Default> Section<V> {
                     buf.extend(std::iter::repeat(val.clone()).take(n));
                 }
             };
-
+            let before_slice = before_data.as_slice();
             for pid in self.atlas.points() {
                 let (_off_new, new_len) = self
                     .atlas
                     .get(pid)
                     .ok_or(MeshSieveError::MissingAtlasPoint(pid))?;
                 if let Some((off_old, old_len)) = before_atlas.get(pid) {
-                    let src = before_data
+                    let src = before_slice
                         .get(off_old..off_old + old_len)
                         .ok_or(MeshSieveError::MissingSectionPoint(pid))?;
                     match &policy {
@@ -590,7 +609,9 @@ impl<V: Clone + Default> Section<V> {
 
         match rebuild {
             Ok(new_data) => {
-                self.data = new_data;
+                let mut next = S::with_len(self.atlas.total_len(), V::default());
+                next.as_mut_slice().clone_from_slice(&new_data);
+                self.data = next;
                 crate::topology::cache::InvalidateCache::invalidate_cache(self);
                 #[cfg(any(debug_assertions, feature = "check-invariants"))]
                 self.debug_assert_invariants();
@@ -628,7 +649,10 @@ pub trait FallibleMap<V> {
 }
 
 /// Implement `FallibleMap` for `Section<V>`.
-impl<V> FallibleMap<V> for Section<V> {
+impl<V, S> FallibleMap<V> for Section<V, S>
+where
+    S: Storage<V>,
+{
     #[inline]
     fn try_get(&self, p: PointId) -> Result<&[V], MeshSieveError> {
         self.try_restrict(p)
@@ -648,7 +672,7 @@ impl<V> FallibleMap<V> for Section<V> {
 #[cfg(feature = "map-adapter")]
 mod sealed {
     pub trait Sealed {}
-    impl<V> Sealed for super::Section<V> {}
+    impl<V, S> Sealed for super::Section<V, S> {}
     impl<'a, V> Sealed for crate::data::refine::helpers::ReadOnlyMap<'a, V> {}
 }
 
@@ -672,7 +696,10 @@ pub trait Map<V>: sealed::Sealed {
 }
 
 #[cfg(feature = "map-adapter")]
-impl<V> Map<V> for Section<V> {
+impl<V, S> Map<V> for Section<V, S>
+where
+    S: Storage<V>,
+{
     #[inline]
     fn get(&self, p: PointId) -> &[V] {
         self.try_restrict(p)
@@ -688,7 +715,10 @@ impl<V> Map<V> for Section<V> {
     }
 }
 
-impl<V> DebugInvariants for Section<V> {
+impl<V, S> DebugInvariants for Section<V, S>
+where
+    S: Storage<V>,
+{
     fn debug_assert_invariants(&self) {
         crate::data_debug_assert_ok!(self.validate_invariants(), "Section invalid");
     }
@@ -717,7 +747,10 @@ impl<V> DebugInvariants for Section<V> {
     }
 }
 
-impl<V> InvalidateCache for Section<V> {
+impl<V, S> InvalidateCache for Section<V, S>
+where
+    S: Storage<V>,
+{
     fn invalidate_cache(&mut self) {
         // If you ever cache anything derived from atlas/data, clear it here.
     }
@@ -800,13 +833,13 @@ mod tests {
     fn scatter_from() {
         let mut s = make_section();
         // Initial data: [0.0, 0.0, 0.0]
-        assert_eq!(s.data, &[0.0, 0.0, 0.0]);
+        assert_eq!(s.as_flat_slice(), &[0.0, 0.0, 0.0]);
 
         // Scatter in two chunks: [1.0, 2.0] and [3.5]
         let _ = s.try_scatter_from(&[1.0, 2.0, 3.5], &[(0, 2), (2, 1)]);
 
         // Resulting data: [1.0, 2.0, 3.5]
-        assert_eq!(s.data, &[1.0, 2.0, 3.5]);
+        assert_eq!(s.as_flat_slice(), &[1.0, 2.0, 3.5]);
     }
 
     #[test]
@@ -901,7 +934,7 @@ mod tests {
             vec![PointId::new(1).unwrap(), PointId::new(3).unwrap()]
         );
         // data buffer should be [10,11,33,34]
-        let all: Vec<_> = s.data.iter().copied().collect();
+        let all: Vec<_> = s.as_flat_slice().iter().copied().collect();
         assert_eq!(all, vec![10, 11, 33, 34]);
         // restricting the removed point panics
         std::panic::catch_unwind(|| {
@@ -1110,7 +1143,7 @@ mod tests_invariants_precheck {
         atlas.try_insert(p, 1).unwrap();
         let mut s: Section<i32> = Section::new(atlas);
 
-        s.data.clear();
+        s.data.resize(0, 0);
 
         #[cfg(any(debug_assertions, feature = "check-invariants"))]
         {
