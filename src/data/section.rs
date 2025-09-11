@@ -7,9 +7,9 @@
 //! A legacy, infallible adapter trait `Map<V>` is available behind the
 //! `map-adapter` feature. Prefer [`FallibleMap`] and `try_*` APIs.
 
+use crate::data::DebugInvariants;
 use crate::data::atlas::Atlas;
 use crate::data::refine::delta::SliceDelta;
-use crate::data::DebugInvariants;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cache::InvalidateCache;
 use crate::topology::point::PointId;
@@ -133,6 +133,24 @@ impl<V> Section<V> {
             let (off, len) = self.atlas.get(pid).expect("invariants");
             f(pid, &self.data[off..off + len]);
         }
+    }
+
+    #[inline]
+    fn spans_cover_contiguously(spans: &[(usize, usize)], total: usize) -> bool {
+        if spans.is_empty() {
+            return total == 0;
+        }
+        let mut expected_off = 0usize;
+        for &(off, len) in spans {
+            if off != expected_off {
+                return false;
+            }
+            match expected_off.checked_add(len) {
+                Some(next) => expected_off = next,
+                None => return false,
+            }
+        }
+        expected_off == total
     }
 }
 
@@ -305,6 +323,16 @@ impl<V: Clone> Section<V> {
         other: &[V],
         atlas_map: &[(usize, usize)],
     ) -> Result<(), MeshSieveError> {
+        if other.len() == self.data.len()
+            && Self::spans_cover_contiguously(atlas_map, self.data.len())
+        {
+            self.data.clone_from_slice(other);
+            crate::topology::cache::InvalidateCache::invalidate_cache(self);
+            #[cfg(any(debug_assertions, feature = "check-invariants"))]
+            self.debug_assert_invariants();
+            return Ok(());
+        }
+
         let total_expected: usize = atlas_map.iter().map(|&(_, l)| l).sum();
         let found = other.len();
         if total_expected != found {
@@ -314,7 +342,6 @@ impl<V: Clone> Section<V> {
             });
         }
 
-        // Bounds checks up front
         for &(offset, len) in atlas_map {
             let end = offset
                 .checked_add(len)
@@ -324,7 +351,7 @@ impl<V: Clone> Section<V> {
             }
         }
 
-        let mut start = 0;
+        let mut start = 0usize;
         for &(offset, len) in atlas_map {
             let end = start + len;
             let chunk = other
@@ -334,6 +361,7 @@ impl<V: Clone> Section<V> {
             dest.clone_from_slice(chunk);
             start = end;
         }
+
         crate::topology::cache::InvalidateCache::invalidate_cache(self);
         #[cfg(any(debug_assertions, feature = "check-invariants"))]
         self.debug_assert_invariants();
