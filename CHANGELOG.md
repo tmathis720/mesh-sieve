@@ -12,6 +12,9 @@
 - Added `SliceReducer` and `Bundle::assemble_with` to customize how cap slices
   are merged into base slices. `Bundle::assemble` now performs element-wise
   averaging via `AverageReducer`.
+- `Bundle::assemble_with` now validates slice lengths up front and returns
+  `SliceLengthMismatch` with the exact mismatching cap `PointId`. Reducers such
+  as `AverageReducer` assume equal lengths and no longer perform checks.
 - Renamed `data::refine::delta::Delta` to `SliceDelta`; `Delta` remains as a
   deprecated alias.
 - Renamed `overlap::delta::Delta` to `ValueDelta`; `Delta` remains as a

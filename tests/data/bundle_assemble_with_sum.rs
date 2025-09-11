@@ -23,13 +23,6 @@ where
         acc: &mut [V],
         src: &[V],
     ) -> Result<(), MeshSieveError> {
-        if acc.len() != src.len() {
-            return Err(MeshSieveError::SliceLengthMismatch {
-                point: unsafe { PointId::new_unchecked(1) },
-                expected: acc.len(),
-                found: src.len(),
-            });
-        }
         for (dst, s) in acc.iter_mut().zip(src.iter()) {
             *dst += s.clone();
         }
