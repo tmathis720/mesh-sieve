@@ -22,3 +22,10 @@
 - `Section::with_atlas_mut` now rejects slice length changes with
   `MeshSieveError::AtlasSliceLengthChanged`; use the new
   `with_atlas_resize(ResizePolicy, ...)` to explicitly allow resizing.
+- **Removed:** deprecated panicking shims `Atlas::insert`, `Section::{restrict, restrict_mut, set}`,
+  `SievedArray::{get, get_mut, set, refine_with_sifter, refine, assemble}`, and
+  `SievedArray::try_iter` alias.
+- **Added:** `map-adapter` feature gating the legacy `Map` trait and
+  infallible `restrict_*` helpers. The feature is off by default.
+- **Migration:** switch call sites to `try_*` methods or temporarily enable
+  `map-adapter` to retain panicking behavior.

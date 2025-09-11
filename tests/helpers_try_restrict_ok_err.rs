@@ -1,5 +1,7 @@
 use mesh_sieve::data::atlas::Atlas;
-use mesh_sieve::data::refine::helpers::{restrict_closure_vec, try_restrict_closure_vec};
+use mesh_sieve::data::refine::helpers::try_restrict_closure_vec;
+#[cfg(feature = "map-adapter")]
+use mesh_sieve::data::refine::helpers::restrict_closure_vec;
 use mesh_sieve::data::section::Section;
 use mesh_sieve::mesh_error::MeshSieveError;
 use mesh_sieve::topology::point::PointId;
@@ -9,6 +11,7 @@ fn v(i: u64) -> PointId {
     PointId::new(i).unwrap()
 }
 
+#[cfg(feature = "map-adapter")]
 #[test]
 #[should_panic]
 fn restrict_closure_panics_on_missing_point() {

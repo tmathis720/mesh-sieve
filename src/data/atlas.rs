@@ -94,11 +94,6 @@ impl Atlas {
         self.debug_assert_invariants();
         Ok(offset)
     }
-    #[deprecated(note = "Use `try_insert` which returns Result instead of panicking")]
-    pub fn insert(&mut self, p: PointId, len: usize) -> usize {
-        self.try_insert(p, len)
-            .expect("Atlas::insert panicked; use try_insert")
-    }
 
     /// Look up the slice descriptor `(offset, len)` for point `p`.
     ///

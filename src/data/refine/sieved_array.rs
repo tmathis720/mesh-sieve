@@ -76,23 +76,6 @@ where
         })
     }
 
-    /// Iterate over all points and their associated slices, returning Results.
-    #[deprecated(note = "Use try_iter_in_order instead")]
-    pub fn try_iter(
-        &self,
-    ) -> impl Iterator<Item = Result<(PointId, &[V]), crate::mesh_error::MeshSieveError>> + '_ {
-        self.try_iter_in_order()
-    }
-
-    /// Backwards-compatible panicking versions (deprecated)
-    #[deprecated(note = "Use try_get instead")]
-    pub fn get(&self, p: PointId) -> &[V] {
-        self.try_get(p).unwrap()
-    }
-    #[deprecated(note = "Use try_get_mut instead")]
-    pub fn get_mut(&mut self, p: PointId) -> &mut [V] {
-        self.try_get_mut(p).unwrap()
-    }
 }
 
 impl<P, V: Clone> SievedArray<P, V>
@@ -117,10 +100,6 @@ where
         }
         tgt.clone_from_slice(val);
         Ok(())
-    }
-    #[deprecated(note = "Use try_set instead")]
-    pub fn set(&mut self, p: PointId, val: &[V]) {
-        self.try_set(p, val).unwrap()
     }
 }
 
@@ -219,18 +198,6 @@ where
         self.try_refine_with_sifter(coarse, &sifter)
     }
 
-    #[deprecated(note = "Use try_refine_with_sifter instead")]
-    pub fn refine_with_sifter(
-        &mut self,
-        coarse: &SievedArray<P, V>,
-        refinement: &[(P, Vec<(P, Polarity)>)],
-    ) {
-        self.try_refine_with_sifter(coarse, refinement).unwrap()
-    }
-    #[deprecated(note = "Use try_refine instead")]
-    pub fn refine(&mut self, coarse: &SievedArray<P, V>, refinement: &[(P, Vec<P>)]) {
-        self.try_refine(coarse, refinement).unwrap()
-    }
 }
 
 impl<P, V> SievedArray<P, V>
@@ -289,10 +256,6 @@ where
         Ok(())
     }
 
-    #[deprecated(note = "Use try_assemble instead")]
-    pub fn assemble(&self, coarse: &mut SievedArray<P, V>, refinement: &[(P, Vec<P>)]) {
-        self.try_assemble(coarse, refinement).unwrap()
-    }
 }
 
 #[cfg(feature = "rayon")]

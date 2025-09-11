@@ -48,6 +48,8 @@ rayon = "1"
 
 [features]
 default = []            # keep core lean
+# Enables legacy "infallible" adapter and helpers that panic on missing points.
+map-adapter = []
 mpi-support = ["dep:mpi", "rayon", "dep:rand", "dep:ahash"]
 mpi-derive = ["mpi/derive"]
 metis-support = ["metis", "metis-sys", "libffi-sys","bindgen","pkg-config"]
