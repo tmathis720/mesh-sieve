@@ -206,6 +206,9 @@ impl Atlas {
 
     /// Remove a point and its slice from the atlas, recomputing all offsets.
     ///
+    /// # Errors
+    /// Returns `Err(MeshSieveError::MissingAtlasPoint(p))` if `p` was not present.
+    ///
     /// # Complexity
     /// **O(n)** to rebuild offsets; **O(n)** temporary space for the new offsets.
     /// Preserves relative order of the remaining points.
@@ -213,24 +216,32 @@ impl Atlas {
     /// # Determinism
     /// Deterministic: the resulting offsets are contiguous in the same insertion order.
     pub fn remove_point(&mut self, p: PointId) -> Result<(), MeshSieveError> {
-        let _ = self.map.remove(&p);
+        // Enforce presence of `p` before proceeding.
+        let existed = self.map.remove(&p).is_some();
+        if !existed {
+            return Err(MeshSieveError::MissingAtlasPoint(p));
+        }
+
         self.order.retain(|&x| x != p);
+
         // Compute new offsets for all remaining points
-        let mut next_offset = 0;
+        let mut next_offset = 0usize;
         let mut new_offsets = Vec::with_capacity(self.order.len());
         for &pt in &self.order {
             let len = match self.map.get(&pt) {
                 Some(&(_, len)) => len,
                 None => {
+                    // Defensive: order contains a point missing from map
                     return Err(MeshSieveError::MissingAtlasPoint(pt));
                 }
             };
             new_offsets.push((pt, next_offset, len));
             next_offset += len;
         }
-        // Update map with new offsets
-        for (pt, offset, len) in new_offsets {
-            self.map.insert(pt, (offset, len));
+
+        // Apply new offsets
+        for (pt, off, len) in new_offsets {
+            self.map.insert(pt, (off, len));
         }
         self.total_len = next_offset;
         self.version = self.version.wrapping_add(1);
@@ -252,23 +263,23 @@ impl DebugInvariants for Atlas {
         // 1) order is unique
         let set: HashSet<_> = self.order.iter().copied().collect();
         if set.len() != self.order.len() {
-            // find duplicate if possible
+            // find duplicate deterministically
             let mut seen = HashSet::new();
-            if let Some(&dup) = self.order.iter().find(|&&p| !seen.insert(p)) {
-                return Err(MeshSieveError::DuplicatePoint(dup));
-            } else {
-                return Err(MeshSieveError::DuplicatePoint(self.order[0]));
-            }
+            let dup = self
+                .order
+                .iter()
+                .copied()
+                .find(|p| !seen.insert(*p))
+                .unwrap();
+            return Err(MeshSieveError::DuplicatePoint(dup));
         }
 
-        // 2) map.keys == order
-        if set.len() != self.map.len() {
-            if let Some(&p) = self.order.iter().find(|&&p| !self.map.contains_key(&p)) {
-                return Err(MeshSieveError::MissingAtlasPoint(p));
-            }
-            if let Some(&p) = self.map.keys().find(|p| !set.contains(p)) {
-                return Err(MeshSieveError::DuplicatePoint(p));
-            }
+        // 2) map.keys == order (ALWAYS check both directions)
+        if let Some(&p) = self.order.iter().find(|&&p| !self.map.contains_key(&p)) {
+            return Err(MeshSieveError::MissingAtlasPoint(p));
+        }
+        if let Some(&p) = self.map.keys().find(|p| !set.contains(p)) {
+            return Err(MeshSieveError::DuplicatePoint(p));
         }
 
         // 3) positive lengths and checked add
@@ -290,7 +301,7 @@ impl DebugInvariants for Atlas {
             if off != expected_off {
                 return Err(MeshSieveError::ScatterChunkMismatch { offset: off, len });
             }
-            expected_off = off + len;
+            expected_off = off + len; // safe after check above
             sum = sum
                 .checked_add(len)
                 .ok_or_else(|| MeshSieveError::ScatterLengthMismatch {
@@ -398,18 +409,6 @@ mod tests {
     }
 
     #[test]
-    fn remove_nonexistent_point_is_noop() {
-        let mut a = Atlas::default();
-        let p1 = PointId::new(1).unwrap();
-        let _ = a.try_insert(p1, 3);
-        let pre_len = a.total_len();
-        a.remove_point(PointId::new(999).unwrap()).unwrap(); // does not exist
-        // should be unchanged
-        assert_eq!(a.total_len(), pre_len);
-        assert_eq!(a.get(p1), Some((0, 3)));
-    }
-
-    #[test]
     fn remove_first_and_last_points() {
         let mut a = Atlas::default();
         let p1 = PointId::new(1).unwrap();
@@ -465,5 +464,53 @@ mod tests {
             de.points().collect::<Vec<_>>(),
             vec![PointId::new(5).unwrap(), PointId::new(6).unwrap()]
         );
+    }
+
+    fn pid(id: u64) -> PointId {
+        PointId::new(id).unwrap()
+    }
+
+    #[test]
+    fn validate_fails_when_order_missing_map_key() {
+        let mut a = Atlas::default();
+        let p1 = pid(1);
+        let p2 = pid(2);
+        a.try_insert(p1, 1).unwrap();
+        a.try_insert(p2, 2).unwrap();
+
+        // Corrupt: remove p2 from order but keep in map
+        a.order.retain(|&x| x != p2);
+
+        let e = a.validate_invariants().unwrap_err();
+        assert!(matches!(e, MeshSieveError::DuplicatePoint(pp) if pp == p2));
+    }
+
+    #[test]
+    fn validate_fails_when_map_missing_order_key() {
+        let mut a = Atlas::default();
+        let p1 = pid(1);
+        a.try_insert(p1, 3).unwrap();
+
+        // Corrupt: remove p1 from map but keep in order
+        a.map.remove(&p1);
+
+        let e = a.validate_invariants().unwrap_err();
+        assert!(matches!(e, MeshSieveError::MissingAtlasPoint(pp) if pp == p1));
+    }
+
+    #[test]
+    fn remove_point_errors_if_absent() {
+        let mut a = Atlas::default();
+        let p1 = pid(1);
+        let p2 = pid(2);
+        a.try_insert(p1, 1).unwrap();
+
+        let e = a.remove_point(p2).unwrap_err();
+        assert!(matches!(e, MeshSieveError::MissingAtlasPoint(pp) if pp == p2));
+
+        // Removing existing still works and reindexes
+        a.remove_point(p1).unwrap();
+        assert!(a.is_empty());
+        assert_eq!(a.total_len(), 0);
     }
 }
