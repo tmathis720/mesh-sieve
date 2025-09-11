@@ -19,12 +19,17 @@ use crate::topology::stack::{InMemoryStack, Stack};
 /// Reducer combining multiple cap slices into an accumulator slice.
 ///
 /// Implementors supply zero-initialization, per-slice accumulation, and an
-/// optional finalize step (e.g. for averaging).
+/// optional finalize step (e.g. for averaging). Callers are expected to ensure
+/// all slices share the same length before invoking [`SliceReducer::accumulate`].
 pub trait SliceReducer<V>: Sync {
     /// Create a zero-initialized accumulator of length `len`.
     fn make_zero(&self, len: usize) -> Vec<V>;
 
     /// Accumulate `src` into `acc` element-wise.
+    ///
+    /// # Panics
+    /// Implementations may assume `acc.len() == src.len()`. Callers are
+    /// responsible for validating slice lengths before invoking this method.
     fn accumulate(&self, acc: &mut [V], src: &[V])
     -> Result<(), crate::mesh_error::MeshSieveError>;
 
@@ -39,6 +44,10 @@ pub trait SliceReducer<V>: Sync {
 }
 
 /// Element-wise averaging reducer used by [`Bundle::assemble`].
+///
+/// # Preconditions
+/// Callers must ensure input slices have identical lengths before invoking
+/// [`SliceReducer::accumulate`]; see [`Bundle::assemble_with`].
 #[derive(Copy, Clone, Debug, Default)]
 pub struct AverageReducer;
 
@@ -59,14 +68,7 @@ where
         acc: &mut [V],
         src: &[V],
     ) -> Result<(), crate::mesh_error::MeshSieveError> {
-        use crate::mesh_error::MeshSieveError;
-        if acc.len() != src.len() {
-            return Err(MeshSieveError::SliceLengthMismatch {
-                point: unsafe { PointId::new_unchecked(1) },
-                expected: acc.len(),
-                found: src.len(),
-            });
-        }
+        // Precondition: `acc` and `src` have the same length.
         for (dst, s) in acc.iter_mut().zip(src.iter()) {
             *dst += s.clone();
         }
@@ -165,31 +167,50 @@ where
     /// Deterministic; each cap contributes at most once.
     ///
     /// # Errors
-    /// Returns an error if slice lengths mismatch or primitive conversion fails.
-    /// Assemble using a custom reducer (e.g., average).
+    /// Returns an error if any cap slice length differs from the base slice, in
+    /// which case the [`MeshSieveError::SliceLengthMismatch`] reports the
+    /// offending cap `PointId`. Also propagates reducer-specific errors such as
+    /// primitive conversion failures.
     ///
     /// # Behavior
-    /// Collects all cap slices attached to each base point (via the vertical stack),
-    /// then reduces them element-wise into a fresh accumulator before writing the
-    /// result back to the base slice.
+    /// Validates slice lengths using the base slice as ground truth, collects all
+    /// cap slices once, and reduces them element-wise into a fresh accumulator
+    /// before writing the result back to the base slice.
     pub fn assemble_with<R: SliceReducer<V>>(
         &mut self,
         bases: impl IntoIterator<Item = PointId>,
         reducer: &R,
     ) -> Result<(), crate::mesh_error::MeshSieveError> {
+        use crate::mesh_error::MeshSieveError;
+
         for b in self.stack.base().closure(bases) {
             let caps: Vec<_> = self.stack.lift(b).map(|(cap, _)| cap).collect();
             if caps.is_empty() {
                 continue;
             }
 
-            let first = caps[0];
-            let first_slice = self.section.try_restrict(first)?;
-            let mut acc = reducer.make_zero(first_slice.len());
+            // Base slice defines the expected length
+            let base_len = self.section.try_restrict(b)?.len();
+
+            // Collect and validate cap slices once
+            let mut cap_slices = Vec::with_capacity(caps.len());
+            for &cap in &caps {
+                let sl = self.section.try_restrict(cap)?;
+                if sl.len() != base_len {
+                    return Err(MeshSieveError::SliceLengthMismatch {
+                        point: cap,
+                        expected: base_len,
+                        found: sl.len(),
+                    });
+                }
+                cap_slices.push((cap, sl));
+            }
+
+            let mut acc = reducer.make_zero(base_len);
             let mut count = 0usize;
-            for cap in caps {
-                let cap_slice = self.section.try_restrict(cap)?;
-                reducer.accumulate(&mut acc, cap_slice)?;
+
+            for (_cap, sl) in cap_slices {
+                reducer.accumulate(&mut acc, sl)?;
                 count += 1;
             }
             reducer.finalize(&mut acc, count)?;
