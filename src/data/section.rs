@@ -35,6 +35,19 @@ pub struct Section<V> {
     data: Vec<V>,
 }
 
+/// Policy for handling slice length changes during atlas mutations.
+#[derive(Clone, Debug)]
+pub enum ResizePolicy<V> {
+    /// Fill the entire new slice with `V::default()` when length changes.
+    ZeroInit,
+    /// Copy `min(old, new)` elements from the start; pad the tail if growing.
+    PreservePrefix,
+    /// Copy `min(old, new)` elements from the end; pad the head if growing.
+    PreserveSuffix,
+    /// Fill the slice with a provided value when (re)initializing.
+    PadWith(V),
+}
+
 impl<V> Section<V> {
     /// Read-only view of the data slice for a given point `p`.
     ///
@@ -372,6 +385,13 @@ impl<V: Clone + Default> Section<V> {
     /// - Removed points drop data.
     /// - Reordered/retuned points keep their old values (by `PointId`),
     ///   copied into the new contiguous layout.
+    /// - **Length changes for existing points are rejected.** Use
+    ///   [`with_atlas_resize`](Self::with_atlas_resize) to allow slice length
+    ///   changes with an explicit policy.
+    ///
+    /// # Errors
+    /// Returns [`MeshSieveError::AtlasSliceLengthChanged`] if any existing
+    /// point's slice length differs after mutation.
     ///
     /// # Complexity
     /// **O(n)** mapping + **O(total_len_new)** copy/initialize.
@@ -388,13 +408,35 @@ impl<V: Clone + Default> Section<V> {
         // Let the user mutate
         f(&mut self.atlas);
 
-        // Validate new atlas (Stage 6)
+        // Validate new atlas
         #[cfg(any(debug_assertions, feature = "check-invariants"))]
         self.atlas.debug_assert_invariants();
 
+        // Gather points to avoid borrowing issues
+        let new_points: Vec<_> = self.atlas.points().collect();
+
+        // STRICT check: existing points must retain slice lengths
+        use MeshSieveError::AtlasSliceLengthChanged;
+        for &pid in &new_points {
+            if let Some((_, len_old)) = before.get(pid) {
+                let (_, len_new) = self
+                    .atlas
+                    .get(pid)
+                    .expect("pid was just iterated from new atlas");
+                if len_old != len_new {
+                    self.atlas = before;
+                    return Err(AtlasSliceLengthChanged {
+                        point: pid,
+                        old: len_old,
+                        new: len_new,
+                    });
+                }
+            }
+        }
+
         // Rebuild data following insertion order of the new atlas
         let mut new_data = Vec::with_capacity(self.atlas.total_len());
-        for pid in self.atlas.points() {
+        for pid in new_points {
             match before.get(pid) {
                 // Existing point: copy old slice
                 Some((off, len)) => {
@@ -421,6 +463,96 @@ impl<V: Clone + Default> Section<V> {
         #[cfg(any(debug_assertions, feature = "check-invariants"))]
         self.debug_assert_invariants();
         Ok(())
+    }
+
+    /// Mutate the atlas, allowing slice length changes per `policy`.
+    ///
+    /// Existing points preserve or initialize values according to `policy`.
+    /// New points are initialized per `policy` as well. Removed points drop
+    /// their data. On error, the atlas and data are rolled back to their
+    /// original state.
+    pub fn with_atlas_resize<F>(
+        &mut self,
+        policy: ResizePolicy<V>,
+        f: F,
+    ) -> Result<(), MeshSieveError>
+    where
+        F: FnOnce(&mut Atlas),
+    {
+        let before_atlas = self.atlas.clone();
+        let before_data = self.data.clone();
+
+        f(&mut self.atlas);
+
+        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        self.atlas.debug_assert_invariants();
+
+        let rebuild = (|| -> Result<Vec<V>, MeshSieveError> {
+            let mut new_data = Vec::with_capacity(self.atlas.total_len());
+            let extend_fill = |buf: &mut Vec<V>, n: usize| match &policy {
+                ResizePolicy::ZeroInit
+                | ResizePolicy::PreservePrefix
+                | ResizePolicy::PreserveSuffix => {
+                    buf.extend(std::iter::repeat_with(V::default).take(n));
+                }
+                ResizePolicy::PadWith(val) => {
+                    buf.extend(std::iter::repeat(val.clone()).take(n));
+                }
+            };
+
+            for pid in self.atlas.points() {
+                let (_off_new, new_len) = self
+                    .atlas
+                    .get(pid)
+                    .ok_or(MeshSieveError::MissingAtlasPoint(pid))?;
+                if let Some((off_old, old_len)) = before_atlas.get(pid) {
+                    let src = before_data
+                        .get(off_old..off_old + old_len)
+                        .ok_or(MeshSieveError::MissingSectionPoint(pid))?;
+                    match &policy {
+                        ResizePolicy::ZeroInit => {
+                            extend_fill(&mut new_data, new_len);
+                        }
+                        ResizePolicy::PadWith(_) => {
+                            extend_fill(&mut new_data, new_len);
+                        }
+                        ResizePolicy::PreservePrefix => {
+                            let k = core::cmp::min(old_len, new_len);
+                            new_data.extend_from_slice(&src[..k]);
+                            if new_len > k {
+                                extend_fill(&mut new_data, new_len - k);
+                            }
+                        }
+                        ResizePolicy::PreserveSuffix => {
+                            let k = core::cmp::min(old_len, new_len);
+                            if new_len > k {
+                                extend_fill(&mut new_data, new_len - k);
+                            }
+                            new_data.extend_from_slice(&src[old_len - k..]);
+                        }
+                    }
+                } else {
+                    extend_fill(&mut new_data, new_len);
+                }
+            }
+
+            Ok(new_data)
+        })();
+
+        match rebuild {
+            Ok(new_data) => {
+                self.data = new_data;
+                crate::topology::cache::InvalidateCache::invalidate_cache(self);
+                #[cfg(any(debug_assertions, feature = "check-invariants"))]
+                self.debug_assert_invariants();
+                Ok(())
+            }
+            Err(e) => {
+                self.atlas = before_atlas;
+                self.data = before_data;
+                Err(e)
+            }
+        }
     }
 
     /// Scatter a flat buffer into the section in atlas insertion order.
@@ -737,6 +869,130 @@ mod tests {
         let mut s = make_section();
         // Just ensure this compiles and does nothing
         InvalidateCache::invalidate_cache(&mut s);
+    }
+}
+
+#[cfg(test)]
+mod tests_resize {
+    use super::*;
+    use crate::topology::point::PointId;
+
+    fn pid(i: u64) -> PointId {
+        PointId::new(i).unwrap()
+    }
+
+    #[test]
+    fn strict_with_atlas_mut_rejects_len_change() {
+        let mut atlas = Atlas::default();
+        let p = pid(1);
+        atlas.try_insert(p, 3).unwrap();
+        let mut s: Section<i32> = Section::new(atlas);
+
+        s.try_set(p, &[1, 2, 3]).unwrap();
+
+        let err = s
+            .with_atlas_mut(|a| {
+                a.remove_point(p).unwrap();
+                a.try_insert(p, 5).unwrap();
+            })
+            .unwrap_err();
+
+        match err {
+            MeshSieveError::AtlasSliceLengthChanged { point, old, new } => {
+                assert_eq!(point, p);
+                assert_eq!(old, 3);
+                assert_eq!(new, 5);
+            }
+            e => panic!("unexpected error: {e:?}"),
+        }
+
+        assert_eq!(s.atlas().get(p).unwrap().1, 3);
+        assert_eq!(s.try_restrict(p).unwrap(), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn resize_preserve_prefix_and_zero_extend() {
+        let mut atlas = Atlas::default();
+        let p = pid(1);
+        atlas.try_insert(p, 3).unwrap();
+        let mut s: Section<i32> = Section::new(atlas);
+        s.try_set(p, &[10, 20, 30]).unwrap();
+
+        s.with_atlas_resize(ResizePolicy::PreservePrefix, |a| {
+            a.remove_point(p).unwrap();
+            a.try_insert(p, 5).unwrap();
+        })
+        .unwrap();
+
+        assert_eq!(s.try_restrict(p).unwrap(), &[10, 20, 30, 0, 0]);
+    }
+
+    #[test]
+    fn resize_preserve_suffix_and_zero_prepad() {
+        let mut atlas = Atlas::default();
+        let p = pid(1);
+        atlas.try_insert(p, 3).unwrap();
+        let mut s: Section<i32> = Section::new(atlas);
+        s.try_set(p, &[10, 20, 30]).unwrap();
+
+        s.with_atlas_resize(ResizePolicy::PreserveSuffix, |a| {
+            a.remove_point(p).unwrap();
+            a.try_insert(p, 5).unwrap();
+        })
+        .unwrap();
+
+        assert_eq!(s.try_restrict(p).unwrap(), &[0, 0, 10, 20, 30]);
+    }
+
+    #[test]
+    fn resize_pad_with_custom_value() {
+        let mut atlas = Atlas::default();
+        let p = pid(1);
+        atlas.try_insert(p, 2).unwrap();
+        let mut s: Section<i32> = Section::new(atlas);
+        s.try_set(p, &[7, 9]).unwrap();
+
+        s.with_atlas_resize(ResizePolicy::PadWith(-1), |a| {
+            a.remove_point(p).unwrap();
+            a.try_insert(p, 4).unwrap();
+        })
+        .unwrap();
+
+        assert_eq!(s.try_restrict(p).unwrap(), &[-1, -1, -1, -1]);
+    }
+
+    #[test]
+    fn resize_shrink_preserve_prefix() {
+        let mut atlas = Atlas::default();
+        let p = pid(1);
+        atlas.try_insert(p, 4).unwrap();
+        let mut s: Section<i32> = Section::new(atlas);
+        s.try_set(p, &[1, 2, 3, 4]).unwrap();
+
+        s.with_atlas_resize(ResizePolicy::PreservePrefix, |a| {
+            a.remove_point(p).unwrap();
+            a.try_insert(p, 2).unwrap();
+        })
+        .unwrap();
+
+        assert_eq!(s.try_restrict(p).unwrap(), &[1, 2]);
+    }
+
+    #[test]
+    fn resize_shrink_preserve_suffix() {
+        let mut atlas = Atlas::default();
+        let p = pid(1);
+        atlas.try_insert(p, 4).unwrap();
+        let mut s: Section<i32> = Section::new(atlas);
+        s.try_set(p, &[1, 2, 3, 4]).unwrap();
+
+        s.with_atlas_resize(ResizePolicy::PreserveSuffix, |a| {
+            a.remove_point(p).unwrap();
+            a.try_insert(p, 2).unwrap();
+        })
+        .unwrap();
+
+        assert_eq!(s.try_restrict(p).unwrap(), &[3, 4]);
     }
 }
 

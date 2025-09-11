@@ -16,3 +16,6 @@
   deprecated alias.
 - Renamed `overlap::delta::Delta` to `ValueDelta`; `Delta` remains as a
   deprecated alias.
+- `Section::with_atlas_mut` now rejects slice length changes with
+  `MeshSieveError::AtlasSliceLengthChanged`; use the new
+  `with_atlas_resize(ResizePolicy, ...)` to explicitly allow resizing.
