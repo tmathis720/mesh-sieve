@@ -118,6 +118,8 @@ impl<V> Section<V> {
     where
         F: FnMut(PointId, &mut [V]),
     {
+        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        self.debug_assert_invariants();
         for pid in self.atlas.points() {
             let (off, len) = self.atlas.get(pid).expect("invariants");
             f(pid, &mut self.data[off..off + len]);
@@ -132,6 +134,8 @@ impl<V> Section<V> {
     where
         F: FnMut(PointId, &[V]),
     {
+        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        self.debug_assert_invariants();
         for pid in self.atlas.points() {
             let (off, len) = self.atlas.get(pid).expect("invariants");
             f(pid, &self.data[off..off + len]);
@@ -206,6 +210,10 @@ impl<V: Clone> Section<V> {
 
     /// Apply a delta from `src_point` → `dst_point` directly within the section buffer.
     ///
+    /// In debug builds or when the `check-invariants` feature is enabled, section
+    /// invariants are validated before and after applying the delta. Violations
+    /// panic prior to any slicing.
+    ///
     /// If the underlying slices do not overlap, the delta is applied without any
     /// additional allocation. Otherwise, the source slice is first copied into a
     /// temporary buffer to maintain aliasing safety.
@@ -213,6 +221,8 @@ impl<V: Clone> Section<V> {
     /// # Errors
     /// - [`MeshSieveError::PointNotInAtlas`] if either point is missing.
     /// - [`MeshSieveError::SliceLengthMismatch`] if the slice lengths differ.
+    /// - [`MeshSieveError::MissingSectionPoint`] if either slice is out of bounds.
+    /// - [`MeshSieveError::ScatterChunkMismatch`] if an offset/length overflows.
     pub fn try_apply_delta_between_points<D: SliceDelta<V>>(
         &mut self,
         src_point: PointId,
@@ -220,6 +230,9 @@ impl<V: Clone> Section<V> {
         delta: &D,
     ) -> Result<(), MeshSieveError> {
         use MeshSieveError::*;
+
+        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        self.debug_assert_invariants();
 
         let (soff, slen) = self
             .atlas
@@ -237,28 +250,48 @@ impl<V: Clone> Section<V> {
                 found: dlen,
             });
         }
+
+        let src_end = soff.checked_add(slen).ok_or(ScatterChunkMismatch {
+            offset: soff,
+            len: slen,
+        })?;
+        let dst_end = doff.checked_add(dlen).ok_or(ScatterChunkMismatch {
+            offset: doff,
+            len: dlen,
+        })?;
+
+        if src_end > self.data.len() {
+            return Err(MissingSectionPoint(src_point));
+        }
+        if dst_end > self.data.len() {
+            return Err(MissingSectionPoint(dst_point));
+        }
+
         if slen == 0 {
+            crate::topology::cache::InvalidateCache::invalidate_cache(self);
+            #[cfg(any(debug_assertions, feature = "check-invariants"))]
+            self.debug_assert_invariants();
             return Ok(());
         }
 
-        let disjoint = soff + slen <= doff || doff + dlen <= soff;
+        let disjoint = src_end <= doff || dst_end <= soff;
 
         if disjoint {
             let data = &mut self.data;
             if soff < doff {
                 let (a, b) = data.split_at_mut(doff);
-                let src = &a[soff..soff + slen];
+                let src = &a[soff..src_end];
                 let dst = &mut b[0..dlen];
                 delta.apply(src, dst)?;
             } else {
                 let (a, b) = data.split_at_mut(soff);
-                let dst = &mut a[doff..doff + dlen];
+                let dst = &mut a[doff..dst_end];
                 let src = &b[0..slen];
                 delta.apply(src, dst)?;
             }
         } else {
-            let src_copy: Vec<V> = self.data[soff..soff + slen].to_vec();
-            let dst = &mut self.data[doff..doff + dlen];
+            let src_copy: Vec<V> = self.data[soff..src_end].to_vec();
+            let dst = &mut self.data[doff..dst_end];
             delta.apply(&src_copy, dst)?;
         }
 
@@ -563,6 +596,8 @@ impl<V: Clone + Default> Section<V> {
     /// # Determinism
     /// Deterministic copy; `*_with_plan` additionally validates the plan version for safety.
     pub fn try_scatter_in_order(&mut self, buf: &[V]) -> Result<(), MeshSieveError> {
+        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        self.debug_assert_invariants();
         let spans = self.atlas.atlas_map();
         self.try_scatter_from(buf, &spans)
     }
@@ -993,6 +1028,65 @@ mod tests_resize {
         .unwrap();
 
         assert_eq!(s.try_restrict(p).unwrap(), &[3, 4]);
+    }
+}
+
+#[cfg(test)]
+mod tests_invariants_precheck {
+    use super::*;
+    use crate::data::atlas::Atlas;
+    use crate::topology::point::PointId;
+
+    #[cfg(not(debug_assertions))]
+    use crate::{mesh_error::MeshSieveError, topology::arrow::Polarity};
+
+    fn pid(i: u64) -> PointId {
+        PointId::new(i).unwrap()
+    }
+
+    #[test]
+    #[cfg(not(debug_assertions))]
+    fn delta_returns_missing_point_in_release_paths() {
+        let mut atlas = Atlas::default();
+        let p0 = pid(1);
+        let p1 = pid(2);
+        atlas.try_insert(p0, 2).unwrap();
+        atlas.try_insert(p1, 2).unwrap();
+        let mut s: Section<i32> = Section::new(atlas);
+
+        let mut bad = s.atlas.clone();
+        bad.remove_point(p1).unwrap();
+        let dummy = pid(99);
+        bad.try_insert(dummy, s.as_flat_slice().len() + 8).unwrap();
+        bad.try_insert(p1, 2).unwrap();
+        s.atlas = bad;
+
+        let e = s
+            .try_apply_delta_between_points(p0, p1, &Polarity::Forward)
+            .unwrap_err();
+
+        match e {
+            MeshSieveError::MissingSectionPoint(q) => assert_eq!(q, p1),
+            _ => panic!("unexpected error: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn for_each_in_order_prechecks_in_debug() {
+        let mut atlas = Atlas::default();
+        let p = pid(7);
+        atlas.try_insert(p, 1).unwrap();
+        let mut s: Section<i32> = Section::new(atlas);
+
+        s.data.clear();
+
+        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                s.for_each_in_order(|_, _| {});
+            }));
+            assert!(result.is_err(), "expected invariant pre-check to panic");
+        }
     }
 }
 
