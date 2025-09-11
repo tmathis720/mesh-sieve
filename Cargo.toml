@@ -47,8 +47,8 @@ env_logger = "0.11"
 rayon = "1"
 
 [features]
-default = []            # keep core lean
-# Enables legacy "infallible" adapter and helpers that panic on missing points.
+default = []
+# Legacy, infallible adapter. Off by default.
 map-adapter = []
 mpi-support = ["dep:mpi", "rayon", "dep:rand", "dep:ahash"]
 mpi-derive = ["mpi/derive"]

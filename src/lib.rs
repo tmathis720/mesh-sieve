@@ -1,3 +1,4 @@
+#![cfg_attr(docsrs, feature(doc_cfg))]
 //! # mesh-sieve
 //!
 //! mesh-sieve is a modular, high-performance Rust library for mesh and data management, designed for scientific computing and PDE codes. It provides abstractions for mesh topology, field data, parallel partitioning, and communication, supporting both serial and MPI-based distributed workflows.
@@ -70,9 +71,9 @@ pub mod prelude {
     };
     pub use crate::algs::rcm::distributed_rcm;
     pub use crate::data::atlas::Atlas;
-    pub use crate::data::section::Section;
     #[cfg(feature = "map-adapter")]
     pub use crate::data::section::Map;
+    pub use crate::data::section::Section;
     pub use crate::overlap::delta::{AddDelta, CopyDelta, ValueDelta};
     pub use crate::overlap::overlap::Overlap;
     pub use crate::topology::bounds::{PayloadLike, PointLike};

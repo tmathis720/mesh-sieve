@@ -4,13 +4,12 @@
 //! contiguous array) with a `Vec<V>` to hold the actual data. It provides
 //! methods for inserting, accessing, and iterating per-point data slices.
 //!
-//! The legacy infallible [`Map`] adapter and helpers are available only
-//! when the `map-adapter` feature is enabled. New code should prefer the
-//! fallible [`FallibleMap`] trait and `try_*` methods.
+//! A legacy, infallible adapter trait `Map<V>` is available behind the
+//! `map-adapter` feature. Prefer [`FallibleMap`] and `try_*` APIs.
 
-use crate::data::DebugInvariants;
 use crate::data::atlas::Atlas;
 use crate::data::refine::delta::SliceDelta;
+use crate::data::DebugInvariants;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cache::InvalidateCache;
 use crate::topology::point::PointId;
@@ -618,8 +617,21 @@ impl<V> FallibleMap<V> for Section<V> {
 /// Prefer [`FallibleMap`] in new code.
 ///
 /// # Panics
+#[cfg(feature = "map-adapter")]
+mod sealed {
+    pub trait Sealed {}
+    impl<V> Sealed for super::Section<V> {}
+    impl<'a, V> Sealed for crate::data::refine::helpers::ReadOnlyMap<'a, V> {}
+}
+
+/// Infallible adapter for read/write access; intended for legacy code.
+/// Prefer [`FallibleMap`] in new code.
+///
+/// # Panics
 /// Implementations may panic if `p` is unknown.
-pub trait Map<V> {
+#[cfg(feature = "map-adapter")]
+#[cfg_attr(docsrs, doc(cfg(feature = "map-adapter")))]
+pub trait Map<V>: sealed::Sealed {
     /// Immutable access to the data slice for `p`.
     fn get(&self, p: PointId) -> &[V];
 
@@ -632,7 +644,6 @@ pub trait Map<V> {
 }
 
 #[cfg(feature = "map-adapter")]
-/// Implement `Map` for `Section<V>`.
 impl<V> Map<V> for Section<V> {
     #[inline]
     fn get(&self, p: PointId) -> &[V] {
