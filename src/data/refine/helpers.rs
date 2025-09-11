@@ -17,6 +17,7 @@ use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
 
 #[cfg(feature = "map-adapter")]
+#[cfg_attr(docsrs, doc(cfg(feature = "map-adapter")))]
 /// Restrict a map along the closure of the given seed points.
 ///
 /// Returns an iterator over `(PointId, &[V])` for all points in the closure.
@@ -36,6 +37,7 @@ where
 }
 
 #[cfg(feature = "map-adapter")]
+#[cfg_attr(docsrs, doc(cfg(feature = "map-adapter")))]
 /// Restrict a map along the star of the given seed points.
 ///
 /// Returns an iterator over `(PointId, &[V])` for all points in the star.
@@ -55,6 +57,7 @@ where
 }
 
 #[cfg(feature = "map-adapter")]
+#[cfg_attr(docsrs, doc(cfg(feature = "map-adapter")))]
 /// Restrict a map along the closure of the given seed points, collecting results into a vector.
 ///
 /// # Migration
@@ -72,6 +75,7 @@ where
 }
 
 #[cfg(feature = "map-adapter")]
+#[cfg_attr(docsrs, doc(cfg(feature = "map-adapter")))]
 /// Restrict a map along the star of the given seed points, collecting results into a vector.
 ///
 /// # Migration
@@ -214,6 +218,7 @@ impl<'a, V> FallibleMap<V> for ReadOnlyMap<'a, V> {
 }
 
 #[cfg(feature = "map-adapter")]
+#[cfg_attr(docsrs, doc(cfg(feature = "map-adapter")))]
 impl<'a, V> Map<V> for ReadOnlyMap<'a, V> {
     fn get(&self, p: crate::topology::point::PointId) -> &[V] {
         self.section
@@ -227,9 +232,9 @@ impl<'a, V> Map<V> for ReadOnlyMap<'a, V> {
 mod tests {
     use super::*;
     use crate::data::atlas::Atlas;
-    use crate::data::section::{FallibleMap, Section};
     #[cfg(feature = "map-adapter")]
     use crate::data::section::Map;
+    use crate::data::section::{FallibleMap, Section};
     use crate::topology::point::PointId;
     use crate::topology::sieve::in_memory::InMemorySieve;
 
