@@ -65,6 +65,7 @@ where
     /// # Errors
     /// Returns `Err(PointNotInAtlas(p))` if the point is not registered in the atlas,
     /// or `Err(MissingSectionPoint(p))` if the data buffer is inconsistent.
+    #[inline]
     pub fn try_restrict(&self, p: PointId) -> Result<&[V], MeshSieveError> {
         let (offset, len) = self
             .atlas
@@ -81,6 +82,7 @@ where
     /// # Errors
     /// Returns `Err(PointNotInAtlas(p))` if the point is not registered in the atlas,
     /// or `Err(MissingSectionPoint(p))` if the data buffer is inconsistent.
+    #[inline]
     pub fn try_restrict_mut(&mut self, p: PointId) -> Result<&mut [V], MeshSieveError> {
         let (offset, len) = self
             .atlas
@@ -112,6 +114,7 @@ where
     }
 
     /// Read-only view of the entire flat buffer in insertion order.
+    #[inline]
     pub fn as_flat_slice(&self) -> &[V] {
         self.data.as_slice()
     }
@@ -180,6 +183,7 @@ where
 
 impl<V: Clone + Default, S: Storage<V>> Section<V, S> {
     /// Gather the entire section into a flat buffer in insertion order.
+    #[inline]
     pub fn gather_in_order(&self) -> Vec<V> {
         self.data.as_slice().to_vec()
     }
@@ -224,7 +228,8 @@ impl<V: Clone + Default, S: Storage<V>> Section<V, S> {
     pub fn try_remove_point(&mut self, p: PointId) -> Result<(), MeshSieveError> {
         let old_atlas = self.atlas.clone();
         self.atlas.remove_point(p)?;
-        let mut new_data = Vec::with_capacity(self.atlas.total_len());
+        let total_len_new = self.atlas.total_len();
+        let mut new_data = Vec::with_capacity(total_len_new);
         let buf = self.data.as_slice();
         for pid in self.atlas.points() {
             let (old_offset, old_len) = old_atlas
@@ -235,7 +240,7 @@ impl<V: Clone + Default, S: Storage<V>> Section<V, S> {
                 .ok_or(MeshSieveError::MissingSectionPoint(pid))?;
             new_data.extend_from_slice(old_slice);
         }
-        let mut next = S::with_len(self.atlas.total_len(), V::default());
+        let mut next = S::with_len(total_len_new, V::default());
         next.as_mut_slice().clone_from_slice(&new_data);
         self.data = next;
         crate::topology::cache::InvalidateCache::invalidate_cache(self);
@@ -479,7 +484,11 @@ impl<V: Clone + Default, S: Storage<V> + Clone> Section<V, S> {
         self.atlas
             .try_insert(p, len)
             .map_err(|e| MeshSieveError::AtlasInsertionFailed(p, Box::new(e)))?;
-        self.data.resize(self.atlas.total_len(), V::default());
+        let new_total = self.atlas.total_len();
+        let old_total = self.data.len();
+        if new_total > old_total {
+            self.data.resize(new_total, V::default());
+        }
         crate::topology::cache::InvalidateCache::invalidate_cache(self);
         #[cfg(any(
             debug_assertions,
@@ -550,7 +559,8 @@ impl<V: Clone + Default, S: Storage<V> + Clone> Section<V, S> {
         }
 
         // Rebuild data following insertion order of the new atlas
-        let mut new_data = Vec::with_capacity(self.atlas.total_len());
+        let total_len_new = self.atlas.total_len();
+        let mut new_data = Vec::with_capacity(total_len_new);
         let old_buf = self.data.as_slice();
         for pid in new_points {
             match before.get(pid) {
@@ -573,7 +583,7 @@ impl<V: Clone + Default, S: Storage<V> + Clone> Section<V, S> {
             }
         }
 
-        let mut next = S::with_len(self.atlas.total_len(), V::default());
+        let mut next = S::with_len(total_len_new, V::default());
         next.as_mut_slice().clone_from_slice(&new_data);
         self.data = next;
         crate::topology::cache::InvalidateCache::invalidate_cache(self);
