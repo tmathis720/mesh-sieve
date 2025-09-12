@@ -1,4 +1,4 @@
-use mesh_sieve::data::{atlas::Atlas, section::Section};
+use mesh_sieve::data::{atlas::Atlas, section::Section, storage::VecStorage};
 use mesh_sieve::topology::point::PointId;
 
 #[test]
@@ -6,7 +6,7 @@ fn section_with_atlas_mut_rebuilds_data() -> Result<(), Box<dyn std::error::Erro
     let mut a = Atlas::default();
     let p = PointId::new(10)?;
     a.try_insert(p, 2)?;
-    let mut s = Section::<i32>::new(a);
+    let mut s = Section::<i32, VecStorage<i32>>::new(a);
     s.try_set(p, &[7, 8])?;
 
     // Add a new point and ensure it's defaulted

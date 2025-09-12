@@ -12,6 +12,8 @@
 use crate::data::section::FallibleMap;
 #[cfg(feature = "map-adapter")]
 use crate::data::section::Map;
+use crate::data::storage::{Storage, VecStorage};
+use core::marker::PhantomData;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
@@ -195,12 +197,16 @@ where
 }
 
 /// Read-only wrapper for a section.
-pub struct ReadOnlyMap<'a, V> {
+pub struct ReadOnlyMap<'a, V, S: Storage<V> = VecStorage<V>> {
     /// Underlying [`Section`] providing slice data.
-    pub section: &'a crate::data::section::Section<V>,
+    pub section: &'a crate::data::section::Section<V, S>,
+    _marker: PhantomData<V>,
 }
 
-impl<'a, V> FallibleMap<V> for ReadOnlyMap<'a, V> {
+impl<'a, V, S> FallibleMap<V> for ReadOnlyMap<'a, V, S>
+where
+    S: Storage<V>,
+{
     #[inline]
     fn try_get(&self, p: crate::topology::point::PointId) -> Result<&[V], MeshSieveError> {
         self.section.try_restrict(p)
@@ -219,7 +225,10 @@ impl<'a, V> FallibleMap<V> for ReadOnlyMap<'a, V> {
 
 #[cfg(feature = "map-adapter")]
 #[cfg_attr(docsrs, doc(cfg(feature = "map-adapter")))]
-impl<'a, V> Map<V> for ReadOnlyMap<'a, V> {
+impl<'a, V, S> Map<V> for ReadOnlyMap<'a, V, S>
+where
+    S: Storage<V>,
+{
     fn get(&self, p: crate::topology::point::PointId) -> &[V] {
         self.section
             .try_restrict(p)
@@ -232,9 +241,10 @@ impl<'a, V> Map<V> for ReadOnlyMap<'a, V> {
 mod tests {
     use super::*;
     use crate::data::atlas::Atlas;
-    #[cfg(feature = "map-adapter")]
-    use crate::data::section::Map;
-    use crate::data::section::{FallibleMap, Section};
+#[cfg(feature = "map-adapter")]
+use crate::data::section::Map;
+use crate::data::section::{FallibleMap, Section};
+use crate::data::storage::VecStorage;
     use crate::topology::point::PointId;
     use crate::topology::sieve::in_memory::InMemorySieve;
 
@@ -252,7 +262,7 @@ mod tests {
         atlas.try_insert(v(1), 1).unwrap();
         atlas.try_insert(v(2), 1).unwrap();
         atlas.try_insert(v(3), 1).unwrap();
-        let mut sec = Section::<i32>::new(atlas);
+        let mut sec = Section::<i32, VecStorage<i32>>::new(atlas);
         sec.try_set(v(1), &[10]).unwrap();
         sec.try_set(v(2), &[20]).unwrap();
         sec.try_set(v(3), &[30]).unwrap();
@@ -275,15 +285,15 @@ mod tests {
 
         // ReadOnlyMap fallible
         #[allow(unused_mut)]
-        let mut rom = ReadOnlyMap { section: &sec };
+        let mut rom = ReadOnlyMap { section: &sec, _marker: PhantomData };
         assert_eq!(
-            <ReadOnlyMap<'_, i32> as FallibleMap<i32>>::try_get(&rom, v(3)).unwrap(),
+            <ReadOnlyMap<'_, i32, VecStorage<i32>> as FallibleMap<i32>>::try_get(&rom, v(3)).unwrap(),
             sec.try_restrict(v(3)).unwrap()
         );
-        assert!(<ReadOnlyMap<'_, i32> as FallibleMap<i32>>::try_get(&rom, v(99)).is_err());
+        assert!(<ReadOnlyMap<'_, i32, VecStorage<i32>> as FallibleMap<i32>>::try_get(&rom, v(99)).is_err());
 
         #[cfg(feature = "map-adapter")]
-        assert!(<ReadOnlyMap<'_, i32> as Map<i32>>::get_mut(&mut rom, v(3)).is_none());
+        assert!(<ReadOnlyMap<'_, i32, VecStorage<i32>> as Map<i32>>::get_mut(&mut rom, v(3)).is_none());
     }
 
     #[cfg(feature = "map-adapter")]
@@ -297,7 +307,7 @@ mod tests {
         atlas.try_insert(v(1), 1).unwrap();
         atlas.try_insert(v(2), 1).unwrap();
         atlas.try_insert(v(3), 1).unwrap();
-        let mut sec = Section::<i32>::new(atlas);
+        let mut sec = Section::<i32, VecStorage<i32>>::new(atlas);
         sec.try_set(v(1), &[10]).unwrap();
         sec.try_set(v(2), &[20]).unwrap();
         sec.try_set(v(3), &[30]).unwrap();

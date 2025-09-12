@@ -1,4 +1,4 @@
-use mesh_sieve::data::{atlas::Atlas, bundle::Bundle, section::Section};
+use mesh_sieve::data::{atlas::Atlas, bundle::Bundle, section::Section, storage::VecStorage};
 use mesh_sieve::overlap::delta::CopyDelta;
 use mesh_sieve::topology::arrow::Polarity;
 use mesh_sieve::topology::point::PointId;
@@ -14,7 +14,7 @@ fn bundle_refine_with_forward_and_reverse() -> Result<(), Box<dyn std::error::Er
     atlas.try_insert(c1, 3)?;
     atlas.try_insert(c2, 3)?;
 
-    let mut section = Section::<i32>::new(atlas.clone());
+    let mut section = Section::<i32, VecStorage<i32>>::new(atlas.clone());
     section.try_set(b, &[1, 2, 3])?;
 
     let mut stack = InMemoryStack::<PointId, PointId, Polarity>::default();
@@ -38,7 +38,7 @@ fn bundle_assemble_elementwise_average() -> Result<(), Box<dyn std::error::Error
     atlas.try_insert(b, 3)?;
     atlas.try_insert(c1, 3)?;
     atlas.try_insert(c2, 3)?;
-    let mut section = Section::<f64>::new(atlas.clone());
+    let mut section = Section::<f64, VecStorage<f64>>::new(atlas.clone());
 
     let mut stack = InMemoryStack::<PointId, PointId, Polarity>::default();
     stack.add_arrow(b, c1, Polarity::Forward)?;

@@ -11,6 +11,8 @@
 #[allow(unused_imports)]
 use crate::data::refine::delta::SliceDelta;
 use crate::data::section::Section;
+use crate::data::storage::{Storage, VecStorage};
+use core::marker::PhantomData;
 use crate::overlap::delta::CopyDelta;
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
@@ -93,9 +95,10 @@ where
     }
 }
 
-/// `Bundle<V, D>` packages a mesh‐to‐DOF stack, a data section, and a `ValueDelta`-type.
+/// `Bundle<V, S, D>` packages a mesh‐to‐DOF stack, a data section, and a `ValueDelta`-type.
 ///
 /// - `V`: underlying data type stored at each DOF (e.g., `f64`, `i32`, …).
+/// - `S`: storage backend for the section (defaults to [`VecStorage`]).
 /// - `D`: overlap [`ValueDelta`](crate::overlap::delta::ValueDelta)<V> implementation guiding how
 ///   values are reduced/merged across parts (defaults to [`CopyDelta`]).
 ///   For per-slice permutation/orientation, see [`crate::data::refine::delta::SliceDelta`].
@@ -105,16 +108,18 @@ where
 ///      carrying a `Polarity` payload if needed.
 /// - `section`: contiguous storage of data `V` for each point in the atlas.
 /// - `delta`: rules for extracting (`restrict`) and merging (`fuse`) values.
-pub struct Bundle<V, D = CopyDelta> {
+pub struct Bundle<V, S: Storage<V> = VecStorage<V>, D = CopyDelta> {
     /// Vertical connectivity: base points → cap (DOF) points.
     pub stack: InMemoryStack<PointId, PointId, crate::topology::arrow::Polarity>,
     /// Field data storage, indexed by `PointId`.
-    pub section: Section<V>,
+    pub section: Section<V, S>,
     /// Delta strategy for refine/assemble operations.
     pub delta: D,
+    #[doc(hidden)]
+    pub _marker: PhantomData<V>,
 }
 
-impl<V, D> Bundle<V, D>
+impl<V, S: Storage<V>, D> Bundle<V, S, D>
 where
     V: Clone + Default,
     D: crate::overlap::delta::ValueDelta<V, Part = V>,
@@ -268,6 +273,8 @@ mod tests {
     use crate::data::atlas::Atlas;
     use crate::overlap::delta::CopyDelta;
     use crate::topology::arrow::Polarity;
+    use crate::data::storage::VecStorage;
+    use core::marker::PhantomData;
     #[test]
     fn bundle_basic_refine_and_assemble() {
         let mut atlas = Atlas::default();
@@ -275,7 +282,7 @@ mod tests {
         atlas.try_insert(PointId::new(2).unwrap(), 1).unwrap();
         atlas.try_insert(PointId::new(101).unwrap(), 1).unwrap(); // cap DOF for 1
         atlas.try_insert(PointId::new(102).unwrap(), 1).unwrap(); // cap DOF for 2
-        let mut section = Section::<i32>::new(atlas.clone());
+        let mut section = Section::<i32, VecStorage<i32>>::new(atlas.clone());
         section.try_set(PointId::new(1).unwrap(), &[10]).unwrap();
         section.try_set(PointId::new(2).unwrap(), &[20]).unwrap();
         let mut stack = InMemoryStack::<PointId, PointId, Polarity>::new();
@@ -311,6 +318,7 @@ mod tests {
             stack,
             section,
             delta: CopyDelta,
+            _marker: PhantomData,
         };
         // Refine: push base values to cap
         bundle
@@ -360,12 +368,13 @@ mod tests {
     #[test]
     fn empty_bundle_noop() {
         let atlas = Atlas::default();
-        let section = Section::<i32>::new(atlas.clone());
+        let section = Section::<i32, VecStorage<i32>>::new(atlas.clone());
         let stack = InMemoryStack::<PointId, PointId, Polarity>::new();
         let mut bundle = Bundle {
             stack,
             section,
             delta: CopyDelta,
+            _marker: PhantomData,
         };
         // Should not panic, nothing to do
         bundle.refine(std::iter::empty::<PointId>()).unwrap();
@@ -377,7 +386,7 @@ mod tests {
         let mut atlas = Atlas::default();
         atlas.try_insert(PointId::new(1).unwrap(), 2).unwrap();
         atlas.try_insert(PointId::new(101).unwrap(), 2).unwrap();
-        let mut section = Section::<i32>::new(atlas.clone());
+        let mut section = Section::<i32, VecStorage<i32>>::new(atlas.clone());
         section
             .try_set(PointId::new(1).unwrap(), &[10, 20])
             .unwrap();
@@ -400,6 +409,7 @@ mod tests {
             stack,
             section,
             delta: CopyDelta,
+            _marker: PhantomData,
         };
         bundle.refine([PointId::new(1).unwrap()]).unwrap();
         let vals = bundle
@@ -415,7 +425,7 @@ mod tests {
         let mut atlas = Atlas::default();
         atlas.try_insert(PointId::new(1).unwrap(), 2).unwrap();
         atlas.try_insert(PointId::new(101).unwrap(), 2).unwrap();
-        let mut section = Section::<i32>::new(atlas.clone());
+        let mut section = Section::<i32, VecStorage<i32>>::new(atlas.clone());
         section.try_set(PointId::new(1).unwrap(), &[1, 2]).unwrap();
         let mut stack = InMemoryStack::<PointId, PointId, Polarity>::new();
         stack
@@ -436,6 +446,7 @@ mod tests {
             stack,
             section,
             delta: CopyDelta,
+            _marker: PhantomData,
         };
         bundle.refine([PointId::new(1).unwrap()]).unwrap();
         // Should get reversed [2,1]
@@ -455,7 +466,7 @@ mod tests {
         atlas.try_insert(PointId::new(1).unwrap(), 1).unwrap();
         atlas.try_insert(PointId::new(101).unwrap(), 1).unwrap();
         atlas.try_insert(PointId::new(102).unwrap(), 1).unwrap();
-        let mut section = Section::<i32>::new(atlas.clone());
+        let mut section = Section::<i32, VecStorage<i32>>::new(atlas.clone());
         section.try_set(PointId::new(101).unwrap(), &[5]).unwrap();
         section.try_set(PointId::new(102).unwrap(), &[7]).unwrap();
         let mut stack = InMemoryStack::<PointId, PointId, Polarity>::new();
@@ -487,6 +498,7 @@ mod tests {
             stack,
             section,
             delta: AddDelta,
+            _marker: PhantomData,
         };
         bundle.assemble([PointId::new(1).unwrap()]).unwrap();
         // base receives average (5+7)/2
@@ -505,7 +517,7 @@ mod tests {
         atlas.try_insert(PointId::new(1).unwrap(), 1).unwrap();
         atlas.try_insert(PointId::new(101).unwrap(), 1).unwrap();
         atlas.try_insert(PointId::new(102).unwrap(), 1).unwrap();
-        let mut section = Section::<i32>::new(atlas.clone());
+        let mut section = Section::<i32, VecStorage<i32>>::new(atlas.clone());
         section.try_set(PointId::new(101).unwrap(), &[8]).unwrap();
         section.try_set(PointId::new(102).unwrap(), &[9]).unwrap();
         let mut stack = InMemoryStack::<PointId, PointId, Polarity>::new();
@@ -537,6 +549,7 @@ mod tests {
             stack,
             section,
             delta: CopyDelta,
+            _marker: PhantomData,
         };
         let vec: Vec<_> = bundle.dofs(PointId::new(1).unwrap()).collect();
         let mut vec = vec.into_iter().collect::<Result<Vec<_>, _>>().unwrap();
@@ -553,12 +566,13 @@ mod tests {
     #[test]
     fn refine_unknown_base_errors() {
         let atlas = Atlas::default();
-        let section = Section::<i32>::new(atlas.clone());
+        let section = Section::<i32, VecStorage<i32>>::new(atlas.clone());
         let stack = InMemoryStack::<PointId, PointId, Polarity>::new();
         let mut bundle = Bundle {
             stack,
             section,
             delta: CopyDelta,
+            _marker: PhantomData,
         };
         let err = bundle.refine([PointId::new(999).unwrap()]).unwrap_err();
         assert!(

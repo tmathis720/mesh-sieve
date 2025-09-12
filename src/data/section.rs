@@ -1,9 +1,9 @@
 //! Section: Field data storage over a topology atlas.
 //!
-//! The `Section<V>` type couples an `Atlas` (mapping points to slices in a
-//! contiguous array) with pluggable storage (defaulting to a `Vec`-backed
-//! [`VecStorage`]) to hold the actual data. It provides methods for inserting,
-//! accessing, and iterating per-point data slices.
+//! The `Section<V, S>` type couples an `Atlas` (mapping points to slices in a
+//! contiguous array) with pluggable storage `S` to hold the actual data. It
+//! provides methods for inserting, accessing, and iterating per-point data
+//! slices.
 //!
 //! A legacy, infallible adapter trait `Map<V>` is available behind the
 //! `map-adapter` feature. Prefer [`FallibleMap`] and `try_*` APIs.
@@ -11,11 +11,10 @@
 use crate::data::DebugInvariants;
 use crate::data::atlas::Atlas;
 use crate::data::refine::delta::SliceDelta;
-use crate::data::storage::{Storage, VecStorage};
+use crate::data::storage::Storage;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cache::InvalidateCache;
 use crate::topology::point::PointId;
-use core::marker::PhantomData;
 
 /// Precomputed plan for scattering data into a section.
 #[derive(Clone, Debug)]
@@ -33,8 +32,10 @@ pub struct ScatterPlan {
 /// These checks run after mutations in debug builds and when the
 /// `check-invariants` feature is enabled. They can also be verified manually via
 /// [`validate_invariants`](Self::validate_invariants).
+use core::marker::PhantomData;
+
 #[derive(Clone, Debug)]
-pub struct Section<V, S = VecStorage<V>> {
+pub struct Section<V, S: Storage<V>> {
     /// Atlas mapping each `PointId` to (offset, length) in `data`.
     atlas: Atlas,
     /// Contiguous storage of values for all points.
@@ -417,11 +418,7 @@ impl<V: Clone + Default, S: Storage<V> + Clone> Section<V, S> {
     /// Initial layout matches the atlas’ insertion order deterministically.
     pub fn new(atlas: Atlas) -> Self {
         let data = S::with_len(atlas.total_len(), V::default());
-        Section {
-            atlas,
-            data,
-            _marker: PhantomData,
-        }
+        Section { atlas, data, _marker: PhantomData }
     }
 
     /// Add a new point to the section, resizing data as needed.
@@ -747,10 +744,7 @@ where
     }
 }
 
-impl<V, S> InvalidateCache for Section<V, S>
-where
-    S: Storage<V>,
-{
+impl<V, S: Storage<V>> InvalidateCache for Section<V, S> {
     fn invalidate_cache(&mut self) {
         // If you ever cache anything derived from atlas/data, clear it here.
     }
@@ -761,12 +755,13 @@ mod tests {
     use super::*;
     use crate::data::atlas::Atlas;
     use crate::topology::point::PointId;
+    use crate::data::storage::VecStorage;
 
-    fn make_section() -> Section<f64> {
+    fn make_section() -> Section<f64, VecStorage<f64>> {
         let mut atlas = Atlas::default();
         atlas.try_insert(PointId::new(1).unwrap(), 2).unwrap(); // 2 dof
         atlas.try_insert(PointId::new(2).unwrap(), 1).unwrap();
-        Section::<f64>::new(atlas)
+        Section::<f64, VecStorage<f64>>::new(atlas)
     }
 
     #[test]
@@ -799,16 +794,16 @@ mod tests {
         s.try_set(PointId::new(1).unwrap(), &[1.0, 2.0]).unwrap();
         // successful access
         assert_eq!(
-            <Section<f64> as FallibleMap<f64>>::try_get(&s, PointId::new(1).unwrap()).unwrap(),
+            <Section<f64, VecStorage<f64>> as FallibleMap<f64>>::try_get(&s, PointId::new(1).unwrap()).unwrap(),
             &[1.0, 2.0]
         );
         // missing point yields error
         assert!(
-            <Section<f64> as FallibleMap<f64>>::try_get(&s, PointId::new(99).unwrap()).is_err()
+            <Section<f64, VecStorage<f64>> as FallibleMap<f64>>::try_get(&s, PointId::new(99).unwrap()).is_err()
         );
         // mutable access works
         assert!(
-            <Section<f64> as FallibleMap<f64>>::try_get_mut(&mut s, PointId::new(1).unwrap())
+            <Section<f64, VecStorage<f64>> as FallibleMap<f64>>::try_get_mut(&mut s, PointId::new(1).unwrap())
                 .is_ok()
         );
     }
@@ -822,11 +817,11 @@ mod tests {
         s.try_set(PointId::new(2).unwrap(), &[3.5]).unwrap();
         // get == restrict
         assert_eq!(
-            <Section<f64> as Map<f64>>::get(&s, PointId::new(1).unwrap()),
+            <Section<f64, VecStorage<f64>> as Map<f64>>::get(&s, PointId::new(1).unwrap()),
             s.try_restrict(PointId::new(1).unwrap()).unwrap()
         );
         // get_mut returns Some for Section
-        assert!(<Section<f64> as Map<f64>>::get_mut(&mut s, PointId::new(1).unwrap()).is_some());
+        assert!(<Section<f64, VecStorage<f64>> as Map<f64>>::get_mut(&mut s, PointId::new(1).unwrap()).is_some());
     }
 
     #[test]
@@ -847,7 +842,7 @@ mod tests {
         let mut atlas = Atlas::default();
         atlas.try_insert(PointId::new(1).unwrap(), 2).unwrap();
         atlas.try_insert(PointId::new(2).unwrap(), 1).unwrap();
-        let mut s = Section::<f64>::new(atlas.clone());
+        let mut s = Section::<f64, VecStorage<f64>>::new(atlas.clone());
         // set and restrict
         s.try_set(PointId::new(1).unwrap(), &[1.1, 2.2]).unwrap();
         s.try_set(PointId::new(2).unwrap(), &[3.3]).unwrap();
@@ -857,7 +852,7 @@ mod tests {
         );
         assert_eq!(s.try_restrict(PointId::new(2).unwrap()).unwrap(), &[3.3]);
         // scatter_from
-        let mut s2 = Section::<f64>::new(atlas);
+        let mut s2 = Section::<f64, VecStorage<f64>>::new(atlas);
         s2.try_scatter_from(&[1.1, 2.2, 3.3], &[(0, 2), (2, 1)])
             .unwrap();
         assert_eq!(
@@ -873,22 +868,22 @@ mod tests {
         use super::Map;
         let mut atlas = Atlas::default();
         atlas.try_insert(PointId::new(1).unwrap(), 1).unwrap();
-        let mut s = Section::<i32>::new(atlas);
+        let mut s = Section::<i32, VecStorage<i32>>::new(atlas);
         s.try_set(PointId::new(1).unwrap(), &[42]).unwrap();
         // Map trait get
         assert_eq!(
-            <Section<i32> as Map<i32>>::get(&s, PointId::new(1).unwrap()),
+            <Section<i32, VecStorage<i32>> as Map<i32>>::get(&s, PointId::new(1).unwrap()),
             &[42]
         );
         // Map trait get_mut
-        assert!(<Section<i32> as Map<i32>>::get_mut(&mut s, PointId::new(1).unwrap()).is_some());
+        assert!(<Section<i32, VecStorage<i32>> as Map<i32>>::get_mut(&mut s, PointId::new(1).unwrap()).is_some());
     }
 
     #[test]
     fn add_point_expands_and_defaults() {
         let mut atlas = Atlas::default();
         atlas.try_insert(PointId::new(1).unwrap(), 2).unwrap();
-        let mut s = Section::<i32>::new(atlas.clone());
+        let mut s = Section::<i32, VecStorage<i32>>::new(atlas.clone());
         // initial capacity = 2
         assert_eq!(s.iter().count(), 1);
         // add a new point of length 3
@@ -920,7 +915,7 @@ mod tests {
         atlas.try_insert(PointId::new(1).unwrap(), 2).unwrap();
         atlas.try_insert(PointId::new(2).unwrap(), 1).unwrap();
         atlas.try_insert(PointId::new(3).unwrap(), 2).unwrap();
-        let mut s = Section::<i32>::new(atlas);
+        let mut s = Section::<i32, VecStorage<i32>>::new(atlas);
         // set some dummy values
         s.try_set(PointId::new(1).unwrap(), &[10, 11]).unwrap();
         s.try_set(PointId::new(2).unwrap(), &[22]).unwrap();
@@ -976,6 +971,7 @@ mod tests {
 mod tests_resize {
     use super::*;
     use crate::topology::point::PointId;
+    use crate::data::storage::VecStorage;
 
     fn pid(i: u64) -> PointId {
         PointId::new(i).unwrap()
@@ -986,7 +982,7 @@ mod tests_resize {
         let mut atlas = Atlas::default();
         let p = pid(1);
         atlas.try_insert(p, 3).unwrap();
-        let mut s: Section<i32> = Section::new(atlas);
+        let mut s: Section<i32, VecStorage<i32>> = Section::new(atlas);
 
         s.try_set(p, &[1, 2, 3]).unwrap();
 
@@ -1015,7 +1011,7 @@ mod tests_resize {
         let mut atlas = Atlas::default();
         let p = pid(1);
         atlas.try_insert(p, 3).unwrap();
-        let mut s: Section<i32> = Section::new(atlas);
+        let mut s: Section<i32, VecStorage<i32>> = Section::new(atlas);
         s.try_set(p, &[10, 20, 30]).unwrap();
 
         s.with_atlas_resize(ResizePolicy::PreservePrefix, |a| {
@@ -1032,7 +1028,7 @@ mod tests_resize {
         let mut atlas = Atlas::default();
         let p = pid(1);
         atlas.try_insert(p, 3).unwrap();
-        let mut s: Section<i32> = Section::new(atlas);
+        let mut s: Section<i32, VecStorage<i32>> = Section::new(atlas);
         s.try_set(p, &[10, 20, 30]).unwrap();
 
         s.with_atlas_resize(ResizePolicy::PreserveSuffix, |a| {
@@ -1049,7 +1045,7 @@ mod tests_resize {
         let mut atlas = Atlas::default();
         let p = pid(1);
         atlas.try_insert(p, 2).unwrap();
-        let mut s: Section<i32> = Section::new(atlas);
+        let mut s: Section<i32, VecStorage<i32>> = Section::new(atlas);
         s.try_set(p, &[7, 9]).unwrap();
 
         s.with_atlas_resize(ResizePolicy::PadWith(-1), |a| {
@@ -1066,7 +1062,7 @@ mod tests_resize {
         let mut atlas = Atlas::default();
         let p = pid(1);
         atlas.try_insert(p, 4).unwrap();
-        let mut s: Section<i32> = Section::new(atlas);
+        let mut s: Section<i32, VecStorage<i32>> = Section::new(atlas);
         s.try_set(p, &[1, 2, 3, 4]).unwrap();
 
         s.with_atlas_resize(ResizePolicy::PreservePrefix, |a| {
@@ -1083,7 +1079,7 @@ mod tests_resize {
         let mut atlas = Atlas::default();
         let p = pid(1);
         atlas.try_insert(p, 4).unwrap();
-        let mut s: Section<i32> = Section::new(atlas);
+        let mut s: Section<i32, VecStorage<i32>> = Section::new(atlas);
         s.try_set(p, &[1, 2, 3, 4]).unwrap();
 
         s.with_atlas_resize(ResizePolicy::PreserveSuffix, |a| {
@@ -1101,6 +1097,7 @@ mod tests_invariants_precheck {
     use super::*;
     use crate::data::atlas::Atlas;
     use crate::topology::point::PointId;
+    use crate::data::storage::VecStorage;
 
     #[cfg(not(debug_assertions))]
     use crate::{mesh_error::MeshSieveError, topology::arrow::Polarity};
@@ -1117,7 +1114,7 @@ mod tests_invariants_precheck {
         let p1 = pid(2);
         atlas.try_insert(p0, 2).unwrap();
         atlas.try_insert(p1, 2).unwrap();
-        let mut s: Section<i32> = Section::new(atlas);
+        let mut s: Section<i32, VecStorage<i32>> = Section::new(atlas);
 
         let mut bad = s.atlas.clone();
         bad.remove_point(p1).unwrap();
@@ -1141,7 +1138,7 @@ mod tests_invariants_precheck {
         let mut atlas = Atlas::default();
         let p = pid(7);
         atlas.try_insert(p, 1).unwrap();
-        let mut s: Section<i32> = Section::new(atlas);
+        let mut s: Section<i32, VecStorage<i32>> = Section::new(atlas);
 
         s.data.resize(0, 0);
 

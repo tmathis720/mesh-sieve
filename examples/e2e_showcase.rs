@@ -1,6 +1,7 @@
 use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::refine::sieved_array::SievedArray;
 use mesh_sieve::data::section::Section;
+use mesh_sieve::data::storage::VecStorage;
 use mesh_sieve::topology::arrow::Polarity;
 use mesh_sieve::topology::point::PointId;
 use mesh_sieve::topology::sieve::Sieve;
@@ -23,7 +24,7 @@ mod tiny_mesh;
 #[cfg(feature = "rayon")]
 fn check_parallel_refine_matches_serial(
     atlas: &Atlas,
-    sec: &Section<f64>,
+    sec: &Section<f64, VecStorage<f64>>,
     q0: PointId,
     q1: PointId,
 ) {
@@ -75,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let off_q1 = atlas.try_insert(q1, 4)?;
     assert_eq!(off_q0, 0);
     assert_eq!(off_q1, 4);
-    let mut sec: Section<f64> = Section::new(atlas.clone());
+    let mut sec: Section<f64, VecStorage<f64>> = Section::new(atlas.clone());
 
     // Initialize base values:
     sec.try_set(q0, &[1.0, 2.0, 3.0, 4.0])?;
@@ -186,7 +187,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("[neg] zero-length insert -> {:?}", err);
 
     // b) Section set length mismatch
-    let mut sec2: Section<f64> = Section::new(atlas.clone());
+    let mut sec2: Section<f64, VecStorage<f64>> = Section::new(atlas.clone());
     let err = sec2.try_set(q0, &[1.0, 2.0, 3.0]).unwrap_err();
     println!("[neg] slice-length mismatch -> {:?}", err);
 

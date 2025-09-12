@@ -12,3 +12,7 @@ pub mod refine;
 pub(crate) use _debug_invariants::DebugInvariants;
 
 pub use storage::{Storage, VecStorage};
+pub use section::Section;
+
+/// Alias for the common Vec-backed section.
+pub type CpuSection<V> = section::Section<V, VecStorage<V>>;

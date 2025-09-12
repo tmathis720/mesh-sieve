@@ -1,14 +1,15 @@
 use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::section::Section;
+use mesh_sieve::data::storage::VecStorage;
 use mesh_sieve::mesh_error::MeshSieveError;
 use mesh_sieve::topology::point::PointId;
 
-fn build_section() -> Section<i32> {
+fn build_section() -> Section<i32, VecStorage<i32>> {
     let mut atlas = Atlas::default();
     atlas.try_insert(PointId::new(1).unwrap(), 2).unwrap();
     atlas.try_insert(PointId::new(2).unwrap(), 1).unwrap();
     atlas.try_insert(PointId::new(3).unwrap(), 2).unwrap();
-    Section::new(atlas)
+    Section::<i32, VecStorage<i32>>::new(atlas)
 }
 
 #[test]
@@ -42,7 +43,7 @@ fn plan_staleness() {
     atlas.try_insert(p1, 1).unwrap();
     atlas.try_insert(p2, 1).unwrap();
     let plan = atlas.build_scatter_plan();
-    let mut sec = Section::<i32>::new(atlas);
+    let mut sec = Section::<i32, VecStorage<i32>>::new(atlas);
     let buf = vec![10, 20];
     let p3 = PointId::new(3).unwrap();
     sec.try_add_point(p3, 1).unwrap();

@@ -1,5 +1,5 @@
 use mesh_sieve::algs::{communicator::RayonComm, completion::complete_section};
-use mesh_sieve::data::{atlas::Atlas, section::Section};
+use mesh_sieve::data::{atlas::Atlas, section::Section, storage::VecStorage};
 use mesh_sieve::overlap::delta::CopyDelta;
 use mesh_sieve::overlap::overlap::Overlap;
 use mesh_sieve::topology::point::PointId;
@@ -21,13 +21,13 @@ fn ghost_update_self() {
     atlas
         .try_insert(p0, 1)
         .expect("Failed to insert point into atlas");
-    let mut sec = Section::<u32>::new(atlas);
+    let mut sec = Section::<u32, VecStorage<u32>>::new(atlas);
     sec.try_set(p0, &[42]).expect("Failed to set section value");
 
     let comm = RayonComm::new(0, 1);
 
     // Should complete without deadlock and leave the value intact.
-    let _ = complete_section::<u32, CopyDelta, _>(&mut sec, &ovlp, &comm, 0);
+    let _ = complete_section::<u32, VecStorage<u32>, CopyDelta, _>(&mut sec, &ovlp, &comm, 0);
 
     assert_eq!(
         sec.try_restrict(p0).expect("Failed to restrict section")[0],

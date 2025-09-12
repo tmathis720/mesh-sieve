@@ -1,6 +1,7 @@
 use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::refine::sieved_array::SievedArray;
 use mesh_sieve::data::section::Section;
+use mesh_sieve::data::storage::VecStorage;
 use mesh_sieve::topology::arrow::Polarity;
 use mesh_sieve::topology::point::PointId;
 use mesh_sieve::topology::sieve::Sieve;
@@ -21,7 +22,7 @@ fn orientation_and_overlap_smoke() {
     let mut atlas = Atlas::default();
     atlas.try_insert(q0, 4).unwrap();
     atlas.try_insert(q1, 4).unwrap();
-    let mut sec = Section::<f64>::new(atlas.clone());
+    let mut sec = Section::<f64, VecStorage<f64>>::new(atlas.clone());
     sec.try_set(q0, &[1.0, 2.0, 3.0, 4.0]).unwrap();
     sec.try_set(q1, &[10.0, 20.0, 30.0, 40.0]).unwrap();
 
@@ -91,7 +92,7 @@ fn parallel_refine_parity() {
     let mut atlas = Atlas::default();
     atlas.try_insert(q0, 4).unwrap();
     atlas.try_insert(q1, 4).unwrap();
-    let mut sec = Section::<f64>::new(atlas.clone());
+    let mut sec = Section::<f64, VecStorage<f64>>::new(atlas.clone());
     sec.try_set(q0, &[1.0, 2.0, 3.0, 4.0]).unwrap();
     sec.try_set(q1, &[10.0, 20.0, 30.0, 40.0]).unwrap();
 

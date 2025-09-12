@@ -1,6 +1,8 @@
 use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::bundle::Bundle;
+use core::marker::PhantomData;
 use mesh_sieve::data::section::Section;
+use mesh_sieve::data::storage::VecStorage;
 use mesh_sieve::overlap::delta::CopyDelta;
 use mesh_sieve::topology::arrow::Polarity;
 use mesh_sieve::topology::point::PointId;
@@ -14,7 +16,7 @@ fn refine_disjoint_slices_no_allocations() -> Result<(), Box<dyn std::error::Err
     let mut atlas = Atlas::default();
     atlas.try_insert(b, 3)?;
     atlas.try_insert(c, 3)?;
-    let mut section = Section::<i32>::new(atlas);
+    let mut section = Section::<i32, VecStorage<i32>>::new(atlas);
     section.try_set(b, &[10, 20, 30])?;
 
     let mut stack = InMemoryStack::<PointId, PointId, Polarity>::default();
@@ -26,6 +28,7 @@ fn refine_disjoint_slices_no_allocations() -> Result<(), Box<dyn std::error::Err
         stack,
         section,
         delta: CopyDelta,
+        _marker: PhantomData,
     };
     bundle.refine([b])?;
 
@@ -39,7 +42,7 @@ fn refine_overlapping_slices_safe_reverse() -> Result<(), Box<dyn std::error::Er
     let p = PointId::new(42)?;
     let mut atlas = Atlas::default();
     atlas.try_insert(p, 4)?;
-    let mut section = Section::<i32>::new(atlas);
+    let mut section = Section::<i32, VecStorage<i32>>::new(atlas);
     section.try_set(p, &[1, 2, 3, 4])?;
 
     let mut stack = InMemoryStack::<PointId, PointId, Polarity>::default();
@@ -51,6 +54,7 @@ fn refine_overlapping_slices_safe_reverse() -> Result<(), Box<dyn std::error::Er
         stack,
         section,
         delta: CopyDelta,
+        _marker: PhantomData,
     };
     bundle.refine([p])?;
 
