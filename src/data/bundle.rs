@@ -152,11 +152,9 @@ where
         &mut self,
         bases: impl IntoIterator<Item = PointId>,
     ) -> Result<(), crate::mesh_error::MeshSieveError> {
-        let bases_vec: Vec<PointId> = bases.into_iter().collect();
-        for &b in &bases_vec {
+        for b in self.stack.base().closure(bases) {
+            // Validate base slice exists even if no caps are present
             self.section.try_restrict(b)?;
-        }
-        for b in self.stack.base().closure(bases_vec) {
             for (cap, orientation) in self.stack.lift(b) {
                 self.section
                     .try_apply_delta_between_points(b, cap, &orientation)?;
