@@ -631,7 +631,7 @@ impl<V: Clone + Default, S: Storage<V> + Clone> Section<V, S> {
                     buf.extend(std::iter::repeat_with(V::default).take(n));
                 }
                 ResizePolicy::PadWith(val) => {
-                    buf.extend(std::iter::repeat(val.clone()).take(n));
+                    buf.extend(std::iter::repeat_n(val.clone(), n));
                 }
             };
             let before_slice = before_data.as_slice();

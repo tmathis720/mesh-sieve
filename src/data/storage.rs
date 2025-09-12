@@ -6,9 +6,9 @@
 
 use core::fmt::{self, Debug};
 
-use crate::mesh_error::MeshSieveError;
-use crate::data::slice_storage::SliceStorage;
 use crate::data::refine::delta::SliceDelta;
+use crate::data::slice_storage::SliceStorage;
+use crate::mesh_error::MeshSieveError;
 
 /// Contiguous, indexable storage for `V` with slice access.
 ///

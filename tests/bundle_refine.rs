@@ -1,6 +1,6 @@
+use core::marker::PhantomData;
 use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::bundle::Bundle;
-use core::marker::PhantomData;
 use mesh_sieve::data::section::Section;
 use mesh_sieve::data::storage::VecStorage;
 use mesh_sieve::overlap::delta::CopyDelta;

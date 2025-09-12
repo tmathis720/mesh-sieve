@@ -1,7 +1,7 @@
 use mesh_sieve::data::atlas::Atlas;
-use mesh_sieve::data::refine::helpers::try_restrict_closure_vec;
 #[cfg(feature = "map-adapter")]
 use mesh_sieve::data::refine::helpers::restrict_closure_vec;
+use mesh_sieve::data::refine::helpers::try_restrict_closure_vec;
 use mesh_sieve::data::section::Section;
 use mesh_sieve::data::storage::VecStorage;
 use mesh_sieve::mesh_error::MeshSieveError;

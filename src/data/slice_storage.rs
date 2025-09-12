@@ -1,5 +1,5 @@
-use crate::mesh_error::MeshSieveError;
 use crate::data::refine::delta::SliceDelta;
+use crate::mesh_error::MeshSieveError;
 
 /// Storage of a flat array of `V` with slice-oriented operations.
 pub trait SliceStorage<V: Clone>: Send + Sync {

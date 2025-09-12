@@ -13,10 +13,10 @@ use crate::data::section::FallibleMap;
 #[cfg(feature = "map-adapter")]
 use crate::data::section::Map;
 use crate::data::storage::{Storage, VecStorage};
-use core::marker::PhantomData;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
+use core::marker::PhantomData;
 
 #[cfg(feature = "map-adapter")]
 #[cfg_attr(docsrs, doc(cfg(feature = "map-adapter")))]
@@ -241,10 +241,10 @@ where
 mod tests {
     use super::*;
     use crate::data::atlas::Atlas;
-#[cfg(feature = "map-adapter")]
-use crate::data::section::Map;
-use crate::data::section::{FallibleMap, Section};
-use crate::data::storage::VecStorage;
+    #[cfg(feature = "map-adapter")]
+    use crate::data::section::Map;
+    use crate::data::section::{FallibleMap, Section};
+    use crate::data::storage::VecStorage;
     use crate::topology::point::PointId;
     use crate::topology::sieve::in_memory::InMemorySieve;
 
@@ -285,15 +285,24 @@ use crate::data::storage::VecStorage;
 
         // ReadOnlyMap fallible
         #[allow(unused_mut)]
-        let mut rom = ReadOnlyMap { section: &sec, _marker: PhantomData };
+        let mut rom = ReadOnlyMap {
+            section: &sec,
+            _marker: PhantomData,
+        };
         assert_eq!(
-            <ReadOnlyMap<'_, i32, VecStorage<i32>> as FallibleMap<i32>>::try_get(&rom, v(3)).unwrap(),
+            <ReadOnlyMap<'_, i32, VecStorage<i32>> as FallibleMap<i32>>::try_get(&rom, v(3))
+                .unwrap(),
             sec.try_restrict(v(3)).unwrap()
         );
-        assert!(<ReadOnlyMap<'_, i32, VecStorage<i32>> as FallibleMap<i32>>::try_get(&rom, v(99)).is_err());
+        assert!(
+            <ReadOnlyMap<'_, i32, VecStorage<i32>> as FallibleMap<i32>>::try_get(&rom, v(99))
+                .is_err()
+        );
 
         #[cfg(feature = "map-adapter")]
-        assert!(<ReadOnlyMap<'_, i32, VecStorage<i32>> as Map<i32>>::get_mut(&mut rom, v(3)).is_none());
+        assert!(
+            <ReadOnlyMap<'_, i32, VecStorage<i32>> as Map<i32>>::get_mut(&mut rom, v(3)).is_none()
+        );
     }
 
     #[cfg(feature = "map-adapter")]

@@ -1,8 +1,8 @@
 //! Stage 2 of section completion: exchange the actual data items.
 
 use crate::algs::communicator::Wait;
-use crate::mesh_error::MeshSieveError;
 use crate::data::storage::Storage;
+use crate::mesh_error::MeshSieveError;
 
 /// For each neighbor, pack `Delta::restrict` from your section into a send buffer,
 /// post irecv for the corresponding byte length (from stage 1),
@@ -409,13 +409,12 @@ mod tests {
 
         // Spawn threads for each rank
         let t0 = std::thread::spawn(move || {
-            exchange_data::<DummyValue, VecStorage<DummyValue>, DummyDelta, crate::algs::communicator::RayonComm>(
-                &links0,
-                &recv_counts0,
-                &comm0,
-                base_tag,
-                &mut section0,
-            )
+            exchange_data::<
+                DummyValue,
+                VecStorage<DummyValue>,
+                DummyDelta,
+                crate::algs::communicator::RayonComm,
+            >(&links0, &recv_counts0, &comm0, base_tag, &mut section0)
             .unwrap();
             (
                 section0.try_restrict(PointId::new(10).unwrap()).unwrap()[0],
@@ -423,13 +422,12 @@ mod tests {
             )
         });
         let t1 = std::thread::spawn(move || {
-            exchange_data::<DummyValue, VecStorage<DummyValue>, DummyDelta, crate::algs::communicator::RayonComm>(
-                &links1,
-                &recv_counts1,
-                &comm1,
-                base_tag,
-                &mut section1,
-            )
+            exchange_data::<
+                DummyValue,
+                VecStorage<DummyValue>,
+                DummyDelta,
+                crate::algs::communicator::RayonComm,
+            >(&links1, &recv_counts1, &comm1, base_tag, &mut section1)
             .unwrap();
             (
                 section1.try_restrict(PointId::new(10).unwrap()).unwrap()[0],
@@ -525,7 +523,12 @@ mod tests {
         let all1: HashSet<usize> = [0usize].into_iter().collect();
 
         let t0 = std::thread::spawn(move || {
-            exchange_data_symmetric::<DummyValue, DummyDelta, crate::algs::communicator::RayonComm>(
+            exchange_data_symmetric::<
+                DummyValue,
+                crate::data::storage::VecStorage<DummyValue>,
+                DummyDelta,
+                crate::algs::communicator::RayonComm,
+            >(
                 &links0,
                 &recv_counts0,
                 &comm0,
@@ -540,7 +543,12 @@ mod tests {
                 .to_vec()
         });
         let t1 = std::thread::spawn(move || {
-            exchange_data_symmetric::<DummyValue, DummyDelta, crate::algs::communicator::RayonComm>(
+            exchange_data_symmetric::<
+                DummyValue,
+                crate::data::storage::VecStorage<DummyValue>,
+                DummyDelta,
+                crate::algs::communicator::RayonComm,
+            >(
                 &links1,
                 &recv_counts1,
                 &comm1,

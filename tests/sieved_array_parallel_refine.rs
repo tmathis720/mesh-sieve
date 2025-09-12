@@ -34,10 +34,7 @@ fn parallel_refine_matches_serial() {
     let mut fine_serial = make_sieved(&[(f1, 2), (f2, 2)]);
     let mut fine_parallel = fine_serial.clone();
 
-    let refinement = vec![(
-        c,
-        vec![(f1, Polarity::Forward), (f2, Polarity::Reverse)],
-    )];
+    let refinement = vec![(c, vec![(f1, Polarity::Forward), (f2, Polarity::Reverse)])];
     fine_serial
         .try_refine_with_sifter(&coarse, &refinement)
         .unwrap();

@@ -160,7 +160,11 @@ impl Polarity {
     /// Build from boolean: `false`→Forward, `true`→Reverse.
     #[inline]
     pub fn from_bool(b: bool) -> Self {
-        if b { Polarity::Reverse } else { Polarity::Forward }
+        if b {
+            Polarity::Reverse
+        } else {
+            Polarity::Forward
+        }
     }
 
     /// Map to sign: `+1` for Forward, `-1` for Reverse.

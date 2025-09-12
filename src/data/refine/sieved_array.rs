@@ -75,7 +75,6 @@ where
             (pid, sl)
         })
     }
-
 }
 
 impl<P, V: Clone> SievedArray<P, V>
@@ -197,7 +196,6 @@ where
             .collect();
         self.try_refine_with_sifter(coarse, &sifter)
     }
-
 }
 
 impl<P, V> SievedArray<P, V>
@@ -255,7 +253,6 @@ where
         }
         Ok(())
     }
-
 }
 
 #[cfg(feature = "rayon")]

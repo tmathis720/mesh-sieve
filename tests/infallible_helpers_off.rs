@@ -1,4 +1,6 @@
-use mesh_sieve::data::{atlas::Atlas, refine::try_restrict_closure_vec, section::Section, storage::VecStorage};
+use mesh_sieve::data::{
+    atlas::Atlas, refine::try_restrict_closure_vec, section::Section, storage::VecStorage,
+};
 use mesh_sieve::topology::{point::PointId, sieve::in_memory::InMemorySieve};
 
 #[test]

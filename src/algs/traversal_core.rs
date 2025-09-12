@@ -50,9 +50,10 @@ where
             seen.extend(stack.iter().map(|&(p, _)| p));
             while let Some((p, d)) = stack.pop() {
                 if let Some(f) = early_stop
-                    && f(p) {
-                        break;
-                    }
+                    && f(p)
+                {
+                    break;
+                }
                 if max_depth.is_some_and(|md| d >= md) {
                     continue;
                 }
@@ -79,9 +80,10 @@ where
             seen.extend(q.iter().map(|&(p, _)| p));
             while let Some((p, d)) = q.pop_front() {
                 if let Some(f) = early_stop
-                    && f(p) {
-                        break;
-                    }
+                    && f(p)
+                {
+                    break;
+                }
                 if max_depth.is_some_and(|md| d >= md) {
                     continue;
                 }

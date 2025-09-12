@@ -29,7 +29,11 @@ use mesh_sieve::partitioning::{PartitionerConfig, partition};
 
 /// Build a 2×2 structured grid of points (IDs 0..8).
 #[cfg(feature = "mpi-support")]
-fn build_grid() -> (InMemorySieve<PointId, ()>, Atlas, Section<f64, VecStorage<f64>>) {
+fn build_grid() -> (
+    InMemorySieve<PointId, ()>,
+    Atlas,
+    Section<f64, VecStorage<f64>>,
+) {
     // 9 points laid out in a 3×3 mesh (4 cells)
     let mut sieve = InMemorySieve::new();
     let mut atlas = Atlas::default();

@@ -40,11 +40,19 @@ where
             let zeros = vec![V::zeroed(); len];
             queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&zeros));
         }
-        Self { device, queue, buffer, len, _pd: PhantomData }
+        Self {
+            device,
+            queue,
+            buffer,
+            len,
+            _pd: PhantomData,
+        }
     }
 
     #[inline]
-    fn elem_size() -> usize { std::mem::size_of::<V>() }
+    fn elem_size() -> usize {
+        std::mem::size_of::<V>()
+    }
 
     #[inline]
     fn to_bytes(off: usize, len: usize) -> (u64, u64) {
@@ -52,7 +60,9 @@ where
         ((off * b) as u64, (len * b) as u64)
     }
 
-    fn copy_requires_alignment() -> bool { Self::elem_size() % 4 == 0 }
+    fn copy_requires_alignment() -> bool {
+        Self::elem_size() % 4 == 0
+    }
 
     fn ranges_overlap(a_off: usize, a_len: usize, b_off: usize, b_len: usize) -> bool {
         let a_end = a_off + a_len;
@@ -60,12 +70,22 @@ where
         !(a_end <= b_off || b_end <= a_off)
     }
 
-    fn copy_via_staging(&mut self, src_off: usize, dst_off: usize, len: usize) -> Result<(), MeshSieveError> {
+    fn copy_via_staging(
+        &mut self,
+        src_off: usize,
+        dst_off: usize,
+        len: usize,
+    ) -> Result<(), MeshSieveError> {
         let host = self.read_slice(src_off, len)?;
         self.write_slice(dst_off, &host)
     }
 
-    fn copy_forward_gpu(&mut self, src_off: usize, dst_off: usize, len: usize) -> Result<(), MeshSieveError> {
+    fn copy_forward_gpu(
+        &mut self,
+        src_off: usize,
+        dst_off: usize,
+        len: usize,
+    ) -> Result<(), MeshSieveError> {
         if !Self::copy_requires_alignment() {
             return self.copy_via_staging(src_off, dst_off, len);
         }
@@ -76,13 +96,20 @@ where
         }
         let mut enc = self
             .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("WgpuStorage::copy_forward_gpu") });
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("WgpuStorage::copy_forward_gpu"),
+            });
         enc.copy_buffer_to_buffer(&self.buffer, src_b, &self.buffer, dst_b, size_b);
         self.queue.submit(Some(enc.finish()));
         Ok(())
     }
 
-    fn copy_via_temp_gpu(&mut self, src_off: usize, dst_off: usize, len: usize) -> Result<(), MeshSieveError> {
+    fn copy_via_temp_gpu(
+        &mut self,
+        src_off: usize,
+        dst_off: usize,
+        len: usize,
+    ) -> Result<(), MeshSieveError> {
         if !Self::copy_requires_alignment() {
             return self.copy_via_staging(src_off, dst_off, len);
         }
@@ -96,27 +123,40 @@ where
         });
         let mut enc = self
             .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("WgpuStorage::copy_via_temp_gpu") });
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("WgpuStorage::copy_via_temp_gpu"),
+            });
         enc.copy_buffer_to_buffer(&self.buffer, src_b, &temp, 0, size_b);
         enc.copy_buffer_to_buffer(&temp, 0, &self.buffer, dst_b, size_b);
         self.queue.submit(Some(enc.finish()));
         Ok(())
     }
 
-    fn reverse_via_compute(&mut self, src_off: usize, dst_off: usize, len: usize) -> Result<(), MeshSieveError> {
+    fn reverse_via_compute(
+        &mut self,
+        src_off: usize,
+        dst_off: usize,
+        len: usize,
+    ) -> Result<(), MeshSieveError> {
         if !Self::copy_requires_alignment() {
             return self.copy_via_staging(src_off, dst_off, len);
         }
-        let shader = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("reverse_copy.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!("reverse_copy.wgsl"))),
-        });
-        let pipeline = self.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("reverse_copy_pipeline"),
-            layout: None,
-            module: &shader,
-            entry_point: "main",
-        });
+        let shader = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("reverse_copy.wgsl"),
+                source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
+                    "reverse_copy.wgsl"
+                ))),
+            });
+        let pipeline = self
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("reverse_copy_pipeline"),
+                layout: None,
+                module: &shader,
+                entry_point: "main",
+            });
         #[repr(C)]
         #[derive(Copy, Clone, Pod, Zeroable)]
         struct Params {
@@ -135,26 +175,42 @@ where
             src_off_words: (src_off * Self::elem_size() / 4) as u32,
             dst_off_words: (dst_off * Self::elem_size() / 4) as u32,
         };
-        let ubuf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("reverse_copy_params"),
-            contents: bytemuck::bytes_of(&params),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let ubuf = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("reverse_copy_params"),
+                contents: bytemuck::bytes_of(&params),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
         let layout = pipeline.get_bind_group_layout(0);
         let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("reverse_copy_bind"),
             layout: &layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: self.buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: self.buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: ubuf.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: ubuf.as_entire_binding(),
+                },
             ],
         });
         let mut enc = self
             .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("WgpuStorage::reverse_via_compute") });
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("WgpuStorage::reverse_via_compute"),
+            });
         {
-            let mut cpass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("reverse_copy_pass"), timestamp_writes: None });
+            let mut cpass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("reverse_copy_pass"),
+                timestamp_writes: None,
+            });
             cpass.set_pipeline(&pipeline);
             cpass.set_bind_group(0, &bind, &[]);
             let workgroups = ((len as u32) + 127) / 128;
@@ -171,27 +227,38 @@ impl<V> SliceStorage<V> for WgpuStorage<V>
 where
     V: Pod + Zeroable + 'static + Send + Sync,
 {
-    fn total_len(&self) -> usize { self.len }
+    fn total_len(&self) -> usize {
+        self.len
+    }
 
     fn resize(&mut self, new_len: usize) -> Result<(), MeshSieveError> {
-        if new_len == self.len { return Ok(()); }
+        if new_len == self.len {
+            return Ok(());
+        }
         let new_bytes = (new_len * Self::elem_size()) as u64;
         let new_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Section/WgpuStorage[resize]"),
             size: new_bytes,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let copy_elems = self.len.min(new_len);
         if copy_elems > 0 {
             if Self::copy_requires_alignment() {
                 let (src_b, size_b) = Self::to_bytes(0, copy_elems);
-                let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("WgpuStorage::resize") });
+                let mut enc = self
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("WgpuStorage::resize"),
+                    });
                 enc.copy_buffer_to_buffer(&self.buffer, src_b, &new_buf, 0, size_b);
                 self.queue.submit(Some(enc.finish()));
             } else {
                 let host = self.read_slice(0, copy_elems)?;
-                self.queue.write_buffer(&new_buf, 0, bytemuck::cast_slice(&host));
+                self.queue
+                    .write_buffer(&new_buf, 0, bytemuck::cast_slice(&host));
             }
         }
         self.buffer = new_buf;
@@ -213,7 +280,11 @@ where
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("WgpuStorage::read_slice") });
+        let mut enc = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("WgpuStorage::read_slice"),
+            });
         enc.copy_buffer_to_buffer(&self.buffer, src_b, &staging, 0, size_b);
         self.queue.submit(Some(enc.finish()));
         let buffer_slice = staging.slice(..);
@@ -236,12 +307,19 @@ where
     fn write_slice(&mut self, offset: usize, src: &[V]) -> Result<(), MeshSieveError> {
         let end = offset
             .checked_add(src.len())
-            .ok_or(MeshSieveError::ScatterChunkMismatch { offset, len: src.len() })?;
+            .ok_or(MeshSieveError::ScatterChunkMismatch {
+                offset,
+                len: src.len(),
+            })?;
         if end > self.len {
-            return Err(MeshSieveError::ScatterChunkMismatch { offset, len: src.len() });
+            return Err(MeshSieveError::ScatterChunkMismatch {
+                offset,
+                len: src.len(),
+            });
         }
         let (dst_b, _) = Self::to_bytes(offset, src.len());
-        self.queue.write_buffer(&self.buffer, dst_b, bytemuck::cast_slice(src));
+        self.queue
+            .write_buffer(&self.buffer, dst_b, bytemuck::cast_slice(src));
         Ok(())
     }
 
