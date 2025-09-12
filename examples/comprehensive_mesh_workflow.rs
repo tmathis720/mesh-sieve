@@ -157,6 +157,7 @@ fn build_hierarchical_tetrahedral_mesh() -> (
     use mesh_sieve::prelude::Stack;
     use mesh_sieve::prelude::*;
     use mesh_sieve::topology::arrow::Polarity;
+    use mesh_sieve::topology::sieve::MutableSieve;
     use std::marker::PhantomData;
 
     println!("[rank 0] Building hierarchical tetrahedral mesh...");
@@ -215,6 +216,11 @@ fn build_hierarchical_tetrahedral_mesh() -> (
     let mut refined_mesh = mesh.clone();
     let mut stack = InMemoryStack::<PointId, PointId, Polarity>::new();
 
+    // Faces serve as base points for the refinement stack
+    for &face in &faces {
+        MutableSieve::add_base_point(stack.base_mut().unwrap(), face);
+    }
+
     // Add refinement: each face gets 3 DOF points
     for (i, &face) in faces.iter().enumerate() {
         atlas.try_insert(face, 1).unwrap();
@@ -226,6 +232,8 @@ fn build_hierarchical_tetrahedral_mesh() -> (
             } else {
                 Polarity::Reverse
             };
+            // Ensure DOF exists in cap sieve before linking
+            MutableSieve::add_cap_point(stack.cap_mut().unwrap(), dof_id);
             let _ = stack.add_arrow(face, dof_id, orientation);
             mesh_sieve::topology::Sieve::add_point(&mut refined_mesh, dof_id);
         }
