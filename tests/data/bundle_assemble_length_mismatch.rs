@@ -37,3 +37,17 @@ fn assemble_reports_cap_point_on_length_mismatch() {
         other => panic!("unexpected error: {other:?}"),
     }
 }
+
+#[test]
+fn reducer_reports_length_mismatch() {
+    use mesh_sieve::mesh_error::MeshSieveError;
+    let mut acc = vec![0i32; 2];
+    let src = vec![1i32; 3];
+    let err = AverageReducer
+        .accumulate(&mut acc, &src)
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        MeshSieveError::ReducerLengthMismatch { expected: 2, found: 3 }
+    ));
+}

@@ -120,7 +120,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ov.resolve_remote_point(q0, 1, q0)?; // remote id equals local for demo
 
     // Invariants must hold (or panic/fail under feature gate):
-    #[cfg(any(debug_assertions, feature = "check-invariants"))]
+    #[cfg(any(
+        debug_assertions,
+        feature = "strict-invariants",
+        feature = "check-invariants"
+    ))]
     ov.validate_invariants().expect("overlap invariants");
 
     // Neighbor ranks / links API:
@@ -192,7 +196,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("[neg] slice-length mismatch -> {:?}", err);
 
     // c) Overlap: wrong rank in payload (guarded by validate_invariants)
-    #[cfg(feature = "check-invariants")]
+    #[cfg(any(feature = "strict-invariants", feature = "check-invariants"))]
     {
         use mesh_sieve::overlap::overlap::{OvlId, Remote};
         let src = OvlId::Local(q0);

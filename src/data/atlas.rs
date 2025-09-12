@@ -5,7 +5,7 @@
 //! for packing degrees‐of‐freedom (DOFs) or other per‐point data into a
 //! single contiguous `Vec` for efficient storage and communication.
 
-use crate::data::DebugInvariants;
+use crate::debug_invariants::DebugInvariants;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cache::InvalidateCache;
 use crate::topology::point::PointId;
@@ -26,7 +26,7 @@ use std::collections::HashMap;
 ///   of all lengths.
 ///
 /// These invariants are checked after mutations in debug builds and when the
-/// `check-invariants` feature is enabled. They can also be verified manually via
+/// `strict-invariants` feature (or its alias `check-invariants`) is enabled. They can also be verified manually via
 /// [`validate_invariants`](Self::validate_invariants).
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct Atlas {
@@ -90,7 +90,11 @@ impl Atlas {
         self.total_len += len;
         self.version = self.version.wrapping_add(1);
         InvalidateCache::invalidate_cache(self);
-        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        #[cfg(any(
+            debug_assertions,
+            feature = "strict-invariants",
+            feature = "check-invariants"
+        ))]
         self.debug_assert_invariants();
         Ok(offset)
     }
@@ -241,7 +245,11 @@ impl Atlas {
         self.total_len = next_offset;
         self.version = self.version.wrapping_add(1);
         InvalidateCache::invalidate_cache(self);
-        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        #[cfg(any(
+            debug_assertions,
+            feature = "strict-invariants",
+            feature = "check-invariants"
+        ))]
         self.debug_assert_invariants();
         Ok(())
     }
@@ -249,7 +257,7 @@ impl Atlas {
 
 impl DebugInvariants for Atlas {
     fn debug_assert_invariants(&self) {
-        crate::data_debug_assert_ok!(self.validate_invariants(), "Atlas invalid");
+        crate::debug_invariants!(self.validate_invariants(), "Atlas invalid");
     }
 
     fn validate_invariants(&self) -> Result<(), MeshSieveError> {
@@ -294,7 +302,11 @@ impl DebugInvariants for Atlas {
         for &p in &self.order {
             let (off, len) = self.map[&p];
             if off != expected_off {
-                return Err(MeshSieveError::ScatterChunkMismatch { offset: off, len });
+                return Err(MeshSieveError::AtlasContiguityMismatch {
+                    point: p,
+                    expected: expected_off,
+                    found: off,
+                });
             }
             expected_off = off + len; // safe after check above
             sum = sum

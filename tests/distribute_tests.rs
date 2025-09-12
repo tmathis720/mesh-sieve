@@ -35,6 +35,10 @@ fn invariants_hold() {
     let comm = NoComm;
     let (_local, ov) = distribute_mesh(&g, &parts, &comm).unwrap();
 
-    #[cfg(any(debug_assertions, feature = "check-invariants"))]
+    #[cfg(any(
+        debug_assertions,
+        feature = "strict-invariants",
+        feature = "check-invariants"
+    ))]
     ov.validate_invariants().unwrap();
 }

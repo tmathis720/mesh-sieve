@@ -88,7 +88,11 @@ where
     let mut overlap = Overlap::default();
     overlap.add_links_structural_bulk(foreign_pts);
 
-    #[cfg(any(debug_assertions, feature = "check-invariants"))]
+    #[cfg(any(
+        debug_assertions,
+        feature = "strict-invariants",
+        feature = "check-invariants"
+    ))]
     overlap.validate_invariants()?;
 
     // ---------- Build local submesh ----------

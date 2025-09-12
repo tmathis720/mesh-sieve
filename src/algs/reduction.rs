@@ -88,7 +88,11 @@ type Row = sparse::SparseRow;
 type Row = DenseRow;
 
 #[inline]
-#[cfg(any(debug_assertions, feature = "check-invariants"))]
+#[cfg(any(
+    debug_assertions,
+    feature = "strict-invariants",
+    feature = "check-invariants"
+))]
 fn is_acyclic_by_chart<S>(s: &S, chart: &[S::Point]) -> bool
 where
     S: Sieve + SieveRef,
@@ -127,7 +131,11 @@ where
 {
     use std::collections::HashMap;
     let chart = s.chart_points()?;
-    #[cfg(any(debug_assertions, feature = "check-invariants"))]
+    #[cfg(any(
+        debug_assertions,
+        feature = "strict-invariants",
+        feature = "check-invariants"
+    ))]
     debug_assert!(is_acyclic_by_chart(s, &chart), "chart must be acyclic");
     let n = chart.len();
     let mut idx = HashMap::with_capacity(n);
@@ -189,7 +197,11 @@ where
 {
     use std::collections::{HashMap, HashSet};
     let chart = s.chart_points()?;
-    #[cfg(any(debug_assertions, feature = "check-invariants"))]
+    #[cfg(any(
+        debug_assertions,
+        feature = "strict-invariants",
+        feature = "check-invariants"
+    ))]
     debug_assert!(is_acyclic_by_chart(s, &chart), "chart must be acyclic");
     let n = chart.len();
     let mut idx = HashMap::with_capacity(n);

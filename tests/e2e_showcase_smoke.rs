@@ -46,7 +46,11 @@ fn orientation_and_overlap_smoke() {
     ov.add_link_structural_one(q1, 0);
     ensure_closure_of_support(&mut ov, &mesh);
     ov.resolve_remote_point(q0, 1, q0).unwrap();
-    #[cfg(any(debug_assertions, feature = "check-invariants"))]
+    #[cfg(any(
+        debug_assertions,
+        feature = "strict-invariants",
+        feature = "check-invariants"
+    ))]
     ov.validate_invariants().unwrap();
     assert!(ov.neighbor_ranks().any(|r| r == 1 || r == 0));
     assert!(ov.links_to(1).any(|(p, rp)| p == q0 && rp.is_some()));

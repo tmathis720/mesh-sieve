@@ -8,10 +8,10 @@
 //! A legacy, infallible adapter trait `Map<V>` is available behind the
 //! `map-adapter` feature. Prefer [`FallibleMap`] and `try_*` APIs.
 
-use crate::data::DebugInvariants;
 use crate::data::atlas::Atlas;
 use crate::data::refine::delta::SliceDelta;
 use crate::data::storage::Storage;
+use crate::debug_invariants::DebugInvariants;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cache::InvalidateCache;
 use crate::topology::point::PointId;
@@ -30,7 +30,7 @@ pub struct ScatterPlan {
 /// - Every `(offset,len)` in the atlas falls within `data`.
 ///
 /// These checks run after mutations in debug builds and when the
-/// `check-invariants` feature is enabled. They can also be verified manually via
+/// `strict-invariants` feature (or its alias `check-invariants`) is enabled. They can also be verified manually via
 /// [`validate_invariants`](Self::validate_invariants).
 use core::marker::PhantomData;
 
@@ -121,7 +121,11 @@ where
     where
         F: FnMut(PointId, &mut [V]),
     {
-        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        #[cfg(any(
+            debug_assertions,
+            feature = "strict-invariants",
+            feature = "check-invariants"
+        ))]
         self.debug_assert_invariants();
         for pid in self.atlas.points() {
             let (off, len) = self.atlas.get(pid).expect("invariants");
@@ -129,7 +133,11 @@ where
             f(pid, &mut buf[off..off + len]);
         }
         crate::topology::cache::InvalidateCache::invalidate_cache(self);
-        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        #[cfg(any(
+            debug_assertions,
+            feature = "strict-invariants",
+            feature = "check-invariants"
+        ))]
         self.debug_assert_invariants();
     }
 
@@ -138,7 +146,11 @@ where
     where
         F: FnMut(PointId, &[V]),
     {
-        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        #[cfg(any(
+            debug_assertions,
+            feature = "strict-invariants",
+            feature = "check-invariants"
+        ))]
         self.debug_assert_invariants();
         for pid in self.atlas.points() {
             let (off, len) = self.atlas.get(pid).expect("invariants");
@@ -190,7 +202,11 @@ impl<V: Clone + Default, S: Storage<V>> Section<V, S> {
         }
         target.clone_from_slice(val);
         crate::topology::cache::InvalidateCache::invalidate_cache(self);
-        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        #[cfg(any(
+            debug_assertions,
+            feature = "strict-invariants",
+            feature = "check-invariants"
+        ))]
         self.debug_assert_invariants();
         Ok(())
     }
@@ -223,14 +239,18 @@ impl<V: Clone + Default, S: Storage<V>> Section<V, S> {
         next.as_mut_slice().clone_from_slice(&new_data);
         self.data = next;
         crate::topology::cache::InvalidateCache::invalidate_cache(self);
-        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        #[cfg(any(
+            debug_assertions,
+            feature = "strict-invariants",
+            feature = "check-invariants"
+        ))]
         self.debug_assert_invariants();
         Ok(())
     }
 
     /// Apply a delta from `src_point` → `dst_point` directly within the section buffer.
     ///
-    /// In debug builds or when the `check-invariants` feature is enabled, section
+    /// In debug builds or when the `strict-invariants` feature (or alias `check-invariants`) is enabled, section
     /// invariants are validated before and after applying the delta. Violations
     /// panic prior to any slicing.
     ///
@@ -251,7 +271,11 @@ impl<V: Clone + Default, S: Storage<V>> Section<V, S> {
     ) -> Result<(), MeshSieveError> {
         use MeshSieveError::*;
 
-        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        #[cfg(any(
+            debug_assertions,
+            feature = "strict-invariants",
+            feature = "check-invariants"
+        ))]
         self.debug_assert_invariants();
 
         let (soff, slen) = self
@@ -289,7 +313,11 @@ impl<V: Clone + Default, S: Storage<V>> Section<V, S> {
 
         if slen == 0 {
             crate::topology::cache::InvalidateCache::invalidate_cache(self);
-            #[cfg(any(debug_assertions, feature = "check-invariants"))]
+            #[cfg(any(
+                debug_assertions,
+                feature = "strict-invariants",
+                feature = "check-invariants"
+            ))]
             self.debug_assert_invariants();
             return Ok(());
         }
@@ -316,7 +344,11 @@ impl<V: Clone + Default, S: Storage<V>> Section<V, S> {
         }
 
         crate::topology::cache::InvalidateCache::invalidate_cache(self);
-        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        #[cfg(any(
+            debug_assertions,
+            feature = "strict-invariants",
+            feature = "check-invariants"
+        ))]
         self.debug_assert_invariants();
         Ok(())
     }
@@ -342,7 +374,11 @@ impl<V: Clone + Default, S: Storage<V>> Section<V, S> {
         {
             self.data.as_mut_slice().clone_from_slice(other);
             crate::topology::cache::InvalidateCache::invalidate_cache(self);
-            #[cfg(any(debug_assertions, feature = "check-invariants"))]
+            #[cfg(any(
+                debug_assertions,
+                feature = "strict-invariants",
+                feature = "check-invariants"
+            ))]
             self.debug_assert_invariants();
             return Ok(());
         }
@@ -377,7 +413,11 @@ impl<V: Clone + Default, S: Storage<V>> Section<V, S> {
         }
 
         crate::topology::cache::InvalidateCache::invalidate_cache(self);
-        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        #[cfg(any(
+            debug_assertions,
+            feature = "strict-invariants",
+            feature = "check-invariants"
+        ))]
         self.debug_assert_invariants();
         Ok(())
     }
@@ -418,7 +458,11 @@ impl<V: Clone + Default, S: Storage<V> + Clone> Section<V, S> {
     /// Initial layout matches the atlas’ insertion order deterministically.
     pub fn new(atlas: Atlas) -> Self {
         let data = S::with_len(atlas.total_len(), V::default());
-        Section { atlas, data, _marker: PhantomData }
+        Section {
+            atlas,
+            data,
+            _marker: PhantomData,
+        }
     }
 
     /// Add a new point to the section, resizing data as needed.
@@ -437,7 +481,11 @@ impl<V: Clone + Default, S: Storage<V> + Clone> Section<V, S> {
             .map_err(|e| MeshSieveError::AtlasInsertionFailed(p, Box::new(e)))?;
         self.data.resize(self.atlas.total_len(), V::default());
         crate::topology::cache::InvalidateCache::invalidate_cache(self);
-        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        #[cfg(any(
+            debug_assertions,
+            feature = "strict-invariants",
+            feature = "check-invariants"
+        ))]
         self.debug_assert_invariants();
         Ok(())
     }
@@ -453,7 +501,7 @@ impl<V: Clone + Default, S: Storage<V> + Clone> Section<V, S> {
     ///   changes with an explicit policy.
     ///
     /// # Errors
-    /// Returns [`MeshSieveError::AtlasSliceLengthChanged`] if any existing
+    /// Returns [`MeshSieveError::AtlasPointLengthChanged`] if any existing
     /// point's slice length differs after mutation.
     ///
     /// # Complexity
@@ -472,14 +520,18 @@ impl<V: Clone + Default, S: Storage<V> + Clone> Section<V, S> {
         f(&mut self.atlas);
 
         // Validate new atlas
-        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        #[cfg(any(
+            debug_assertions,
+            feature = "strict-invariants",
+            feature = "check-invariants"
+        ))]
         self.atlas.debug_assert_invariants();
 
         // Gather points to avoid borrowing issues
         let new_points: Vec<_> = self.atlas.points().collect();
 
         // STRICT check: existing points must retain slice lengths
-        use MeshSieveError::AtlasSliceLengthChanged;
+        use MeshSieveError::AtlasPointLengthChanged;
         for &pid in &new_points {
             if let Some((_, len_old)) = before.get(pid) {
                 let (_, len_new) = self
@@ -488,10 +540,10 @@ impl<V: Clone + Default, S: Storage<V> + Clone> Section<V, S> {
                     .expect("pid was just iterated from new atlas");
                 if len_old != len_new {
                     self.atlas = before;
-                    return Err(AtlasSliceLengthChanged {
+                    return Err(AtlasPointLengthChanged {
                         point: pid,
-                        old: len_old,
-                        new: len_new,
+                        expected: len_old,
+                        found: len_new,
                     });
                 }
             }
@@ -525,7 +577,11 @@ impl<V: Clone + Default, S: Storage<V> + Clone> Section<V, S> {
         next.as_mut_slice().clone_from_slice(&new_data);
         self.data = next;
         crate::topology::cache::InvalidateCache::invalidate_cache(self);
-        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        #[cfg(any(
+            debug_assertions,
+            feature = "strict-invariants",
+            feature = "check-invariants"
+        ))]
         self.debug_assert_invariants();
         Ok(())
     }
@@ -549,7 +605,11 @@ impl<V: Clone + Default, S: Storage<V> + Clone> Section<V, S> {
 
         f(&mut self.atlas);
 
-        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        #[cfg(any(
+            debug_assertions,
+            feature = "strict-invariants",
+            feature = "check-invariants"
+        ))]
         self.atlas.debug_assert_invariants();
 
         let rebuild = (|| -> Result<Vec<V>, MeshSieveError> {
@@ -610,7 +670,11 @@ impl<V: Clone + Default, S: Storage<V> + Clone> Section<V, S> {
                 next.as_mut_slice().clone_from_slice(&new_data);
                 self.data = next;
                 crate::topology::cache::InvalidateCache::invalidate_cache(self);
-                #[cfg(any(debug_assertions, feature = "check-invariants"))]
+                #[cfg(any(
+                    debug_assertions,
+                    feature = "strict-invariants",
+                    feature = "check-invariants"
+                ))]
                 self.debug_assert_invariants();
                 Ok(())
             }
@@ -630,7 +694,11 @@ impl<V: Clone + Default, S: Storage<V> + Clone> Section<V, S> {
     /// # Determinism
     /// Deterministic copy; `*_with_plan` additionally validates the plan version for safety.
     pub fn try_scatter_in_order(&mut self, buf: &[V]) -> Result<(), MeshSieveError> {
-        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        #[cfg(any(
+            debug_assertions,
+            feature = "strict-invariants",
+            feature = "check-invariants"
+        ))]
         self.debug_assert_invariants();
         let spans = self.atlas.atlas_map();
         self.try_scatter_from(buf, &spans)
@@ -717,7 +785,7 @@ where
     S: Storage<V>,
 {
     fn debug_assert_invariants(&self) {
-        crate::data_debug_assert_ok!(self.validate_invariants(), "Section invalid");
+        crate::debug_invariants!(self.validate_invariants(), "Section invalid");
     }
 
     fn validate_invariants(&self) -> Result<(), MeshSieveError> {
@@ -754,8 +822,8 @@ impl<V, S: Storage<V>> InvalidateCache for Section<V, S> {
 mod tests {
     use super::*;
     use crate::data::atlas::Atlas;
-    use crate::topology::point::PointId;
     use crate::data::storage::VecStorage;
+    use crate::topology::point::PointId;
 
     fn make_section() -> Section<f64, VecStorage<f64>> {
         let mut atlas = Atlas::default();
@@ -794,17 +862,28 @@ mod tests {
         s.try_set(PointId::new(1).unwrap(), &[1.0, 2.0]).unwrap();
         // successful access
         assert_eq!(
-            <Section<f64, VecStorage<f64>> as FallibleMap<f64>>::try_get(&s, PointId::new(1).unwrap()).unwrap(),
+            <Section<f64, VecStorage<f64>> as FallibleMap<f64>>::try_get(
+                &s,
+                PointId::new(1).unwrap()
+            )
+            .unwrap(),
             &[1.0, 2.0]
         );
         // missing point yields error
         assert!(
-            <Section<f64, VecStorage<f64>> as FallibleMap<f64>>::try_get(&s, PointId::new(99).unwrap()).is_err()
+            <Section<f64, VecStorage<f64>> as FallibleMap<f64>>::try_get(
+                &s,
+                PointId::new(99).unwrap()
+            )
+            .is_err()
         );
         // mutable access works
         assert!(
-            <Section<f64, VecStorage<f64>> as FallibleMap<f64>>::try_get_mut(&mut s, PointId::new(1).unwrap())
-                .is_ok()
+            <Section<f64, VecStorage<f64>> as FallibleMap<f64>>::try_get_mut(
+                &mut s,
+                PointId::new(1).unwrap()
+            )
+            .is_ok()
         );
     }
 
@@ -821,7 +900,10 @@ mod tests {
             s.try_restrict(PointId::new(1).unwrap()).unwrap()
         );
         // get_mut returns Some for Section
-        assert!(<Section<f64, VecStorage<f64>> as Map<f64>>::get_mut(&mut s, PointId::new(1).unwrap()).is_some());
+        assert!(
+            <Section<f64, VecStorage<f64>> as Map<f64>>::get_mut(&mut s, PointId::new(1).unwrap())
+                .is_some()
+        );
     }
 
     #[test]
@@ -876,7 +958,10 @@ mod tests {
             &[42]
         );
         // Map trait get_mut
-        assert!(<Section<i32, VecStorage<i32>> as Map<i32>>::get_mut(&mut s, PointId::new(1).unwrap()).is_some());
+        assert!(
+            <Section<i32, VecStorage<i32>> as Map<i32>>::get_mut(&mut s, PointId::new(1).unwrap())
+                .is_some()
+        );
     }
 
     #[test]
@@ -970,8 +1055,8 @@ mod tests {
 #[cfg(test)]
 mod tests_resize {
     use super::*;
-    use crate::topology::point::PointId;
     use crate::data::storage::VecStorage;
+    use crate::topology::point::PointId;
 
     fn pid(i: u64) -> PointId {
         PointId::new(i).unwrap()
@@ -994,10 +1079,14 @@ mod tests_resize {
             .unwrap_err();
 
         match err {
-            MeshSieveError::AtlasSliceLengthChanged { point, old, new } => {
+            MeshSieveError::AtlasPointLengthChanged {
+                point,
+                expected,
+                found,
+            } => {
                 assert_eq!(point, p);
-                assert_eq!(old, 3);
-                assert_eq!(new, 5);
+                assert_eq!(expected, 3);
+                assert_eq!(found, 5);
             }
             e => panic!("unexpected error: {e:?}"),
         }
@@ -1096,8 +1185,8 @@ mod tests_resize {
 mod tests_invariants_precheck {
     use super::*;
     use crate::data::atlas::Atlas;
-    use crate::topology::point::PointId;
     use crate::data::storage::VecStorage;
+    use crate::topology::point::PointId;
 
     #[cfg(not(debug_assertions))]
     use crate::{mesh_error::MeshSieveError, topology::arrow::Polarity};
@@ -1142,7 +1231,11 @@ mod tests_invariants_precheck {
 
         s.data.resize(0, 0);
 
-        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        #[cfg(any(
+            debug_assertions,
+            feature = "strict-invariants",
+            feature = "check-invariants"
+        ))]
         {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 s.for_each_in_order(|_, _| {});
