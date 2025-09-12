@@ -12,10 +12,11 @@
 //! - Stratum computation and mesh validation
 //! - Error handling and robustness testing
 
+#[cfg(feature = "mpi-support")]
 use mesh_sieve::algs::dual_graph::build_dual;
 #[cfg(feature = "mpi-support")]
 use mesh_sieve::{
-    data::bundle::Bundle,
+    data::{bundle::Bundle, storage::VecStorage},
     prelude::{InMemorySieve, MpiComm, PointId, Section},
 };
 #[cfg(feature = "metis-support")]
@@ -26,11 +27,6 @@ fn main() {
     use mesh_sieve::algs::lattice::adjacent;
     use mesh_sieve::data::atlas::Atlas;
     use mesh_sieve::data::bundle::Bundle;
-    use mesh_sieve::data::refine::helpers::{
-        restrict_closure, restrict_closure_vec, restrict_star, restrict_star_vec,
-        try_restrict_closure, try_restrict_star,
-    };
-    use mesh_sieve::data::refine::sieved_array::SievedArray;
     use mesh_sieve::data::section::Section;
     use mesh_sieve::data::storage::VecStorage;
     use mesh_sieve::overlap::delta::{AddDelta, CopyDelta, ValueDelta, ZeroDelta};
@@ -41,6 +37,7 @@ fn main() {
     use mesh_sieve::topology::point::PointId;
     use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
     use mesh_sieve::topology::stack::{InMemoryStack, Stack};
+    use std::marker::PhantomData;
 
     let comm = MpiComm::default();
     let size = comm.size();
@@ -68,8 +65,9 @@ fn main() {
             InMemorySieve::default(),
             Bundle {
                 stack: InMemoryStack::new(),
-                section: Section::new(Atlas::default()),
+                section: Section::<f64, VecStorage<f64>>::new(Atlas::default()),
                 delta: CopyDelta,
+                _marker: PhantomData,
             },
         )
     };
@@ -155,9 +153,11 @@ fn build_hierarchical_tetrahedral_mesh() -> (
     InMemorySieve<PointId, ()>,
     Bundle<f64>,
 ) {
+    use mesh_sieve::data::storage::VecStorage;
     use mesh_sieve::prelude::Stack;
     use mesh_sieve::prelude::*;
     use mesh_sieve::topology::arrow::Polarity;
+    use std::marker::PhantomData;
 
     println!("[rank 0] Building hierarchical tetrahedral mesh...");
 
@@ -232,7 +232,7 @@ fn build_hierarchical_tetrahedral_mesh() -> (
     }
 
     // Create section with test data
-    let mut section = Section::<f64>::new(atlas);
+    let mut section = Section::<f64, VecStorage<f64>>::new(atlas);
     for (i, &face) in faces.iter().enumerate() {
         section.try_set(face, &[(i as f64 + 1.0) * 10.0]).unwrap();
     }
@@ -241,6 +241,7 @@ fn build_hierarchical_tetrahedral_mesh() -> (
         stack,
         section,
         delta: CopyDelta,
+        _marker: PhantomData,
     };
 
     println!(
@@ -302,7 +303,9 @@ fn test_refinement_helpers(
     mesh: &InMemorySieve<PointId, ()>,
     _section: &Section<f64, VecStorage<f64>>,
 ) {
-    use mesh_sieve::data::refine::*;
+    use mesh_sieve::data::refine::{
+        try_restrict_closure, try_restrict_closure_vec, try_restrict_star, try_restrict_star_vec,
+    };
     use mesh_sieve::prelude::*;
 
     println!("[rank 0] Testing refinement helpers...");
@@ -334,13 +337,17 @@ fn test_refinement_helpers(
         for &point in &test_points {
             // Test closure restriction
 
-            let closure_data: Vec<_> = restrict_closure(mesh, &test_section, [point]).collect();
-            let closure_vec = restrict_closure_vec(mesh, &test_section, [point]);
+            let closure_data: Vec<_> = try_restrict_closure(mesh, &test_section, [point])
+                .collect::<Result<_, _>>()
+                .unwrap();
+            let closure_vec = try_restrict_closure_vec(mesh, &test_section, [point]).unwrap();
             assert_eq!(closure_data, closure_vec, "Closure variants should match");
 
             // Test star restriction
-            let star_data: Vec<_> = restrict_star(mesh, &test_section, [point]).collect();
-            let star_vec = restrict_star_vec(mesh, &test_section, [point]);
+            let star_data: Vec<_> = try_restrict_star(mesh, &test_section, [point])
+                .collect::<Result<_, _>>()
+                .unwrap();
+            let star_vec = try_restrict_star_vec(mesh, &test_section, [point]).unwrap();
             assert_eq!(star_data, star_vec, "Star variants should match");
 
             println!(
@@ -455,6 +462,7 @@ fn test_distributed_completion(
     size: usize,
 ) {
     use mesh_sieve::algs::distribute_mesh;
+    use mesh_sieve::data::storage::VecStorage;
     use mesh_sieve::prelude::*;
 
     println!("[rank {}] Testing distributed completion...", rank);
@@ -475,7 +483,7 @@ fn test_distributed_completion(
             atlas.try_insert(point, 1).unwrap();
         }
 
-        let mut section = Section::<i32>::new(atlas);
+        let mut section = Section::<i32, VecStorage<i32>>::new(atlas);
 
         // Set unique values per rank
         for (i, &point) in local_points.iter().enumerate() {
@@ -490,9 +498,12 @@ fn test_distributed_completion(
         );
 
         // Test section completion
-        if let Err(e) =
-            complete_section::<i32, CopyDelta, MpiComm>(&mut section, &overlap, comm, rank)
-        {
+        if let Err(e) = complete_section::<i32, VecStorage<i32>, CopyDelta, MpiComm>(
+            &mut section,
+            &overlap,
+            comm,
+            rank,
+        ) {
             println!("[rank {}] Section completion failed: {:?}", rank, e);
         } else {
             println!("[rank {}] Section completion succeeded", rank);
@@ -506,8 +517,10 @@ fn test_distributed_completion(
 #[cfg(feature = "mpi-support")]
 fn test_bundle_operations(rank: usize) {
     println!("[rank {}] Testing Bundle operations...", rank);
+    use mesh_sieve::data::storage::VecStorage;
     use mesh_sieve::prelude::*;
     use mesh_sieve::topology::arrow::Polarity;
+    use std::marker::PhantomData;
 
     // Create test bundle
     let mut atlas = Atlas::default();
@@ -519,7 +532,7 @@ fn test_bundle_operations(rank: usize) {
     atlas.try_insert(cap1, 2).unwrap();
     atlas.try_insert(cap2, 2).unwrap();
 
-    let mut section = Section::<f64>::new(atlas);
+    let mut section = Section::<f64, VecStorage<f64>>::new(atlas);
     section.try_set(base1, &[1.0, 2.0]).unwrap();
 
     let mut stack = InMemoryStack::<PointId, PointId, Polarity>::new();
@@ -530,6 +543,7 @@ fn test_bundle_operations(rank: usize) {
         stack,
         section,
         delta: CopyDelta,
+        _marker: PhantomData,
     };
 
     // Test refinement
@@ -564,6 +578,7 @@ fn test_bundle_operations(rank: usize) {
         stack: bundle.stack.clone(),
         section: bundle.section.clone(),
         delta: AddDelta,
+        _marker: PhantomData,
     };
 
     if let Err(e) = add_bundle.assemble([base1]) {
@@ -624,6 +639,7 @@ fn test_sieved_array_operations(rank: usize) {
 #[cfg(feature = "mpi-support")]
 fn test_error_handling_robustness(rank: usize) {
     use mesh_sieve::{
+        data::storage::VecStorage,
         overlap::delta::ZeroDelta,
         prelude::{Atlas, Section, Sieve, ValueDelta},
     };
@@ -633,7 +649,7 @@ fn test_error_handling_robustness(rank: usize) {
     let mut atlas = Atlas::default();
     let pt = PointId::new(999).unwrap();
     atlas.try_insert(pt, 1).unwrap();
-    let mut section = Section::<i32>::new(atlas);
+    let mut section = Section::<i32, VecStorage<i32>>::new(atlas);
 
     // Test various error conditions
 
