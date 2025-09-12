@@ -39,12 +39,12 @@ fn build_grid() -> (
     let mut atlas = Atlas::default();
     for id in 0u64..9 {
         sieve.add_point(PointId::new(id + 1).unwrap());
-        atlas.insert(PointId::new(id + 1).unwrap(), 1); // 1 DOF per point
+        atlas.try_insert(PointId::new(id + 1).unwrap(), 1); // 1 DOF per point
     }
     let mut section = Section::<f64, VecStorage<f64>>::new(atlas.clone());
     // initialize each point’s value = its ID as f64
     for id in 1u64..=9 {
-        section.restrict_mut(PointId::new(id).unwrap())[0] = id as f64;
+        section.try_restrict_mut(PointId::new(id).unwrap())[0] = id as f64;
     }
     (sieve, atlas, section)
 }
@@ -153,7 +153,7 @@ fn main() {
             // 2) send each pid + its value
             for &pid in pids {
                 proc.send(&pid);
-                let val = sec.restrict(PointId::new(pid as u64).unwrap())[0];
+                let val = sec.try_restrict(PointId::new(pid as u64).unwrap())[0];
                 proc.send(&val);
             }
         }
@@ -170,9 +170,9 @@ fn main() {
             let (val, _) = world.process_at_rank(0).receive::<f64>();
             let pid = PointId::new(pid as u64).unwrap();
             s.add_point(pid);
-            a.insert(pid, 1);
+            a.try_insert(pid, 1);
             sec = Section::new(a.clone());
-            sec.restrict_mut(pid)[0] = val;
+            sec.try_restrict_mut(pid)[0] = val;
         }
         (s, a, sec)
     };
