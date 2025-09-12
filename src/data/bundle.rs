@@ -12,11 +12,11 @@
 use crate::data::refine::delta::SliceDelta;
 use crate::data::section::Section;
 use crate::data::storage::{Storage, VecStorage};
-use core::marker::PhantomData;
 use crate::overlap::delta::CopyDelta;
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
 use crate::topology::stack::{InMemoryStack, Stack};
+use core::marker::PhantomData;
 
 /// Reducer combining multiple cap slices into an accumulator slice.
 ///
@@ -70,7 +70,13 @@ where
         acc: &mut [V],
         src: &[V],
     ) -> Result<(), crate::mesh_error::MeshSieveError> {
-        // Precondition: `acc` and `src` have the same length.
+        use crate::mesh_error::MeshSieveError;
+        if acc.len() != src.len() {
+            return Err(MeshSieveError::ReducerLengthMismatch {
+                expected: acc.len(),
+                found: src.len(),
+            });
+        }
         for (dst, s) in acc.iter_mut().zip(src.iter()) {
             *dst += s.clone();
         }
@@ -271,9 +277,9 @@ where
 mod tests {
     use super::*;
     use crate::data::atlas::Atlas;
+    use crate::data::storage::VecStorage;
     use crate::overlap::delta::CopyDelta;
     use crate::topology::arrow::Polarity;
-    use crate::data::storage::VecStorage;
     use core::marker::PhantomData;
     #[test]
     fn bundle_basic_refine_and_assemble() {

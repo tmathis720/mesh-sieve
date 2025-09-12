@@ -30,7 +30,11 @@ where
     D::Part: bytemuck::Pod + Default,
     C: Communicator + Sync,
 {
-    #[cfg(any(debug_assertions, feature = "check-invariants"))]
+    #[cfg(any(
+        debug_assertions,
+        feature = "strict-invariants",
+        feature = "check-invariants"
+    ))]
     overlap.validate_invariants()?;
 
     // Fast-path: if there are no neighbors (excluding self), nothing to exchange.
@@ -45,11 +49,12 @@ where
     }
 
     // 1) discover which points each neighbor needs
-    let links =
-        neighbour_links::<V, S>(section, overlap, my_rank).map_err(|e| MeshSieveError::CommError {
+    let links = neighbour_links::<V, S>(section, overlap, my_rank).map_err(|e| {
+        MeshSieveError::CommError {
             neighbor: my_rank,
             source: format!("neighbour_links failed: {e}").into(),
-        })?;
+        }
+    })?;
 
     // 2) Build true neighbor set (both outgoing and incoming), deterministically ordered
     let mut all: BTreeSet<usize> = overlap.neighbor_ranks().collect();
@@ -131,8 +136,13 @@ mod tests {
         ovlp.add_link_structural_one(PointId::new(1).unwrap(), 1);
         let comm = NoComm;
         let tags = SectionCommTags::from_base(CommTag::new(0x4100));
-        let res =
-            complete_section_with_tags::<i32, VecStorage<i32>, CopyDelta, _>(&mut section, &ovlp, &comm, 0, tags);
+        let res = complete_section_with_tags::<i32, VecStorage<i32>, CopyDelta, _>(
+            &mut section,
+            &ovlp,
+            &comm,
+            0,
+            tags,
+        );
         assert!(matches!(
             res,
             Err(MeshSieveError::CommError { neighbor: 0, .. })
@@ -145,8 +155,13 @@ mod tests {
         let ovlp = Overlap::new();
         let comm = NoComm;
         let tags = SectionCommTags::from_base(CommTag::new(0x4200));
-        let res =
-            complete_section_with_tags::<i32, VecStorage<i32>, CopyDelta, _>(&mut section, &ovlp, &comm, 0, tags);
+        let res = complete_section_with_tags::<i32, VecStorage<i32>, CopyDelta, _>(
+            &mut section,
+            &ovlp,
+            &comm,
+            0,
+            tags,
+        );
         // With no neighbors, completion is a no-op and succeeds.
         assert!(res.is_ok());
     }

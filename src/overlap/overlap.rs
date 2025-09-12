@@ -16,7 +16,7 @@
 //!    must have at least one incoming edge.
 //!
 //! The invariants checker runs in debug builds or when the feature
-//! `check-invariants` is enabled. It performs an `O(V + E)` walk over the graph
+//! `strict-invariants` (or its alias `check-invariants`) is enabled. It performs an `O(V + E)` walk over the graph
 //! without cloning payloads.
 //!
 //! The [`Overlap`] newtype wraps an [`InMemorySieve`] and enforces these
@@ -411,10 +411,14 @@ impl Overlap {
         Ok(())
     }
 
-    /// Panics on invariant violations in debug or when feature `check-invariants` is enabled.
+    /// Panics on invariant violations in debug or when feature `strict-invariants` (alias `check-invariants`) is enabled.
     #[inline]
     pub fn debug_validate(&self) {
-        #[cfg(any(debug_assertions, feature = "check-invariants"))]
+        #[cfg(any(
+            debug_assertions,
+            feature = "strict-invariants",
+            feature = "check-invariants"
+        ))]
         if let Err(e) = self.validate_invariants() {
             panic!("Overlap invariant violated: {e}");
         }
@@ -582,7 +586,11 @@ impl Sieve for Overlap {
 #[macro_export]
 macro_rules! ovl_debug_validate {
     ($ovl:expr) => {
-        if cfg!(any(debug_assertions, feature = "check-invariants")) {
+        if cfg!(any(
+            debug_assertions,
+            feature = "strict-invariants",
+            feature = "check-invariants"
+        )) {
             if let Err(e) = ($ovl).validate_invariants() {
                 panic!("Overlap invariant violated: {e}");
             }

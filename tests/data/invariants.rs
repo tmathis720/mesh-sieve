@@ -1,7 +1,7 @@
 use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::section::Section;
 use mesh_sieve::data::storage::VecStorage;
-use mesh_sieve::data::DebugInvariants;
+use mesh_sieve::debug_invariants::DebugInvariants;
 use mesh_sieve::topology::point::PointId;
 
 #[test]
@@ -33,6 +33,17 @@ fn atlas_detects_contiguity_violation() -> Result<(), Box<dyn std::error::Error>
     a.try_insert(p2, 2)?;
     // Introduce a gap
     a.force_offset(p2, 3);
-    assert!(a.validate_invariants().is_err());
+    let e = a.validate_invariants().unwrap_err();
+    assert!(matches!(
+        e,
+        mesh_sieve::mesh_error::MeshSieveError::AtlasContiguityMismatch { .. }
+    ));
     Ok(())
+}
+
+#[test]
+#[should_panic(expected = "[invariants] intentional")] 
+fn debug_invariants_macro_panics() {
+    use mesh_sieve::mesh_error::MeshSieveError;
+    mesh_sieve::debug_invariants!(Err::<(), MeshSieveError>(MeshSieveError::InvalidPointId), "intentional");
 }

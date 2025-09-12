@@ -62,6 +62,7 @@ pub enum MeshSieveError {
         found: usize,
     },
     /// Slice length changed for a point during atlas mutation.
+    #[deprecated(note = "Use AtlasPointLengthChanged")]
     #[error("atlas slice length changed for {point:?}: {old} -> {new}")]
     AtlasSliceLengthChanged {
         point: crate::topology::point::PointId,
@@ -94,14 +95,33 @@ pub enum MeshSieveError {
     #[error("Section internal error: missing data for point {0:?}")]
     MissingSectionPoint(crate::topology::point::PointId),
     /// Bulk scatter mismatch between total lengths.
-    #[error("Section error: scatter source length mismatch: expected {expected}, got {found}")]
+    #[error("scatter total length mismatch (expected={expected}, found={found})")]
     ScatterLengthMismatch { expected: usize, found: usize },
     /// One of the scatter chunks did not fit.
-    #[error("Section error: scatter chunk at offset {offset} of length {len} out of bounds")]
+    #[error("scatter chunk out of bounds or overflow (offset={offset}, len={len})")]
     ScatterChunkMismatch { offset: usize, len: usize },
     /// Attempted to use a scatter plan built from an outdated atlas.
-    #[error("Atlas plan is stale (expected version {expected}, found {found})")]
+    #[error("plan stale: built for atlas version {expected}, current {found}")]
     AtlasPlanStale { expected: u64, found: u64 },
+    /// Point's slice length changed across atlas rebuild.
+    #[error("atlas point length changed for {point:?} (expected={expected}, found={found})")]
+    AtlasPointLengthChanged {
+        point: crate::topology::point::PointId,
+        expected: usize,
+        found: usize,
+    },
+    /// Reducer or path length mismatch when no concrete point exists.
+    #[error("reduction length mismatch (expected={expected}, found={found})")]
+    ReducerLengthMismatch { expected: usize, found: usize },
+    /// Atlas slices are not contiguous as expected.
+    #[error(
+        "atlas contiguity mismatch for {point:?} (expected_offset={expected}, found_offset={found})"
+    )]
+    AtlasContiguityMismatch {
+        point: crate::topology::point::PointId,
+        expected: usize,
+        found: usize,
+    },
     /// Failure converting count to primitive (should never happen if FromPrimitive is well-behaved).
     #[error("SievedArray error: cannot convert count {0} via FromPrimitive")]
     SievedArrayPrimitiveConversionFailure(usize),
@@ -238,6 +258,18 @@ impl PartialEq for MeshSieveError {
                 },
             ) => p1 == p2 && o1 == o2 && n1 == n2,
             (
+                AtlasPointLengthChanged {
+                    point: p1,
+                    expected: e1,
+                    found: f1,
+                },
+                AtlasPointLengthChanged {
+                    point: p2,
+                    expected: e2,
+                    found: f2,
+                },
+            ) => p1 == p2 && e1 == e2 && f1 == f2,
+            (
                 SievedArraySliceLengthMismatch {
                     point: p1,
                     expected: e1,
@@ -265,6 +297,16 @@ impl PartialEq for MeshSieveError {
                 },
             ) => e1 == e2 && f1 == f2,
             (
+                ReducerLengthMismatch {
+                    expected: e1,
+                    found: f1,
+                },
+                ReducerLengthMismatch {
+                    expected: e2,
+                    found: f2,
+                },
+            ) => e1 == e2 && f1 == f2,
+            (
                 ScatterChunkMismatch {
                     offset: o1,
                     len: l1,
@@ -274,6 +316,18 @@ impl PartialEq for MeshSieveError {
                     len: l2,
                 },
             ) => o1 == o2 && l1 == l2,
+            (
+                AtlasContiguityMismatch {
+                    point: p1,
+                    expected: e1,
+                    found: f1,
+                },
+                AtlasContiguityMismatch {
+                    point: p2,
+                    expected: e2,
+                    found: f2,
+                },
+            ) => p1 == p2 && e1 == e2 && f1 == f2,
             (
                 AtlasPlanStale {
                     expected: e1,

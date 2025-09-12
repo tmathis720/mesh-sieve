@@ -95,7 +95,11 @@ where
     S::Payload: Default + Clone + Send + 'static,
     C: Communicator + Sync,
 {
-    #[cfg(any(debug_assertions, feature = "check-invariants"))]
+    #[cfg(any(
+        debug_assertions,
+        feature = "strict-invariants",
+        feature = "check-invariants"
+    ))]
     overlap.validate_invariants()?;
     if comm.is_no_comm() || comm.size() <= 1 {
         mesh.invalidate_cache();

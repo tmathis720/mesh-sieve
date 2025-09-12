@@ -52,12 +52,15 @@
 // Re-export our major subsystems:
 pub mod algs;
 pub mod data;
+pub mod debug_invariants;
 pub mod mesh_error;
 pub mod overlap;
 #[cfg(feature = "mpi-support")]
 pub mod partitioning;
 pub mod section;
 pub mod topology;
+
+pub use debug_invariants::DebugInvariants;
 
 /// A convenient prelude to import the most-used traits & types:
 pub mod prelude {
@@ -74,6 +77,7 @@ pub mod prelude {
     #[cfg(feature = "map-adapter")]
     pub use crate::data::section::Map;
     pub use crate::data::section::Section;
+    pub use crate::debug_invariants::DebugInvariants;
     pub use crate::overlap::delta::{AddDelta, CopyDelta, ValueDelta};
     pub use crate::overlap::overlap::Overlap;
     pub use crate::topology::bounds::{PayloadLike, PointLike};
