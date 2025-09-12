@@ -17,6 +17,9 @@ pub enum MeshSieveError {
     /// Generic mesh error (for internal use, e.g. error propagation)
     #[error("mesh error: {0}")]
     MeshError(Box<MeshSieveError>),
+    /// GPU buffer mapping failed.
+    #[error("GPU buffer mapping failed")]
+    GpuMappingFailed,
     /// Attempted to construct a PointId with a zero value (invalid).
     #[error("PointId must be non-zero (0 is reserved as invalid/sentinel)")]
     InvalidPointId,
@@ -201,7 +204,8 @@ impl PartialEq for MeshSieveError {
             (InvalidPointId, InvalidPointId)
             | (CycleDetected, CycleDetected)
             | (ZeroLengthSlice, ZeroLengthSlice)
-            | (PartitionPointOverflow, PartitionPointOverflow) => true,
+            | (PartitionPointOverflow, PartitionPointOverflow)
+            | (GpuMappingFailed, GpuMappingFailed) => true,
             (UnsupportedStackOperation(a), UnsupportedStackOperation(b)) => a == b,
             (MissingPointInCone(a), MissingPointInCone(b)) => a == b,
             (UnknownPoint(a), UnknownPoint(b)) => a == b,

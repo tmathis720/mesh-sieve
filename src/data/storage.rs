@@ -7,6 +7,8 @@
 use core::fmt::{self, Debug};
 
 use crate::mesh_error::MeshSieveError;
+use crate::data::slice_storage::SliceStorage;
+use crate::data::refine::delta::SliceDelta;
 
 /// Contiguous, indexable storage for `V` with slice access.
 ///
@@ -128,5 +130,103 @@ impl<V> From<Vec<V>> for VecStorage<V> {
 impl<V> VecStorage<V> {
     pub fn into_inner(self) -> Vec<V> {
         self.0
+    }
+}
+
+impl<V> SliceStorage<V> for VecStorage<V>
+where
+    V: Clone + Default + Send + Sync,
+{
+    fn total_len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn resize(&mut self, new_len: usize) -> Result<(), MeshSieveError> {
+        self.0.resize(new_len, V::default());
+        Ok(())
+    }
+
+    fn read_slice(&self, offset: usize, len: usize) -> Result<Vec<V>, MeshSieveError> {
+        let end = offset
+            .checked_add(len)
+            .ok_or(MeshSieveError::ScatterChunkMismatch { offset, len })?;
+        let src = self
+            .0
+            .get(offset..end)
+            .ok_or(MeshSieveError::ScatterChunkMismatch { offset, len })?;
+        Ok(src.to_vec())
+    }
+
+    fn write_slice(&mut self, offset: usize, src: &[V]) -> Result<(), MeshSieveError> {
+        let end = offset
+            .checked_add(src.len())
+            .ok_or(MeshSieveError::ScatterChunkMismatch {
+                offset,
+                len: src.len(),
+            })?;
+        let dst = self
+            .0
+            .get_mut(offset..end)
+            .ok_or(MeshSieveError::ScatterChunkMismatch {
+                offset,
+                len: src.len(),
+            })?;
+        dst.clone_from_slice(src);
+        Ok(())
+    }
+
+    fn apply_delta<D: SliceDelta<V> + 'static>(
+        &mut self,
+        src_off: usize,
+        dst_off: usize,
+        len: usize,
+        delta: &D,
+    ) -> Result<(), MeshSieveError> {
+        if len == 0 {
+            return Ok(());
+        }
+        let src_end = src_off
+            .checked_add(len)
+            .ok_or(MeshSieveError::ScatterChunkMismatch {
+                offset: src_off,
+                len,
+            })?;
+        let dst_end = dst_off
+            .checked_add(len)
+            .ok_or(MeshSieveError::ScatterChunkMismatch {
+                offset: dst_off,
+                len,
+            })?;
+        if src_end > self.0.len() {
+            return Err(MeshSieveError::ScatterChunkMismatch {
+                offset: src_off,
+                len,
+            });
+        }
+        if dst_end > self.0.len() {
+            return Err(MeshSieveError::ScatterChunkMismatch {
+                offset: dst_off,
+                len,
+            });
+        }
+        let disjoint = src_end <= dst_off || dst_end <= src_off;
+        if disjoint {
+            if src_off < dst_off {
+                let (a, b) = self.0.split_at_mut(dst_off);
+                let src = &a[src_off..src_end];
+                let dst = &mut b[..len];
+                delta.apply(src, dst)?;
+            } else {
+                let (a, b) = self.0.split_at_mut(src_off);
+                let dst = &mut a[dst_off..dst_end];
+                let src = &b[..len];
+                delta.apply(src, dst)?;
+            }
+        } else {
+            let src_copy: Vec<V> = self.0[src_off..src_end].to_vec();
+            let dst = &mut self.0[dst_off..dst_end];
+            delta.apply(&src_copy, dst)?;
+        }
+        Ok(())
     }
 }
