@@ -2,6 +2,7 @@
 
 use crate::algs::communicator::Wait;
 use crate::mesh_error::MeshSieveError;
+use crate::data::storage::Storage;
 
 /// For each neighbor, pack `Delta::restrict` from your section into a send buffer,
 /// post irecv for the corresponding byte length (from stage 1),
@@ -10,7 +11,7 @@ use crate::mesh_error::MeshSieveError;
 /// This function assumes each point slice has **exactly one degree of freedom**.
 /// For vector DOFs use [`exchange_data_symmetric`], which supports arbitrary
 /// slice lengths via a length-prefixed protocol.
-pub fn exchange_data<V, D, C>(
+pub fn exchange_data<V, S, D, C>(
     links: &std::collections::HashMap<
         usize,
         Vec<(
@@ -21,10 +22,11 @@ pub fn exchange_data<V, D, C>(
     recv_counts: &std::collections::HashMap<usize, u32>,
     comm: &C,
     base_tag: u16,
-    section: &mut crate::data::section::Section<V>,
+    section: &mut crate::data::section::Section<V, S>,
 ) -> Result<(), MeshSieveError>
 where
     V: Clone + Default + Send + 'static,
+    S: Storage<V>,
     D: crate::overlap::delta::ValueDelta<V> + Send + Sync + 'static,
     D::Part: bytemuck::Pod + Default,
     C: crate::algs::communicator::Communicator + Sync,
@@ -115,7 +117,7 @@ where
 /// 1. point counts (from `exchange_sizes_symmetric`),
 /// 2. a `u32` length per point, and
 /// 3. a flat payload of `D::Part` values.
-pub fn exchange_data_symmetric<V, D, C>(
+pub fn exchange_data_symmetric<V, S, D, C>(
     links: &std::collections::HashMap<
         usize,
         Vec<(
@@ -126,11 +128,12 @@ pub fn exchange_data_symmetric<V, D, C>(
     recv_counts: &std::collections::HashMap<usize, u32>,
     comm: &C,
     base_tag: u16,
-    section: &mut crate::data::section::Section<V>,
+    section: &mut crate::data::section::Section<V, S>,
     all_neighbors: &std::collections::HashSet<usize>,
 ) -> Result<(), MeshSieveError>
 where
     V: Clone + Default + Send + 'static,
+    S: Storage<V>,
     D: crate::overlap::delta::ValueDelta<V> + Send + Sync + 'static,
     D::Part: bytemuck::Pod + Default + Copy,
     C: crate::algs::communicator::Communicator + Sync,
@@ -365,6 +368,7 @@ mod tests {
         use crate::algs::completion::data_exchange::exchange_data;
         use crate::data::atlas::Atlas;
         use crate::data::section::Section;
+        use crate::data::storage::VecStorage;
         use crate::topology::point::PointId;
         use std::collections::HashMap;
         // Setup: two ranks (0 and 1), each with one value to send/receive
@@ -377,13 +381,13 @@ mod tests {
         let mut atlas0 = Atlas::default();
         atlas0.try_insert(PointId::new(10).unwrap(), 1);
         atlas0.try_insert(PointId::new(20).unwrap(), 1);
-        let mut section0 = Section::new(atlas0);
+        let mut section0 = Section::<DummyValue, VecStorage<DummyValue>>::new(atlas0);
         section0.try_set(PointId::new(10).unwrap(), &[DummyValue(5)]);
         section0.try_set(PointId::new(20).unwrap(), &[DummyValue(0)]);
         let mut atlas1 = Atlas::default();
         atlas1.try_insert(PointId::new(10).unwrap(), 1);
         atlas1.try_insert(PointId::new(20).unwrap(), 1);
-        let mut section1 = Section::new(atlas1);
+        let mut section1 = Section::<DummyValue, VecStorage<DummyValue>>::new(atlas1);
         section1.try_set(PointId::new(10).unwrap(), &[DummyValue(0)]);
         section1.try_set(PointId::new(20).unwrap(), &[DummyValue(7)]);
 
@@ -405,7 +409,7 @@ mod tests {
 
         // Spawn threads for each rank
         let t0 = std::thread::spawn(move || {
-            exchange_data::<DummyValue, DummyDelta, crate::algs::communicator::RayonComm>(
+            exchange_data::<DummyValue, VecStorage<DummyValue>, DummyDelta, crate::algs::communicator::RayonComm>(
                 &links0,
                 &recv_counts0,
                 &comm0,
@@ -419,7 +423,7 @@ mod tests {
             )
         });
         let t1 = std::thread::spawn(move || {
-            exchange_data::<DummyValue, DummyDelta, crate::algs::communicator::RayonComm>(
+            exchange_data::<DummyValue, VecStorage<DummyValue>, DummyDelta, crate::algs::communicator::RayonComm>(
                 &links1,
                 &recv_counts1,
                 &comm1,

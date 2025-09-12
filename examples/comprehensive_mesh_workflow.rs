@@ -32,6 +32,7 @@ fn main() {
     };
     use mesh_sieve::data::refine::sieved_array::SievedArray;
     use mesh_sieve::data::section::Section;
+    use mesh_sieve::data::storage::VecStorage;
     use mesh_sieve::overlap::delta::{AddDelta, CopyDelta, ValueDelta, ZeroDelta};
     // use mesh_sieve::overlap::overlap::{Overlap, Remote};
     use mesh_sieve::algs::dual_graph::build_dual;
@@ -297,7 +298,10 @@ fn test_lattice_operations(mesh: &InMemorySieve<PointId, ()>, cells: &[PointId])
 
 /// Test refinement helpers (restrict_closure, restrict_star)
 #[cfg(feature = "mpi-support")]
-fn test_refinement_helpers(mesh: &InMemorySieve<PointId, ()>, _section: &Section<f64>) {
+fn test_refinement_helpers(
+    mesh: &InMemorySieve<PointId, ()>,
+    _section: &Section<f64, VecStorage<f64>>,
+) {
     use mesh_sieve::data::refine::*;
     use mesh_sieve::prelude::*;
 
@@ -312,7 +316,7 @@ fn test_refinement_helpers(mesh: &InMemorySieve<PointId, ()>, _section: &Section
         test_atlas.try_insert(point, 1).unwrap();
     }
 
-    let mut test_section = Section::<f64>::new(test_atlas);
+    let mut test_section = Section::<f64, VecStorage<f64>>::new(test_atlas);
 
     // Set test data for all points
     for (i, &point) in all_points.iter().enumerate() {

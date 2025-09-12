@@ -6,6 +6,7 @@
 //!  - If you own *no* values, you instead receive from each neighbor’s `remote_point` into your `local_point`.
 
 use crate::data::section::Section;
+use crate::data::storage::Storage;
 use crate::mesh_error::MeshSieveError;
 use crate::overlap::overlap::{Overlap, local};
 use crate::topology::point::PointId;
@@ -20,13 +21,14 @@ use std::collections::HashMap;
 /// # Errors
 /// Returns `MeshSieveError::MissingOverlap` if the overlap graph doesn’t
 /// contain the information needed to build the send/receive pairs.
-pub fn neighbour_links<V>(
-    section: &Section<V>,
+pub fn neighbour_links<V, S>(
+    section: &Section<V, S>,
     ovlp: &Overlap,
     my_rank: usize,
 ) -> Result<HashMap<usize, Vec<(PointId, PointId)>>, MeshSieveError>
 where
     V: Clone + Default + PartialEq,
+    S: Storage<V>,
 {
     let default_val = V::default();
     let mut out: HashMap<usize, Vec<(PointId, PointId)>> = HashMap::new();
@@ -83,17 +85,18 @@ mod tests {
     use super::*;
     use crate::data::atlas::Atlas;
     use crate::data::section::Section;
+    use crate::data::storage::VecStorage;
     use crate::overlap::overlap::Overlap;
     use crate::topology::point::PointId;
 
-    fn make_section(points: &[u64]) -> Section<i32> {
+    fn make_section(points: &[u64]) -> Section<i32, VecStorage<i32>> {
         let mut atlas = Atlas::default();
         for &p in points {
             atlas
                 .try_insert(PointId::new(p).unwrap(), 1)
                 .expect("Failed to insert point into atlas");
         }
-        let mut section = Section::new(atlas);
+        let mut section = Section::<i32, VecStorage<i32>>::new(atlas);
         for &p in points {
             section
                 .try_set(PointId::new(p).unwrap(), &[p as i32])

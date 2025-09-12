@@ -1,6 +1,7 @@
 use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::bundle::{AverageReducer, Bundle};
 use mesh_sieve::data::section::Section;
+use mesh_sieve::data::storage::VecStorage;
 use mesh_sieve::mesh_error::MeshSieveError;
 use mesh_sieve::overlap::delta::CopyDelta;
 use mesh_sieve::topology::arrow::Polarity;
@@ -18,7 +19,7 @@ fn assemble_reports_cap_point_on_length_mismatch() {
     atlas.try_insert(c_ok, 3).unwrap();
     atlas.try_insert(c_bad, 2).unwrap();
 
-    let section: Section<f64> = Section::new(atlas);
+    let section: Section<f64, VecStorage<f64>> = Section::new(atlas);
 
     let mut stack = InMemoryStack::<PointId, PointId, Polarity>::default();
     stack.add_arrow(b, c_ok, Polarity::Forward).unwrap();

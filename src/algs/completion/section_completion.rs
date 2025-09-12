@@ -10,13 +10,14 @@ use crate::algs::completion::{
     data_exchange, neighbour_links::neighbour_links, size_exchange::exchange_sizes_symmetric,
 };
 use crate::data::section::Section;
+use crate::data::storage::Storage;
 use crate::mesh_error::MeshSieveError;
 use crate::overlap::delta::ValueDelta;
 use crate::overlap::overlap::Overlap;
 
 /// Complete a section using explicit communication tags.
-pub fn complete_section_with_tags<V, D, C>(
-    section: &mut Section<V>,
+pub fn complete_section_with_tags<V, S, D, C>(
+    section: &mut Section<V, S>,
     overlap: &Overlap,
     comm: &C,
     my_rank: usize,
@@ -24,6 +25,7 @@ pub fn complete_section_with_tags<V, D, C>(
 ) -> Result<(), MeshSieveError>
 where
     V: Clone + Default + Send + PartialEq + 'static,
+    S: Storage<V>,
     D: ValueDelta<V> + Send + Sync + 'static,
     D::Part: bytemuck::Pod + Default,
     C: Communicator + Sync,
@@ -44,7 +46,7 @@ where
 
     // 1) discover which points each neighbor needs
     let links =
-        neighbour_links::<V>(section, overlap, my_rank).map_err(|e| MeshSieveError::CommError {
+        neighbour_links::<V, S>(section, overlap, my_rank).map_err(|e| MeshSieveError::CommError {
             neighbor: my_rank,
             source: format!("neighbour_links failed: {e}").into(),
         })?;
@@ -65,7 +67,7 @@ where
         })?;
 
     // 4) exchange the actual data parts & fuse into our section
-    data_exchange::exchange_data_symmetric::<V, D, C>(
+    data_exchange::exchange_data_symmetric::<V, S, D, C>(
         &links,
         &counts,
         comm,
@@ -81,20 +83,21 @@ where
 }
 
 /// Convenience wrapper using a legacy default tag (0xBEEF).
-pub fn complete_section<V, D, C>(
-    section: &mut Section<V>,
+pub fn complete_section<V, S, D, C>(
+    section: &mut Section<V, S>,
     overlap: &Overlap,
     comm: &C,
     my_rank: usize,
 ) -> Result<(), MeshSieveError>
 where
     V: Clone + Default + Send + PartialEq + 'static,
+    S: Storage<V>,
     D: ValueDelta<V> + Send + Sync + 'static,
     D::Part: bytemuck::Pod + Default,
     C: Communicator + Sync,
 {
     let tags = SectionCommTags::from_base(CommTag::new(0xBEEF));
-    complete_section_with_tags::<V, D, C>(section, overlap, comm, my_rank, tags)
+    complete_section_with_tags::<V, S, D, C>(section, overlap, comm, my_rank, tags)
 }
 
 #[cfg(test)]
@@ -102,17 +105,18 @@ mod tests {
     use super::*;
     use crate::algs::communicator::NoComm;
     use crate::data::atlas::Atlas;
+    use crate::data::storage::VecStorage;
     use crate::topology::point::PointId;
 
     use crate::overlap::delta::CopyDelta;
 
     // Helper to build a section with points set to their ID as value
-    fn make_section(points: &[u64]) -> Section<i32> {
+    fn make_section(points: &[u64]) -> Section<i32, VecStorage<i32>> {
         let mut atlas = Atlas::default();
         for &p in points {
             atlas.try_insert(PointId::new(p).unwrap(), 1).unwrap();
         }
-        let mut s = Section::new(atlas);
+        let mut s = Section::<i32, VecStorage<i32>>::new(atlas);
         for &p in points {
             s.try_set(PointId::new(p).unwrap(), &[p as i32]).unwrap();
         }
@@ -128,7 +132,7 @@ mod tests {
         let comm = NoComm;
         let tags = SectionCommTags::from_base(CommTag::new(0x4100));
         let res =
-            complete_section_with_tags::<i32, CopyDelta, _>(&mut section, &ovlp, &comm, 0, tags);
+            complete_section_with_tags::<i32, VecStorage<i32>, CopyDelta, _>(&mut section, &ovlp, &comm, 0, tags);
         assert!(matches!(
             res,
             Err(MeshSieveError::CommError { neighbor: 0, .. })
@@ -142,7 +146,7 @@ mod tests {
         let comm = NoComm;
         let tags = SectionCommTags::from_base(CommTag::new(0x4200));
         let res =
-            complete_section_with_tags::<i32, CopyDelta, _>(&mut section, &ovlp, &comm, 0, tags);
+            complete_section_with_tags::<i32, VecStorage<i32>, CopyDelta, _>(&mut section, &ovlp, &comm, 0, tags);
         // With no neighbors, completion is a no-op and succeeds.
         assert!(res.is_ok());
     }

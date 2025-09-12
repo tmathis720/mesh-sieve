@@ -1,6 +1,7 @@
 use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::bundle::{Bundle, SliceReducer};
 use mesh_sieve::data::section::Section;
+use mesh_sieve::data::storage::VecStorage;
 use mesh_sieve::overlap::delta::CopyDelta;
 use mesh_sieve::topology::arrow::Polarity;
 use mesh_sieve::topology::point::PointId;
@@ -39,7 +40,7 @@ fn bundle_assemble_with_sum() -> Result<(), Box<dyn std::error::Error>> {
     atlas.try_insert(b, 3)?;
     atlas.try_insert(c1, 3)?;
     atlas.try_insert(c2, 3)?;
-    let mut section = Section::<i32>::new(atlas.clone());
+    let mut section = Section::<i32, VecStorage<i32>>::new(atlas.clone());
 
     let mut stack = InMemoryStack::<PointId, PointId, Polarity>::default();
     stack.add_arrow(b, c1, Polarity::Forward)?;

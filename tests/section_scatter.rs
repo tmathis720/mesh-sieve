@@ -1,5 +1,6 @@
 use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::section::Section;
+use mesh_sieve::data::storage::VecStorage;
 use mesh_sieve::mesh_error::MeshSieveError;
 use mesh_sieve::topology::point::PointId;
 
@@ -12,7 +13,7 @@ fn scatter_fast_path_identical_layout() {
     let mut atlas = Atlas::default();
     atlas.try_insert(pid(1), 3).unwrap();
     atlas.try_insert(pid(2), 2).unwrap();
-    let mut sec = Section::<i32>::new(atlas.clone());
+    let mut sec = Section::<i32, VecStorage<i32>>::new(atlas.clone());
 
     let buf = vec![10, 11, 12, 20, 21];
     let spans = atlas.atlas_map();
@@ -26,7 +27,7 @@ fn scatter_generic_noncontiguous_layout() {
     let mut atlas = Atlas::default();
     atlas.try_insert(pid(1), 2).unwrap();
     atlas.try_insert(pid(2), 2).unwrap();
-    let mut sec = Section::<i32>::new(atlas.clone());
+    let mut sec = Section::<i32, VecStorage<i32>>::new(atlas.clone());
 
     let spans = vec![(2usize, 2usize), (0usize, 2usize)];
     let buf = vec![100, 101, 200, 201];
@@ -40,7 +41,7 @@ fn scatter_generic_noncontiguous_layout() {
 fn scatter_mismatched_total_len_is_error() {
     let mut atlas = Atlas::default();
     atlas.try_insert(pid(1), 3).unwrap();
-    let mut sec = Section::<i32>::new(atlas.clone());
+    let mut sec = Section::<i32, VecStorage<i32>>::new(atlas.clone());
 
     let spans = atlas.atlas_map();
     let buf = vec![1, 2];

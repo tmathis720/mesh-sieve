@@ -1,5 +1,6 @@
 use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::section::Section;
+use mesh_sieve::data::storage::VecStorage;
 use mesh_sieve::data::DebugInvariants;
 use mesh_sieve::topology::point::PointId;
 
@@ -19,7 +20,7 @@ fn section_size_matches_total_len() -> Result<(), Box<dyn std::error::Error>> {
     let mut a = Atlas::default();
     let p = PointId::new(10)?;
     a.try_insert(p, 4)?;
-    let s = Section::<i32>::new(a);
+    let s = Section::<i32, VecStorage<i32>>::new(a);
     assert!(s.validate_invariants().is_ok());
     Ok(())
 }

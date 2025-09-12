@@ -10,6 +10,7 @@ use mesh_sieve::algs::partition;
 use mesh_sieve::data::atlas::Atlas;
 #[cfg(feature = "mpi-support")]
 use mesh_sieve::data::section::{Map, Section};
+use mesh_sieve::data::storage::VecStorage;
 #[cfg(feature = "mpi-support")]
 use mesh_sieve::topology::point::PointId;
 #[cfg(feature = "mpi-support")]
@@ -28,7 +29,7 @@ use mesh_sieve::partitioning::{PartitionerConfig, partition};
 
 /// Build a 2×2 structured grid of points (IDs 0..8).
 #[cfg(feature = "mpi-support")]
-fn build_grid() -> (InMemorySieve<PointId, ()>, Atlas, Section<f64>) {
+fn build_grid() -> (InMemorySieve<PointId, ()>, Atlas, Section<f64, VecStorage<f64>>) {
     // 9 points laid out in a 3×3 mesh (4 cells)
     let mut sieve = InMemorySieve::new();
     let mut atlas = Atlas::default();
@@ -36,7 +37,7 @@ fn build_grid() -> (InMemorySieve<PointId, ()>, Atlas, Section<f64>) {
         sieve.add_point(PointId::new(id + 1).unwrap());
         atlas.insert(PointId::new(id + 1).unwrap(), 1); // 1 DOF per point
     }
-    let mut section = Section::new(atlas.clone());
+    let mut section = Section::<f64, VecStorage<f64>>::new(atlas.clone());
     // initialize each point’s value = its ID as f64
     for id in 1u64..=9 {
         section.restrict_mut(PointId::new(id).unwrap())[0] = id as f64;

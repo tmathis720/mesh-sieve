@@ -3,6 +3,7 @@ use mesh_sieve::data::refine::helpers::try_restrict_closure_vec;
 #[cfg(feature = "map-adapter")]
 use mesh_sieve::data::refine::helpers::restrict_closure_vec;
 use mesh_sieve::data::section::Section;
+use mesh_sieve::data::storage::VecStorage;
 use mesh_sieve::mesh_error::MeshSieveError;
 use mesh_sieve::topology::point::PointId;
 use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
@@ -17,7 +18,7 @@ fn v(i: u64) -> PointId {
 fn restrict_closure_panics_on_missing_point() {
     let sieve = InMemorySieve::<PointId, ()>::default();
     let atlas = Atlas::default();
-    let section = Section::<i32>::new(atlas);
+    let section = Section::<i32, VecStorage<i32>>::new(atlas);
     // legacy helper panics when point is missing
     let _ = restrict_closure_vec(&sieve, &section, [v(1)]);
 }
@@ -26,7 +27,7 @@ fn restrict_closure_panics_on_missing_point() {
 fn try_restrict_closure_err_on_missing_point() {
     let sieve = InMemorySieve::<PointId, ()>::default();
     let atlas = Atlas::default();
-    let section = Section::<i32>::new(atlas);
+    let section = Section::<i32, VecStorage<i32>>::new(atlas);
     let err = try_restrict_closure_vec(&sieve, &section, [v(1)]).unwrap_err();
     assert!(matches!(err, MeshSieveError::PointNotInAtlas(pid) if pid == v(1)));
 }
