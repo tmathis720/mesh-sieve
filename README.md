@@ -1,110 +1,280 @@
 # mesh-sieve
 
-mesh-sieve is a modular, high-performance Rust library for mesh and data management, designed for scientific computing and PDE codes. It provides abstractions for mesh topology, field data, parallel partitioning, and communication, supporting both serial and MPI-based distributed workflows.
+**mesh-sieve** is a modular, high-performance Rust library for mesh topology and field data. It powers refinement/assembly pipelines and overlap-driven exchange for serial, threaded, and MPI-distributed workflows. The APIs are **Result-first** (no hidden panics), invariants are easy to validate (`strict-invariants`), and the data layer is **storage-generic** (CPU `Vec` by default; optional **wgpu** backend).
 
 ## Features
-- **Mesh Topology**: Flexible, generic Sieve data structures for representing mesh connectivity.
-- **Field Data**: Atlas and Section types for mapping mesh points to data arrays.
-- **Parallel Communication**: Pluggable communication backends (serial, Rayon, MPI) for ghost exchange and mesh distribution.
-- **Partitioning**: Built-in support for graph partitioning (Metis, custom algorithms).
-- **MPI Integration**: Examples and tests for distributed mesh and data exchange using MPI.
-- **Extensive Testing**: Serial, parallel, and property-based tests.
-- **Ergonomic bounds**: `PointLike` and `PayloadLike` marker traits reduce repeated `Copy + Eq + Hash + Ord + Debug` bounds.
+
+* **Mesh Topology**: generic **Sieve** graphs for incidence and traversal (cone/support/closure/star), plus lattice ops (meet/join) and strata (height/depth).
+* **Field Data**: **Atlas** (layout) + **Section** (values) with **fallible** accessors and strong invariants. Fast scatter paths for contiguous layouts.
+* **Storage Abstraction**: `Section<V, S>` where `S: SliceStorage<V>` (built-in `VecStorage`; optional `WgpuStorage` with compute kernels).
+* **Parallel Communication**: pluggable **Communicator** backends (serial `NoComm`, in-process `RayonComm`, feature-gated `MpiComm`).
+* **Overlap**: bipartite local↔rank structure with strict mirror validation; helpers to expand along mesh closure.
+* **Partitioning**: optional METIS helpers and in-tree algorithms.
+* **Testing & CI**: property tests, deterministic iterators, and feature-gated deep invariant checks.
+* **Performance**: point-only adapters (no payload cloning), degree-local updates, preallocation hints, streaming algorithms, and inline hot paths.
 
 ## Getting Started
-
-To build and run the project:
 
 ```sh
 cargo build
 cargo run
 ```
 
-### Running MPI Examples
+### Cargo Features
 
-Some features require MPI. To run an MPI example (e.g., `mpi_complete.rs`):
+Enable only what you need:
 
-```sh
-mpirun -n 2 cargo run --example mpi_complete
+```toml
+[dependencies]
+mesh-sieve = { version = "2", features = [
+  # safety & determinism
+  # "strict-invariants",      # deep invariant checks in debug/CI
+  # "deterministic-order",    # stable BTree maps/sets for IO/repro
+  # "fast-hash",              # AHash maps/sets for speed (non-deterministic order)
+
+  # parallel & distributed
+  # "rayon",                  # parallel refine/assemble utilities
+  # "mpi-support",            # MPI communicator backend
+
+  # partitioning
+  # "metis-support",          # METIS bindings
+
+  # data adapters
+  # "map-adapter",            # legacy infallible helpers (panic-on-miss)
+
+  # GPU
+  # "wgpu",                   # WgpuStorage for Section (V: Pod + Zeroable)
+] }
 ```
 
-Other examples:
-- `mesh_distribute_two_ranks.rs`: Demonstrates mesh distribution across two ranks.
-- `mpi_complete_no_overlap.rs`, `mpi_complete_multiple_neighbors.rs`, `mpi_complete_stack.rs`: Test various parallel completion scenarios.
+> **CI tip:** run a lane with `--features strict-invariants` to catch structural and mirror mistakes early, even in optimized builds.
+
+## Quick Examples
+
+### Topology (InMemorySieve)
+
+```rust
+use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
+use mesh_sieve::topology::point::PointId;
+
+let mut g = InMemorySieve::<PointId, ()>::default();
+let a = PointId::new(1)?; let b = PointId::new(2)?;
+g.add_arrow(a, b, ());
+
+for v in g.cone_points(a) { /* point-only: no payload clones */ }
+let reach: Vec<_> = g.closure_iter([a]).collect();
+```
+
+### Field Data (Atlas + Section over Vec)
+
+```rust
+use mesh_sieve::data::atlas::Atlas;
+use mesh_sieve::data::slice_storage::VecStorage;
+use mesh_sieve::data::section::Section;
+use mesh_sieve::topology::point::PointId;
+
+let mut atlas = Atlas::default();
+let p = PointId::new(7)?;
+atlas.try_insert(p, 3)?;
+let mut sec = Section::<f64, VecStorage<f64>>::new(atlas);
+
+sec.try_set(p, &[1.0, 2.0, 3.0])?;
+let s = sec.try_restrict(p)?; // &[f64]
+```
+
+### Refine/Assemble (Bundle)
+
+```rust
+use mesh_sieve::data::bundle::{Bundle, AverageReducer};
+use mesh_sieve::topology::stack::InMemoryStack;
+
+let mut bundle: Bundle<f64> = Bundle {
+  stack: InMemoryStack::new(),   // base -> cap (Polarity payload)
+  section: /* Section<f64, _> */,
+  delta: mesh_sieve::overlap::delta::CopyDelta,
+};
+
+// Refinement (base -> cap) with orientation-aware slice transforms:
+bundle.refine([/* base points */])?;
+
+// Assembly (cap -> base) with explicit reduction; lengths checked up-front:
+bundle.assemble_with([/* base points */], &AverageReducer)?;
+```
+
+### Overlap (distributed links)
+
+```rust
+use mesh_sieve::overlap::overlap::Overlap;
+use mesh_sieve::topology::point::PointId;
+
+let mut ov = Overlap::default();
+let p = PointId::new(42)?;
+let neighbor = 1usize;
+let inserted = ov.add_link_structural_one(p, neighbor); // remote unknown yet
+// Later:
+ov.resolve_remote_point(p, neighbor, PointId::new(42042)?)?;
+```
+
+### MPI Examples
+
+```sh
+# build with MPI
+cargo run --features mpi-support --example mpi_complete
+
+# or:
+mpirun -n 2 cargo run --features mpi-support --example mpi_complete
+```
+
+More examples:
+
+* `mpi_complete.rs`, `mpi_complete_stack.rs`: section/stack completion
+* `mesh_distribute_two_ranks.rs`: distributing a mesh
+* `mpi_complete_multiple_neighbors.rs`: multi-neighbor exchange
 
 ## Project Structure
-- `src/`: Library source code
-  - `topology/`: Mesh topology and Sieve traits
-  - `data/`: Atlas and Section for field data
-  - `overlap/`: Overlap and Delta for ghost exchange
-  - `algs/`: Algorithms for communication, distribution, completion, partitioning
-  - `partitioning/`: Graph partitioning algorithms
-- `examples/`: Usage and integration tests (serial and MPI)
-- `tests/`: Unit and integration tests
-- `benches/`: Benchmarks
-- `Cargo.toml`: Project manifest and dependencies
 
-## Optional Features
-- `mpi-support`: Enable MPI-based communication and parallel tests
-- `metis-support`: Enable Metis-based partitioning (requires Metis and pkg-config)
+```
+src/
+  topology/        # Sieve & traversal, strata, lattice
+  data/            # Atlas, Section, storage backends (Vec/WGPU), deltas, helpers
+  overlap/         # Overlap graph, value deltas, perf types
+  algs/            # communicators, completion, distribute, partition utilities
+  partitioning/    # METIS integration + in-tree algorithms
+  ...
+```
 
-# Version 1.2.4 — Release Notes
+---
 
-## Highlights
+## What’s New in 2.x (highlights)
 
-* Add **distributed closures via completion**: call `closure_completed(...)` to traverse across partitions. It fetches remote cones/supports on demand or upfront (policy-driven) and fuses them locally.
-* Introduce a minimal **communication layer** (`Communicator`) with **NoComm**, **RayonComm**, and optional **MPI** backends for non-blocking send/recv and barriers.
-* Ship a full **section completion pipeline**: `neighbour_links` → `exchange_sizes(_symmetric)` → `exchange_data(_symmetric)` with robust, symmetric handshakes that avoid deadlocks.
-* Implement **sieve completion** (`complete_sieve`, `complete_sieve_until_converged`) to synchronize overlap arrows across ranks until convergence.
-* Add **stack completion** helpers to mirror section completion for vertical stacks.
+**Breaking (safer)**
+
+* **Fallible APIs only** in data/atlas: panicking shims (`insert`, `restrict`, `restrict_mut`, `set`, `get`, `get_mut`) are removed or gated. Prefer `try_*`.
+* `Atlas::remove_point(p)` now returns `Err(MissingAtlasPoint(p))` if absent.
+* `Section::with_atlas_mut` **rejects length changes** for existing points. Use `with_atlas_mut_resize(..., ResizePolicy)` when resizing is intended.
+* `Orientation` → **`Polarity`** (renamed). The old alias is deprecated.
+
+**Data/Storage**
+
+* `Section<V, S>` is **generic** over storage (`S: SliceStorage<V>`):
+
+  * `VecStorage` (CPU) for any `V: Clone + Default`
+  * `WgpuStorage` (feature `wgpu`) for `V: bytemuck::Pod + Zeroable`
+* `ScatterPlan { atlas_version, spans }` is a **stable contract**; plans are refused if versions diverge.
+* **Fast-path scatter**: if spans are contiguous and buffer lengths match, we do a single `clone_from_slice`.
+
+**Overlap**
+
+* Stronger invariants in `validate_invariants()`:
+
+  * Bipartite direction and **payload.rank equals Part(r)**
+  * No duplicate edges
+  * *(opt-in)* no empty Part nodes (`check-empty-part`)
+  * **Strict in/out mirror** (under `strict-invariants`): counts, endpoints and payloads must match exactly.
+
+**Performance & Determinism**
+
+* Streaming in `Bundle::{refine, assemble_with}` (no per-base heap churn).
+* Preallocation hints (`reserve_cone`, `reserve_support`).
+* Inline hot getters (`Atlas::get`, `Section::try_restrict(_mut)`).
+* Choose `fast-hash` for speed or `deterministic-order` for reproducible iteration.
+
+**Error Hygiene**
+
+* No synthetic `PointId`s in errors.
+* More precise variants (`AtlasPointLengthChanged { point, old_len, new_len }`, `AtlasPlanStale`, strict overlap mirror errors).
+
+---
+
+## API Overview (at a glance)
+
+| Area        | Key APIs                                                                                                                                              |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Sieve**   | `cone(_)/support(_)`, `cone_points(_)/support_points(_)`, `closure_iter`, `star_iter`                                                                 |
+| **Atlas**   | `try_insert`, `get`, `remove_point`, `points`, `atlas_map`, `version`, invariants                                                                     |
+| **Section** | `new`, `try_restrict(_)/try_restrict_mut(_)`, `try_set`, `with_atlas_mut`, `with_atlas_mut_resize`, `try_scatter_*`, `try_apply_delta_between_points` |
+| **Storage** | `VecStorage`, *(opt-in)* `WgpuStorage` (delta via copy/compute)                                                                                       |
+| **Deltas**  | `data::refine::SliceDelta` (slice→slice; e.g., `Polarity`), `overlap::ValueDelta` (comm/merge; e.g., `CopyDelta`, `AddDelta`, `ZeroDelta`)            |
+| **Overlap** | `add_link_structural_one`, `add_links_structural_bulk`, `resolve_remote_point(s)`, `ensure_closure_of_support`                                        |
+| **Bundles** | `refine(bases)`, `assemble_with(bases, &Reducer)`                                                                                                     |
+| **Algs**    | completion for sieve/section/stack; communicator trait & backends                                                                                     |
+
+> Legacy **infallible** helpers (`restrict_closure`, `restrict_star`, etc.) and the `Map` adapter are gated behind `feature = "map-adapter"`. Prefer `FallibleMap` + `try_*` helpers.
+
+---
+
+## GPU Backend (feature `wgpu`)
+
+* Use `Section<V, WgpuStorage<V>>` with `V: bytemuck::Pod + Zeroable`.
+* Delta routing:
+
+  * `Polarity::Forward` → `copy_buffer_to_buffer`
+  * `Polarity::Reverse` → tiny `reverse_copy.wgsl` compute kernel (or equivalent)
+  * Custom `SliceDelta` → dedicate small compute pipelines
+* Scatter validates `ScatterPlan.atlas_version` vs `Atlas::version()` before encoding commands.
+
+```rust
+#[cfg(feature = "wgpu")]
+{
+  use mesh_sieve::data::{atlas::Atlas, section::Section};
+  use mesh_sieve::data::wgpu::WgpuStorage;
+
+  let atlas = /* ... */;
+  let storage = WgpuStorage::<f32>::new(device.clone(), &atlas)?;
+  let mut sec = Section::<f32, WgpuStorage<f32>>::from_storage(atlas, storage);
+
+  // Version-checked scatter:
+  let plan = sec.atlas().build_scatter_plan();
+  sec.try_scatter_with_plan(&host_values, &plan)?;
+}
+```
+
+---
 
 ## Performance & Determinism
 
-* Replace boxed traversal closures with **concrete iterators**: `closure_iter`, `star_iter`, `closure_both_iter` (zero dyn-dispatch in hot loops).
-* Add **point-only adapters** (`cone_points`, `support_points`) to eliminate payload clones during traversal.
-* Provide **deterministic traversal order** via a height-major **chart** (index ↔ point) and **bitset** visited sets.
-* Make `InMemorySieve` mutators **degree-local** and **prealloc-aware**: `reserve_cone`, `reserve_support`, and incremental mirror updates for `set_cone`/`set_support` (no global rebuilds).
-* Extend the same reserve hints to `InMemoryOrientedSieve` and `InMemoryStack`; add bulk helpers (`reserve_from_edges`, `reserve_from_edge_counts`) and `shrink_to_fit` to reclaim memory.
+* Prefer **concrete** iterators (`*_iter`) and **point-only** adapters (`cone_points`, `support_points`) in hot paths.
+* Use `reserve_cone` / `reserve_support` before bulk updates.
+* Turn on `fast-hash` for speed or `deterministic-order` for stable I/O and tests.
+* The data layer uses **streaming** and **single-copy fast-paths** whenever layouts are contiguous.
 
-## Correctness Improvements
+---
 
-* Preserve the **remote mesh point id** in overlap completion wires; reconstruct `Remote { rank, remote_point: Some(id) }` exactly on receive.
-* Tighten `Overlap::add_link` to respect closure-of-support and avoid duplicate links efficiently.
-* Enforce **minimality** in `meet`/`join` (return only minimal shared faces / minimal cofaces).
+## Testing
 
-## API Additions
+* Property tests for Atlas/Section coherence (random insert/remove/shuffle + `validate_invariants` + scatter/gather round-trip).
+* Delta aliasing tests (overlap/disjoint) to ensure no panics.
+* Parallel determinism (with `rayon`) for refine/assemble parity.
+* CI lane with:
 
-* `closure_completed(...)` with `CompletionPolicy` (Pre/OnDemand; Cone/Support/Both).
-* `Communicator` trait + `NoComm`, `RayonComm`, and (feature-gated) `MpiComm`.
-* Completion utilities: `neighbour_links`, `size_exchange`, `data_exchange`, `sieve_completion`, `stack_completion`.
-* Deterministic helpers: `chart_points()`, `chart_index()` (height-major chart).
+  ```sh
+  cargo test --features strict-invariants
+  ```
 
-## Optional/Advanced
+---
 
-* Hooks for DAG reachability indices (e.g., GRAIL / chain-labels) to speed redundancy checks and transitive reduction.
-* Oriented closure plumbing for assembly into sections (sign-aware accumulation).
+## Breaking Changes & Migration
 
-## Breaking Changes
+1. **Panicking data APIs removed/gated**
 
-* **None.** All new capabilities are additive. Existing calls continue to work; new fast paths are opt-in.
+   * Migrate `insert/restrict/restrict_mut/set/get/get_mut` → `try_*` equivalents.
+   * Temporarily enable `map-adapter` to keep legacy helpers while you refactor.
 
-## Upgrade Notes
+2. **`with_atlas_mut` is strict**
 
-* Enable MPI backend with `--features mpi-support`.
-* Use `closure_local(...)` for legacy behavior; switch to `closure_completed(...)` to traverse globally with overlap-driven completion.
-* For best performance, prefer `*_iter` and `cone_points`/`support_points` in custom algorithms.
+   * Existing points’ lengths may **not** change; you’ll get `AtlasPointLengthChanged`.
+   * Use `with_atlas_mut_resize(|atlas| { ... }, ResizePolicy::PreservePrefix|PreserveSuffix|Reinit)` for explicit resizes.
 
-## Testing & Docs
+3. **`Orientation` → `Polarity`**
 
-* Add parity tests for old vs. new traversals.
-* Add symmetric comms tests for section/sieve/stack completion.
-* Update docs with examples for `closure_completed`, communicator setup, and overlap construction.
+   * Update imports/constructors.
 
-## Invariant checks
+4. **Overlap mirror checks (strict)**
 
-- By default, internal invariants are verified only in debug builds via `debug_assertions`.
-- Continuous integration also exercises these checks in optimized builds by enabling the `strict-invariants` feature.
-- End users incur zero overhead in normal release builds where this feature is disabled.
+   * If you touched `adjacency_*` directly, switch to API mutators. Strict mode verifies in/out symmetry and payload equality.
+
+---
 
 ## License
-MIT License. See [LICENSE](LICENSE) for details.
+
+MIT — see [LICENSE](LICENSE).

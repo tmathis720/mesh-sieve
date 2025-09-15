@@ -1,378 +1,440 @@
-# mesh-sieve API User Guide
+# mesh-sieve API User Guide (Updated)
 
 ## 1. Introduction
 
-**mesh-sieve** is a Rust library for representing mesh topologies and field data, supporting refinement, assembly, and distributed exchange. It provides abstractions for mesh connectivity and associated data, enabling efficient algorithms for scientific computing and parallel mesh operations.
+**mesh-sieve** is a Rust library for representing mesh topologies and field data, with first-class support for refinement, assembly, overlap-driven exchange and (optionally) GPU storage. It centers on:
 
-**Key concepts:**
-- **Points:** Mesh entity identifiers (vertices, edges, faces, cells)
-- **Arrows:** Directed incidence relations between points
-- **Sieves:** Core topology data structures representing mesh connectivity
-- **Stacks:** Vertical composition modeling hierarchical relationships
-- **Strata:** Topological levels/dimensions computed from connectivity
-- **Atlas/Section:** Maps points to field data with efficient access
-- **Bundles:** Combine topology and data for refinement/assembly workflows
-- **Overlap:** Shared regions between mesh partitions
-- **Communicators:** Abstract parallel communication (MPI, threads, serial)
+* **Points** (`PointId`)
+* **Arrows** (incidence, typed by payloads)
+* **Sieves** (topology graphs)
+* **Stacks** (vertical base→cap relations)
+* **Strata** (height/depth layers)
+* **Atlas & Section** (layout + values)
+* **Bundles** (topology + data workflow)
+* **Overlap** (bipartite local↔rank structure)
+
+### What changed (high-level)
+
+* **Infallible → fallible**: Panicking shims are removed (or deprecated pending the next major); use `Result` methods.
+* **Stricter invariants**: `strict-invariants` (alias: `check-invariants`) runs deep checks in debug/CI, including **in/out mirror validation** for overlaps and pre-checks before slicing in data.
+* **Storage abstraction**: `Section` is generic over **storage backends** (CPU vector by default; optional **wgpu** buffer).
+* **Determinism & speed**: Streaming patterns (no per-point heap churn), fast-paths for contiguous scatter, and careful inlining.
+* **Clearer errors**: No fake PointIds; more precise variants.
+
+---
 
 ## 2. Getting Started
 
-Add to `Cargo.toml`:
+**Cargo.toml**
+
 ```toml
 [dependencies]
-mesh-sieve = "1.0"
+mesh-sieve = "2.0"
 
-# Optional features:
-# - mpi-support: MPI backend for distributed runs
-# - metis-support: METIS partitioning helpers
-# mesh-sieve = { version = "1.0", features = ["mpi-support", "metis-support"] }
-````
-
-**Simple example:**
-
-```rust
-use mesh_sieve::topology::sieve::InMemorySieve;
-use mesh_sieve::topology::sieve::Sieve;
-use mesh_sieve::topology::point::PointId;
-
-let mut sieve = InMemorySieve::default();
-let p1 = PointId::new(1).unwrap();
-let p2 = PointId::new(2).unwrap();
-
-// Add incidence relation p1 -> p2
-sieve.add_arrow(p1, p2, ());
-
-// Query topology (point-only iteration avoids payload clones)
-for q in sieve.cone_points(p1) {
-    println!("{} -> {}", p1.get(), q.get());
-}
-
-// Strata queries (computed lazily; errors on cycles)
-println!("height({}): {:?}", p2.get(), sieve.height(p2));
-println!("depth({}): {:?}", p1.get(), sieve.depth(p1));
-println!("diameter():  {:?}", sieve.diameter());
+# Common optional features (opt-in):
+# - strict-invariants     : deep invariant checks in debug/CI
+# - map-adapter           : exposes deprecated infallible Map adapter & helpers
+# - rayon                 : parallel refine/assemble helpers
+# - mpi-support           : MPI communicator
+# - metis-support         : METIS partitioning
+# - fast-hash             : AHash maps/sets in hot paths
+# - deterministic-order   : BTree maps/sets for reproducible iteration
+# - wgpu                  : GPU storage backend for Section (requires V: Pod + Zeroable)
 ```
 
-## 3. Core Topology: Sieves
-
-### 3.1. The `Sieve` Trait
-
-**Basic incidence operations**
-
-* `cone(p) -> Iterator<Item=(Point, Payload)>`
-* `support(p) -> Iterator<Item=(Point, Payload)>`
-* `add_arrow(src, dst, payload)`
-* `remove_arrow(src, dst) -> Option<Payload>`
-
-**Point-only adapters (preferred in hot paths)**
-
-* `cone_points(p) -> Iterator<Item=Point>`
-* `support_points(p) -> Iterator<Item=Point>`
-
-Most algorithms should use the point-only adapters to avoid cloning payloads.
-
-```rust
-// Build triangle: face -> edges -> vertices
-sieve.add_arrow(face, e1, ());
-sieve.add_arrow(face, e2, ());
-sieve.add_arrow(e1, v1, ());
-sieve.add_arrow(e1, v2, ());
-
-// Point-only iteration
-for v in sieve.cone_points(e1) {
-    // v1, v2
-}
-```
-
-**Point iteration**
-
-* `base_points()`, `cap_points()`, `points()`
-
-**Traversal methods**
-
-* Boxed, compatibility layer:
-
-  * `closure(seeds)`, `star(seeds)`, `closure_both(seeds)`
-* Concrete, zero dyn-dispatch:
-
-  * `closure_iter(seeds)`, `star_iter(seeds)`, `closure_both_iter(seeds)`
-
-```rust
-// Prefer concrete iterators in performance-sensitive code:
-let reach: Vec<_> = sieve.closure_iter([p]).collect();
-```
-
-**Lattice operations (minimal semantics)**
-
-* `meet(a, b)`: minimal shared sub-entities in `closure(a) ∩ closure(b)`
-* `join(a, b)`: minimal cofaces from `star(a) ∪ star(b)`
-
-Both return sorted & deduplicated minimal sets (no element contains another under the respective reachability).
-
-**Covering & updates**
-
-* `add_point(p)`, `remove_point(p)`
-* `set_cone(p, iter)`, `add_cone(p, iter)`
-* `set_support(q, iter)`, `add_support(q, iter)`
-* `restrict_base(iter)`, `restrict_cap(iter)`
-
-**Preallocation hints (new)**
-
-* `reserve_cone(p, additional)`
-* `reserve_support(q, additional)`
-
-Implementations may use these to reduce reallocations during bulk edits.
-
-### 3.2. `InMemorySieve<P, Payload>`
-
-Primary implementation storing adjacency in hash maps. Mirrors stay consistent with **degree-local** updates:
-
-* `set_cone` / `set_support` update only mirrors of the touched point
-* `add_cone` / `add_support` incrementally update both directions
-* `reserve_cone` / `reserve_support` help preallocate
+**Hello sieve**
 
 ```rust
 use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
 use mesh_sieve::topology::point::PointId;
 
-let mut s = InMemorySieve::<PointId, ()>::default();
-let a = PointId::new(1).unwrap();
-let b = PointId::new(2).unwrap();
-
-s.reserve_cone(a, 4);
-s.add_cone(a, [(b, ())]);
+let mut g = InMemorySieve::<PointId, ()>::default();
+let a = PointId::new(1)?; let b = PointId::new(2)?;
+g.add_arrow(a, b, ());
+for v in g.cone_points(a) { /* fast, no payload clones */ }
 ```
 
-## 4. Traversal & Completion
+> **Tip:** Enable `strict-invariants` in one CI lane to catch regressions early.
 
-### 4.1. Local traversals
+---
 
-* `closure_iter(seeds)` / `star_iter(seeds)` / `closure_both_iter(seeds)`
-* `closure()` / `star()` / `closure_both()` keep the legacy boxed API
+## 3. Core Topology: `Sieve`
 
-### 4.2. Distributed closures via completion (new)
+### 3.1 Trait surface (unchanged ergonomics, better invariants)
 
-Run closure across partitions by fetching missing adjacency over an **Overlap** using a **Communicator** and fusing the result locally.
+* **Incidence**
 
-* `closure_completed(sieve, seeds, overlap, comm, my_rank, policy) -> Vec<Point>`
+  * `cone(p) -> impl Iterator<Item=(Point, Payload)>`
+  * `support(p) -> ...`
+  * point-only adapters: `cone_points`, `support_points` (avoid payload clones)
 
-**Policy**
+* **Mutations**
 
-* Direction: `Cone`, `Support`, or `Both`
-* Timing: `Pre` (prefetch up to a depth) or `OnDemand` (fetch when needed)
-* Batch size for on-demand requests
+  * `add_arrow(src, dst, payload)`
+  * `remove_arrow(src, dst) -> Option<Payload>`
+  * **Preallocation**: `reserve_cone(p, additional)`, `reserve_support(q, additional)`
+
+* **Traversal**
+
+  * Concrete: `closure_iter`, `star_iter`, `closure_both_iter` (preferred)
+  * Boxed legacy: `closure`, `star`, `closure_both`
+
+* **Derived (lattice/strata)**
+
+  * `height`, `depth`, `diameter`, `height_stratum`, `depth_stratum`
+  * Caches auto-invalidate on mutation.
+
+### 3.2 `InMemorySieve`
+
+* Degree-local mirror updates
+* Uses **`FastMap/Set`** (configurable via `fast-hash`/`deterministic-order`)
+
+---
+
+## 4. Overlap (distributed sharing)
+
+An `Overlap` is a typed sieve over `OvlId = Local(PointId) | Part(usize)` with payload `Remote{ rank, remote_point: Option<PointId> }`.
+
+**Key ops**
+
+* Build structure:
+
+  * `add_link_structural_one(local, rank) -> bool`
+  * `add_links_structural_bulk(iter) -> usize` (dedupes, pre-reserves)
+* Resolve mappings:
+
+  * `resolve_remote_point(local, rank, remote) -> Result<()>`
+  * `resolve_remote_points(iter) -> Result<()>`
+* Expansion from mesh:
+
+  * `ensure_closure_of_support(&mut ovl, &mesh)`
+  * `ensure_closure_of_support_from_seeds(...)`
+  * `expand_one_layer_mesh(...) -> usize`
+
+**Invariants (robust)**
+
+* Bipartite: `Local(_) -> Part(r)` only
+* Payload rank must equal `r`
+* No duplicates per `(src,dst)`
+* *(opt-in)* `check-empty-part`
+* **Strict mirror check** *(under `strict-invariants`)*:
+
+  * `adjacency_out` and `adjacency_in` must **mirror exactly** (identical payloads and counts)
+  * Clear errors: `OverlapInOutMirrorMissing`, `OverlapInOutPayloadMismatch`, `OverlapInOutEdgeCountMismatch`
+
+**Queries**
+
+* `neighbor_ranks() -> impl Iterator<Item=usize>`
+* `links_to(r) -> impl Iterator<Item=(PointId, Option<PointId>)>`
+* `links_to_resolved(r) -> impl Iterator<Item=(PointId, PointId)>`
+* Sorted variants for deterministic I/O.
+
+---
+
+## 5. Data: Atlas & Section (storage-generic)
+
+### 5.1 `Atlas` (layout only)
+
+* `try_insert(p, len) -> Result<offset>`
+* `get(p) -> Option<(offset, len)>`
+* `remove_point(p) -> Result<()>`
+  **Breaking**: returns `Err(MissingAtlasPoint(p))` if absent (no silent success).
+* `points()`, `atlas_map()`, `iter_entries()`, `version()`, `total_len()`
+* **Invariants (robust)**:
+
+  * `order` unique
+  * `map.keys == order` (validated always; not only on size mismatch)
+  * positive lengths; contiguous offsets; `total_len` matches sum
+
+### 5.2 Storage abstraction (new)
+
+`Section` is now generic over storage:
 
 ```rust
-use mesh_sieve::algs::traversal::{closure_completed, CompletionPolicy};
-use mesh_sieve::overlap::overlap::Overlap;
-use mesh_sieve::algs::communicator::NoComm; // or RayonComm/MpiComm
-
-let mut local = InMemorySieve::<PointId,()>::default();
-let overlap: Overlap = InMemorySieve::default();
-
-// ... fill local & overlap ...
-
-let comm = NoComm;
-let seeds = [PointId::new(42).unwrap()];
-let policy = CompletionPolicy::cone_ondemand();
-let global_reach = closure_completed(&mut local, seeds, &overlap, &comm, 0, policy);
-```
-
-## 5. Strata & Derived Data
-
-`StrataCache` stores computed topological information:
-
-* **Heights:** distance from sources (downward)
-* **Depths:** distance to sinks (upward)
-* **Strata layers:** points grouped by height
-* **Diameter:** maximum height
-
-**Queries on `Sieve`**
-
-* `height(p) -> Result<u32, MeshSieveError>`
-* `depth(p) -> Result<u32, MeshSieveError>`
-* `diameter() -> Result<u32, MeshSieveError>`
-* `height_stratum(k) -> Iterator<Point>`
-* `depth_stratum(k) -> Iterator<Point>`
-
-Caches invalidate on mutation and recompute lazily.
-
-## 6. Stacks: Vertical Composition
-
-The `Stack` trait models vertical relationships between "base" and "cap" sieves.
-
-```rust
-use mesh_sieve::topology::stack::InMemoryStack;
-use mesh_sieve::topology::point::PointId;
-
-let mut stack = InMemoryStack::new();
-let base = PointId::new(1).unwrap();
-let cap1 = PointId::new(10).unwrap();
-
-stack.add_arrow(base, cap1, ());
-for (cap, _) in stack.lift(base) {
-    println!("{} ↑ {}", base.get(), cap.get());
-}
-```
-
-Key methods: `lift`, `drop`, `add_arrow`, `base()`, `cap()`.
-Composed stacks enable multi-level hierarchies.
-
-## 7. Field Data: Atlas & Section
-
-**Atlas** declares layout (sparse, per-point lengths).
-**Section<V>** stores values over an Atlas.
-
-```rust
-use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::section::Section;
-use mesh_sieve::topology::point::PointId;
+use mesh_sieve::data::slice_storage::{SliceStorage, VecStorage};
 
-let p = PointId::new(1).unwrap();
-let mut atlas = Atlas::default();
-atlas.try_insert(p, 3).unwrap();
+// Default (CPU)
+let atlas = /* ... */;
+let mut sec = Section::<f64, VecStorage<f64>>::new(atlas);
 
-let mut sec = Section::<f64>::new(atlas);
-sec.try_set(p, &[1.0,2.0,3.0]).unwrap();
-
-let vals = sec.try_restrict(p).unwrap(); // &[f64]
+// Storage-agnostic API uses SliceStorage under the hood
 ```
 
-All accessors are error-safe (`Result<..>`). Deprecated `restrict/set/insert` variants exist for compatibility.
+**Storage trait (essentials)**
 
-**Delta<V>** defines how to restrict/fuse values during exchange.
-Built-ins: `CopyDelta` (clone/overwrite), others may be provided for additive/assembly semantics.
+* `ptr/range access` by atlas spans
+* `clone_from_slice`/`copy` semantics
+* `apply_delta` over (src\_span → dst\_span) without UB, handling overlap safely
+* `scatter_from` slices by `(offset,len)` plan
+* (wgpu backend handles staging & compute; see §7)
 
-## 8. Partitioning & METIS Integration
+### 5.3 `Section<V, S: SliceStorage<V>>`
 
-With `metis-support`, you can build a dual graph and run METIS to partition cells.
-Use `distribute_mesh` (with a `Communicator`) to construct the local submesh and its `Overlap`.
+* Construct:
+
+  * `new(atlas)` (fills with `V::default()`)
+* Access:
+
+  * `try_restrict(p) -> Result<&[V]>`
+  * `try_restrict_mut(p) -> Result<&mut [V]>`
+  * `try_set(p, &[V]) -> Result<()>`
+  * Iteration helpers (`iter`, `for_each_in_order`, etc.)
+* Mutation of layout:
+
+  * `try_add_point(p, len) -> Result<()>`
+  * `try_remove_point(p) -> Result<()>`
+  * `with_atlas_mut(|atlas| { ... }) -> Result<()>`
+    **Breaking & robust**: **rejects any length change** for existing points.
+  * `with_atlas_mut_resize(|atlas| { ... }, policy) -> Result<()>`
+    *(new, recommended when you must change lengths)*
+    Policies like:
+
+    * `PreservePrefix`
+    * `PreserveSuffix`
+    * `Reinit` (fill new/changed extents with `V::default()`)
+* Deltas (slice→slice):
+
+  * `try_apply_delta_between_points<D: SliceDelta<V>>(src, dst, &delta)`
+    Safe for **overlap & disjoint**; pre-checks lengths and atlas/data invariants (gated by strict).
+* Scatter:
+
+  * `try_scatter_in_order(buf)` (atlas order)
+  * `try_scatter_from(buf, &spans)` (explicit spans)
+  * `try_scatter_with_plan(buf, &ScatterPlan)`
+    **Stable contract**: fails with `AtlasPlanStale` if `atlas_version` diverges.
+  * **Fast-path** (automatic): if `buf.len() == data.len()` and spans are `[ (0,l0), (l0,l1), ... ]`, we do a single `clone_from_slice`.
+
+> **Migration (breaking)**
+> Panicking shims (`insert`, `restrict`, `restrict_mut`, `set`) are removed (or deprecated behind feature gates until the next major). Use `try_*`.
+
+### 5.4 `SliceDelta` vs `ValueDelta` (clear semantics)
+
+* `SliceDelta<V>`: transforms **one slice to another** (e.g., `Polarity::Reverse`) — used by refine and intra-section copy.
+* `overlap::ValueDelta<V>`: **communication/merge** semantics for exchange, e.g., `CopyDelta`, `AddDelta`, `ZeroDelta`.
 
 ```rust
-#[cfg(feature = "mpi-support")]
+use mesh_sieve::data::refine::delta::SliceDelta;
+use mesh_sieve::overlap::delta::ValueDelta as OverlapDelta;
+```
+
+**Naming**
+`Orientation` has been renamed to **`Polarity`**; `Delta` alias remains deprecated.
+
+---
+
+## 6. Bundles (topology + data workflow)
+
+```rust
+use mesh_sieve::data::bundle::{Bundle, AverageReducer};
+use mesh_sieve::topology::stack::InMemoryStack;
+use mesh_sieve::topology::arrow::Polarity;
+
+let mut b: Bundle<f64> = Bundle {
+    stack: InMemoryStack::new(),
+    section: /* Section<V, S> */,
+    delta: mesh_sieve::overlap::delta::CopyDelta,
+};
+```
+
+* **Refine (base→cap)**
+  `bundle.refine(bases) -> Result<()>`
+  Streams through `stack.lift(base)` and applies `Polarity` as a `SliceDelta`. No per-base heap allocations.
+
+* **Assemble (cap→base)**
+  `bundle.assemble_with(bases, &AverageReducer) -> Result<()>`
+  **Robust fix**: length validation happens **in the caller** so reducer can stay context-free (no fake `PointId`). Uses a streaming pattern (no `Vec` per base).
+
+---
+
+## 7. GPU storage (feature `wgpu`)
+
+* `Section<V, WgpuStorage<V>>` where `V: bytemuck::Pod + bytemuck::Zeroable`.
+* `apply_delta` routing:
+
+  * `Polarity::Forward` → `copy_buffer_to_buffer`
+  * `Polarity::Reverse` → a tiny **compute shader** (`reverse_copy.wgsl`) or a dedicated “reverse copy” kernel
+  * Custom `SliceDelta` implementations can be dispatched via small compute pipelines.
+* `scatter_with_plan`:
+
+  * Uses atlas `version()` + `ScatterPlan` for **command stream validation**; we refuse if versions diverge.
+* Data ingress/egress via staging buffers or mapped ranges.
+* Keep **host and device** consistency by rebuilding when the atlas changes (and check `plan.atlas_version`).
+
+> **Best practice**
+> Gate GPU-safe bounds on `V` only when `wgpu` is enabled; CPU `VecStorage` works with any `V: Clone + Default`.
+
+---
+
+## 8. Optional adapter: `Map` & infallible helpers (feature `map-adapter`)
+
+* The old `Map<V>` trait and helpers like `restrict_closure` / `restrict_star` are **gated**:
+
+  ```rust
+  #[cfg(feature = "map-adapter")]
+  use mesh_sieve::data::section::Map;
+
+  // Infallible helpers (panic on missing data) are also gated
+  #[cfg(feature = "map-adapter")]
+  use mesh_sieve::data::refine::helpers::restrict_closure;
+  ```
+* Preferred path (always on): `FallibleMap<V>` and `try_*` helpers.
+
+---
+
+## 9. Error Model (clear & precise)
+
+All public ops return `Result<_, MeshSieveError>`. Notable variants:
+
+* **Atlas/Section/Scatter**
+
+  * `ZeroLengthSlice`, `DuplicatePoint(PointId)`, `MissingAtlasPoint(PointId)`
+  * `ScatterLengthMismatch { expected, found }`
+  * `ScatterChunkMismatch { offset, len }`
+  * `SliceLengthMismatch { point, expected, found }`
+  * `AtlasPlanStale { expected, found }`
+  * `AtlasPointLengthChanged { point, old_len, new_len }` *(new; used by `with_atlas_mut` strict rule)*
+* **Overlap**
+
+  * `OverlapNonBipartite { src, dst }`
+  * `OverlapRankMismatch { expected, found }`
+  * `OverlapDuplicateEdge { src, dst }`
+  * `OverlapEmptyPart { rank }` *(opt-in feature)*
+  * **Strict mirror checks**:
+
+    * `OverlapInOutMirrorMissing { src, dst }`
+    * `OverlapInOutPayloadMismatch { src, dst, out, inn }`
+    * `OverlapInOutEdgeCountMismatch { out_edges, in_edges }`
+* **No synthetic PointIds** anywhere (we removed `new_unchecked(1)` placeholders).
+
+---
+
+## 10. Performance Notes
+
+* `#[inline]` on hot getters: `Atlas::get`, `Section::try_restrict`, `try_restrict_mut`, overlap query adapters.
+* **Reserve** before bulk inserts: `reserve_cone`, `reserve_support`; in data rebuilds, compute `total_len_new` and reserve once.
+* **Streaming** in `Bundle::{refine, assemble_with}` → avoids per-base `Vec`.
+* **Scatter fast-path**: whole-buffer clone when contiguous.
+* Choose `fast-hash` for speed or `deterministic-order` for reproducible I/O.
+
+---
+
+## 11. Testing & CI (recommendations)
+
+* **Property tests** for Atlas/Section coherence (random insert/remove/shuffle + invariant checks + scatter/gather round-trip).
+* **Mutation tests**: `with_atlas_mut` must **error** if lengths change; verify `with_atlas_mut_resize` honors `ResizePolicy`.
+* **Delta aliasing**: overlapping/disjoint spans; first/last points; ensure no panics.
+* **Parallel determinism** (feature `rayon`): refine/assemble parity (serial vs parallel) or identical `DuplicateRefinementTarget` error.
+* **Strict invariants lane** in CI:
+
+  ```
+  cargo test --features strict-invariants
+  ```
+
+  (Keep alias `check-invariants` for a deprecation window if you still expose it.)
+
+---
+
+## 12. Migration Guide (breaking but localized)
+
+### Panicking APIs → fallible
+
+* `Atlas::insert` → `try_insert`
+* `Section::{restrict, restrict_mut, set}` → `try_restrict`, `try_restrict_mut`, `try_set`
+* Infallible helpers → `try_*` variants (or enable `map-adapter` feature temporarily)
+
+### `with_atlas_mut`
+
+* **Old**: allowed silent length changes
+* **New**: rejects length changes (`AtlasPointLengthChanged`)
+* **If you must resize**: use `with_atlas_mut_resize(|atlas| { ... }, ResizePolicy::Reinit)` (or `PreservePrefix/Suffix`) and handle the `Result`.
+
+### Reducers
+
+* Remove reliance on reducer to report correct point IDs. Do slice length checks **before** calling a reducer; keep reducers stateless.
+
+### Orientation → Polarity
+
+* Replace types/constructors accordingly.
+
+### Overlap invariants
+
+* If you had side-effects touching `adjacency_*` directly, switch to the API mutators; strict mode now checks mirrors and payload equality.
+
+---
+
+## 13. Quick Reference
+
+| Component         | Selected Methods                                                                                     |
+| ----------------- | ---------------------------------------------------------------------------------------------------- |
+| `Sieve`           | `cone(_), support(_)`, `cone_points(_), support_points(_)`, `closure_iter`, `star_iter`              |
+| `InMemorySieve`   | `reserve_cone`, `reserve_support`, degree-local updates                                              |
+| `Overlap`         | `add_link_structural_one`, `add_links_structural_bulk`, `resolve_remote_point(s)`, `neighbor_ranks`  |
+| `Atlas`           | `try_insert`, `get`, `remove_point`, `points`, `version`, `atlas_map`, invariants                    |
+| `Section<V,S>`    | `new`, `try_restrict(_), try_restrict_mut(_), try_set(_)`, `with_atlas_mut`, `with_atlas_mut_resize` |
+| `SliceDelta<V>`   | `apply(src,dst)` (e.g., `Polarity::{Forward,Reverse}`)                                               |
+| `ValueDelta<V>`   | `restrict(&V)->Part`, `fuse(&mut V, Part)` (e.g., `CopyDelta`, `AddDelta`, `ZeroDelta`)              |
+| `Bundle<V,D>`     | `refine(bases)`, `assemble_with(bases,&Reducer)`                                                     |
+| Completion (algs) | `complete_sieve`, `complete_section`, `complete_stack`, `closure_completed`                          |
+
+---
+
+## 14. Examples
+
+### Section with default CPU storage
+
+```rust
+use mesh_sieve::data::{atlas::Atlas, section::Section};
+use mesh_sieve::data::slice_storage::VecStorage;
+use mesh_sieve::topology::point::PointId;
+
+let p = PointId::new(7)?;
+let mut atlas = Atlas::default();
+atlas.try_insert(p, 3)?;
+let mut sec = Section::<f64, VecStorage<f64>>::new(atlas);
+sec.try_set(p, &[1.0, 2.0, 3.0])?;
+let s = sec.try_restrict(p)?; // &[f64]
+```
+
+### Safe layout changes
+
+```rust
+// Reject length changes for existing points (strict)
+let res = sec.with_atlas_mut(|a| {
+    // a.try_insert(existing_p, new_len)  // would imply length change → reject at end
+});
+assert!(res.is_err());
+
+// Explicit resize with policy
+use mesh_sieve::data::storage::ResizePolicy;
+sec.with_atlas_mut_resize(|a| {
+    // add/remove points or change lengths
+}, ResizePolicy::PreservePrefix)?;
+```
+
+### GPU storage (feature `wgpu`)
+
+```rust
+#[cfg(feature = "wgpu")]
 {
-    use mesh_sieve::algs::distribute::distribute_mesh;
-    let (local, overlap) = distribute_mesh(&global, &partition, &comm).unwrap();
+    use mesh_sieve::data::{atlas::Atlas, section::Section};
+    use mesh_sieve::data::wgpu::WgpuStorage;
+
+    let atlas = /* ... */;
+    let storage = WgpuStorage::<f32>::new(device, &atlas)?;
+    let mut sec = Section::<f32, WgpuStorage<f32>>::from_storage(atlas, storage);
+
+    // Scatter with plan (version-checked)
+    let plan = sec.atlas().build_scatter_plan();
+    sec.try_scatter_with_plan(&host_buffer, &plan)?;
 }
 ```
 
-## 9. Parallel Computing
+---
 
-### 9.1. Communicators
+### Final Notes
 
-`Communicator` abstracts non-blocking send/recv:
-
-* **NoComm**: serial/testing
-* **RayonComm**: in-process “ranks” (threads)
-* **MpiComm** *(feature `mpi-support`)*: real MPI
-
-```rust
-use mesh_sieve::algs::communicator::{Communicator, NoComm};
-
-let comm = NoComm;
-let send = comm.isend(0, 0xCAFE, &[1,2,3,4]);
-let mut buf = [0u8; 4];
-let recv = comm.irecv(0, 0xCAFE, &mut buf);
-
-let _ = send.wait();
-let got = recv.wait().unwrap();
-```
-
-### 9.2. Overlap
-
-An `Overlap` is a `Sieve<PointId, Remote>` describing sharing:
-`local_point ──(Remote{rank, remote_point: Option<PointId>})──▶ partition_point(rank)`
-
-```rust
-use mesh_sieve::overlap::overlap::{Overlap, Remote};
-let mut ovlp = Overlap::default();
-ovlp.add_arrow(local_p, remote_partition_pt, Remote { rank: nbr, remote_point: Some(remote_p) });
-```
-
-### 9.3. Completion Algorithms
-
-* **Sieve completion (topology):**
-
-  * `complete_sieve(&mut overlap, &overlap_clone, &comm, my_rank)`
-  * `complete_sieve_until_converged(..)`
-  * Preserves `Remote { rank, remote_point: Some(id) }` exactly.
-
-* **Section completion (data):**
-
-  * `neighbour_links(&section, &overlap, my_rank) -> map<rank, (send_loc, recv_loc)>`
-  * `exchange_sizes_symmetric(..)` then `exchange_data_symmetric::<V, D, _>(..)`
-  * `complete_section::<V, D, _>(&mut section, &mut overlap, &comm, &delta, my_rank, n_ranks)`
-
-* **Stack completion (vertical):**
-
-  * `complete_stack(&mut stack, &overlap, &comm, my_rank, n_ranks)`
-
-All routines use symmetric handshakes and return `Result<(), MeshSieveError>`.
-
-## 10. Adjacency & Lattice Helpers
-
-**Neighbor queries**
-
-* `adjacent(&mut sieve, p) -> Vec<Point>`: cell-to-cell by shared face
-* `adjacent_with(&mut sieve, p, policy)`: select composition policy (e.g., face-to-volume)
-
-**Meet/Join minimality**
-Results are sorted, deduped, and minimal/maximal as appropriate.
-
-## 11. Error Handling & Best Practices
-
-* All fallible operations return `Result<T, MeshSieveError>`.
-* Traversals use point-only adapters to avoid payload cloning.
-* Mutations are **degree-local**; call `reserve_cone`/`reserve_support` before bulk edits.
-* For large traversals, prefer concrete iterators (`*_iter`) over boxed variants.
-* For distributed runs, keep tag ranges distinct per algorithm (e.g., sieve/section/closure).
-
-## 12. Examples & Testing
-
-**Run examples**
-
-```bash
-# Serial
-cargo run --example partition
-
-# MPI (requires feature)
-cargo mpirun -n 4 --features mpi-support --example mpi_complete
-```
-
-**Key examples**
-
-* `mpi_complete.rs`: section completion across ranks
-* `mpi_complete_stack.rs`: stack completion
-* `distribute_mpi.rs`: mesh distribution
-* `closure_completed.rs`: distributed closures via completion
-
-**Testing**
-Unit tests cover topology, traversal parity (boxed vs. concrete), degree-local updates, completion handshakes, and error propagation.
-
-## 13. API Reference (At a Glance)
-
-| Component      | Key Methods                                                                 | Purpose                   |
-| -------------- | --------------------------------------------------------------------------- | ------------------------- |
-| `Sieve`        | `cone(_), support(_)`, `cone_points(_), support_points(_)`, `*_iter`        | Mesh topology & traversal |
-| `Stack`        | `lift(_), drop(_)`                                                          | Vertical composition      |
-| `Atlas`        | `try_insert, get`                                                           | Layout                    |
-| `Section<V>`   | `try_restrict(_), try_restrict_mut(_), try_set(_)`                          | Field data                |
-| `Delta<V>`     | `restrict, fuse`                                                            | Exchange semantics        |
-| `Communicator` | `isend, irecv, rank, size, barrier`                                         | Parallel comms            |
-| Completion     | `complete_sieve`, `complete_section`, `complete_stack`, `closure_completed` | Sync topology & data      |
-
-**Common signatures**
-
-```rust
-fn cone_points(&self, p: PointId) -> impl Iterator<Item=PointId>;
-fn closure_iter<'a,I>(&'a self, seeds: I) -> impl Iterator<Item=PointId>
-  where I: IntoIterator<Item=PointId>;
-
-fn height(&mut self, p: PointId) -> Result<u32, MeshSieveError>;
-fn complete_section<V,D,C>(section: &mut Section<V>, overlap: &mut Overlap, comm: &C,
-                           delta: &D, my_rank: usize, n_ranks: usize) -> Result<(), MeshSieveError>;
-
-fn closure_completed<S,C,I>(sieve: &mut S, seeds: I, overlap: &Overlap, comm: &C,
-                            my_rank: usize, policy: CompletionPolicy) -> Vec<PointId>
-  where S: Sieve<Point=PointId>;
-```
+* Prefer **fallible** APIs (`try_*`) throughout.
+* Turn on `strict-invariants` in CI to catch mirror/layout issues.
+* Use storage abstraction to keep your code **backend-agnostic** (CPU today, GPU tomorrow).
+* Keep reducers simple; do shape checks at call sites for better errors and easier testing.
