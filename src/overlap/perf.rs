@@ -1,3 +1,6 @@
+// Iteration order of these aliases is **not** relied upon for determinism; all
+// public mutation paths sort their inputs before insertion.
+
 #[cfg(all(feature = "fast-hash", not(feature = "deterministic-order")))]
 pub type FastSet<T> = ahash::AHashSet<T>;
 
