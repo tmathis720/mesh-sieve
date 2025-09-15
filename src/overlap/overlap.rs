@@ -26,7 +26,7 @@
 //!
 //! ## Typical lifecycle
 //! 1. Seed structure: for each shared local mesh point `p`, call
-//!    [`Overlap::add_link_structural_one`].
+//!    [`Overlap::try_add_link_structural_one`].
 //! 2. Complete structure: call [`ensure_closure_of_support`] with the mesh.
 //! 3. Discover mapping via neighbor exchange (e.g., global IDs).
 //! 4. Resolve: call [`Overlap::resolve_remote_point`] (or the batch variant)
@@ -140,31 +140,35 @@ impl Overlap {
         part(rank)
     }
 
-    /// Add a typed link: `Local(p) -> Part(r)` with known `remote` ID.
+    /// Try to add a typed link `Local(p) -> Part(r)` with known `remote` ID.
     ///
-    /// This is the primary constructor for edges when the remote mapping is
-    /// already known. For structure-only insertion, use
-    /// [`add_link_structural_one`].
-    pub fn add_link(&mut self, p: PointId, r: usize, remote: PointId) {
-        self.add_arrow(
-            local(p),
-            part(r),
-            Remote {
-                rank: r,
-                remote_point: Some(remote),
-            },
-        );
-        self.debug_validate();
+    /// Structure is inserted if missing, and the remote point is resolved.
+    /// Idempotent for the same remote ID; conflicting resolutions error.
+    pub fn try_add_link(
+        &mut self,
+        p: PointId,
+        r: usize,
+        remote: PointId,
+    ) -> Result<(), MeshSieveError> {
+        // Ensure structural edge exists
+        let _ = self.try_add_structural_edge(p, r)?;
+        // Resolve / confirm remote ID
+        self.resolve_remote_point(p, r, remote)?;
+        Ok(())
     }
 
-    #[inline]
-    fn has_structural_link(&self, p: PointId, r: usize) -> bool {
-        let src = local(p);
-        let dst = part(r);
-        self.inner
-            .adjacency_out
-            .get(&src)
-            .is_some_and(|v| v.iter().any(|(q, _)| *q == dst))
+    /// Back-compat infallible wrapper. Panics in debug/strict mode on error.
+    #[deprecated(note = "Use try_add_link; will be removed in a future major")]
+    pub fn add_link(&mut self, p: PointId, r: usize, remote: PointId) {
+        if let Err(e) = self.try_add_link(p, r, remote) {
+            #[cfg(any(
+                debug_assertions,
+                feature = "strict-invariants",
+                feature = "check-invariants",
+            ))]
+            panic!("add_link({p:?},{r},{remote:?}) failed: {e}");
+        }
+        self.debug_validate();
     }
 
     #[inline]
@@ -187,24 +191,29 @@ impl Overlap {
             })
     }
 
-    /// Adds `Local(p) -> Part(r)` structurally (`remote_point = None`).
-    ///
-    /// Returns `true` if the edge was inserted, or `false` if it already
-    /// existed.
-    #[inline]
-    pub fn add_link_structural_one(&mut self, p: PointId, r: usize) -> bool {
-        if self.has_structural_link(p, r) {
-            return false;
-        }
-
+    /// Try to insert `Local(p) -> Part(r)` structurally (`remote_point = None`).
+    /// Returns `Ok(true)` if inserted, `Ok(false)` if it already existed.
+    fn try_add_structural_edge(
+        &mut self,
+        p: PointId,
+        r: usize,
+    ) -> Result<bool, MeshSieveError> {
         let src = local(p);
         let dst = part(r);
 
-        // Ensure maps exist & pre-reserve one slot to avoid immediate growth
+        // Duplicate?
+        let exists = self
+            .inner
+            .adjacency_out
+            .get(&src)
+            .is_some_and(|outs| outs.iter().any(|(q, _)| *q == dst));
+        if exists {
+            return Ok(false);
+        }
+
+        // Reserve and insert
         self.inner.reserve_cone(src, 1);
         self.inner.reserve_support(dst, 1);
-
-        // Invariant: Local -> Part, payload.rank == r
         self.inner.add_arrow(
             src,
             dst,
@@ -213,16 +222,55 @@ impl Overlap {
                 remote_point: None,
             },
         );
+
+        #[cfg(any(
+            debug_assertions,
+            feature = "strict-invariants",
+            feature = "check-invariants",
+        ))]
         self.debug_validate();
-        true
+
+        Ok(true)
     }
 
-    /// Insert many structural edges; returns the number of new edges inserted.
-    ///
-    /// Dedupe both against existing edges and duplicates within the batch.
-    /// Pre-reserves capacity for all affected cones and supports and invalidates
-    /// caches once at the end.
-    pub fn add_links_structural_bulk<I>(&mut self, edges: I) -> usize
+    /// Fallible structural insert. Returns `Ok(true)` if inserted, `Ok(false)` if duplicate.
+    pub fn try_add_link_structural_one(
+        &mut self,
+        p: PointId,
+        r: usize,
+    ) -> Result<bool, MeshSieveError> {
+        self.try_add_structural_edge(p, r)
+    }
+
+    /// Existing infallible API (deprecated). Internally uses the fallible path.
+    #[deprecated(note = "Use try_add_link_structural_one; will be removed in a future major")]
+    pub fn add_link_structural_one(&mut self, p: PointId, r: usize) -> bool {
+        match self.try_add_structural_edge(p, r) {
+            Ok(inserted) => inserted,
+            Err(e) => {
+                #[cfg(any(
+                    debug_assertions,
+                    feature = "strict-invariants",
+                    feature = "check-invariants",
+                ))]
+                panic!("add_link_structural_one({p:?},{r}) failed: {e}");
+                #[cfg(not(any(
+                    debug_assertions,
+                    feature = "strict-invariants",
+                    feature = "check-invariants",
+                )))]
+                {
+                    false
+                }
+            }
+        }
+    }
+
+    /// Fallible bulk structural insert; returns number of **new** edges inserted.
+    pub fn try_add_links_structural_bulk<I>(
+        &mut self,
+        edges: I,
+    ) -> Result<usize, MeshSieveError>
     where
         I: IntoIterator<Item = (PointId, usize)>,
     {
@@ -239,7 +287,6 @@ impl Overlap {
             if !seen_batch.insert(key) {
                 continue;
             }
-
             let exists = self
                 .inner
                 .adjacency_out
@@ -255,8 +302,21 @@ impl Overlap {
         }
 
         if to_add.is_empty() {
-            return 0;
+            return Ok(0);
         }
+
+        // Deterministic order
+        to_add.sort_unstable_by_key(|(src, dst)| {
+            let p = match *src {
+                OvlId::Local(p) => p,
+                _ => unreachable!(),
+            };
+            let r = match *dst {
+                OvlId::Part(r) => r,
+                _ => unreachable!(),
+            };
+            (p, r)
+        });
 
         for (src, k) in need_cone {
             self.inner.reserve_cone(src, k);
@@ -283,7 +343,34 @@ impl Overlap {
         self.invalidate_cache();
         self.debug_validate();
 
-        to_add.len()
+        Ok(to_add.len())
+    }
+
+    /// Deprecated infallible bulk wrapper.
+    #[deprecated(note = "Use try_add_links_structural_bulk")]
+    pub fn add_links_structural_bulk<I>(&mut self, edges: I) -> usize
+    where
+        I: IntoIterator<Item = (PointId, usize)>,
+    {
+        match self.try_add_links_structural_bulk(edges) {
+            Ok(n) => n,
+            Err(e) => {
+                #[cfg(any(
+                    debug_assertions,
+                    feature = "strict-invariants",
+                    feature = "check-invariants",
+                ))]
+                panic!("add_links_structural_bulk failed: {e}");
+                #[cfg(not(any(
+                    debug_assertions,
+                    feature = "strict-invariants",
+                    feature = "check-invariants",
+                )))]
+                {
+                    0
+                }
+            }
+        }
     }
 
     /// Resolve the remote ID for `(Local(local) -> Part(rank))`.
@@ -543,13 +630,35 @@ impl Sieve for Overlap {
     fn add_arrow(&mut self, src: OvlId, dst: OvlId, payload: Remote) {
         match (src, dst) {
             (OvlId::Local(_), OvlId::Part(r)) => {
-                debug_assert_eq!(payload.rank, r, "payload.rank must match Part(r)");
+                #[cfg(any(
+                    debug_assertions,
+                    feature = "strict-invariants",
+                    feature = "check-invariants",
+                ))]
+                assert_eq!(
+                    payload.rank, r,
+                    "Overlap::add_arrow payload.rank {} must equal Part({})",
+                    payload.rank, r
+                );
                 if payload.rank != r {
                     return;
                 }
             }
             _ => {
-                return;
+                #[cfg(any(
+                    debug_assertions,
+                    feature = "strict-invariants",
+                    feature = "check-invariants",
+                ))]
+                panic!("Overlap::add_arrow non-bipartite edge: {src:?} -> {dst:?}");
+                #[cfg(not(any(
+                    debug_assertions,
+                    feature = "strict-invariants",
+                    feature = "check-invariants",
+                )))]
+                {
+                    return;
+                }
             }
         }
         if self
@@ -635,7 +744,19 @@ pub fn expand_one_layer_mesh<M: Sieve<Point = PointId>>(
         }
     }
 
-    let added = ov.add_links_structural_bulk(to_add.into_iter().map(|q| (q, neighbor)));
+    let res = ov.try_add_links_structural_bulk(to_add.into_iter().map(|q| (q, neighbor)));
+    #[cfg(any(
+        debug_assertions,
+        feature = "strict-invariants",
+        feature = "check-invariants",
+    ))]
+    let added = res.expect("expand_one_layer_mesh failed");
+    #[cfg(not(any(
+        debug_assertions,
+        feature = "strict-invariants",
+        feature = "check-invariants",
+    )))]
+    let added = res.unwrap_or(0);
     ov.debug_validate();
     added
 }
@@ -659,7 +780,13 @@ pub fn ensure_closure_of_support<M: Sieve<Point = PointId>>(ov: &mut Overlap, me
         }
     }
 
-    ov.add_links_structural_bulk(new_edges);
+    let res = ov.try_add_links_structural_bulk(new_edges);
+    #[cfg(any(
+        debug_assertions,
+        feature = "strict-invariants",
+        feature = "check-invariants",
+    ))]
+    res.expect("ensure_closure_of_support failed");
     ov.debug_validate();
 }
 
@@ -688,7 +815,13 @@ pub fn ensure_closure_of_support_from_seeds<M: Sieve<Point = PointId>, I>(
         }
     }
 
-    ov.add_links_structural_bulk(new_edges);
+    let res = ov.try_add_links_structural_bulk(new_edges);
+    #[cfg(any(
+        debug_assertions,
+        feature = "strict-invariants",
+        feature = "check-invariants",
+    ))]
+    res.expect("ensure_closure_of_support_from_seeds failed");
     ov.debug_validate();
 }
 
@@ -741,12 +874,12 @@ mod tests {
     }
 
     #[test]
-    fn structural_dedup_single() {
+    fn try_structural_dedup_single() {
         let mut ov = Overlap::new();
         let p = PointId::new(1).unwrap();
         let r = 1usize;
-        assert!(ov.add_link_structural_one(p, r));
-        assert!(!ov.add_link_structural_one(p, r));
+        assert_eq!(ov.try_add_link_structural_one(p, r).unwrap(), true);
+        assert_eq!(ov.try_add_link_structural_one(p, r).unwrap(), false);
         assert_eq!(ov.links_to(r).count(), 1);
         ov.validate_invariants().unwrap();
     }
@@ -757,18 +890,41 @@ mod tests {
         let p1 = PointId::new(1).unwrap();
         let p2 = PointId::new(2).unwrap();
         let r = 3usize;
-        let added = ov.add_links_structural_bulk(vec![(p1, r), (p1, r), (p2, r)]);
+        let added = ov
+            .try_add_links_structural_bulk(vec![(p1, r), (p1, r), (p2, r)])
+            .unwrap();
         assert_eq!(added, 2);
-        let added2 = ov.add_links_structural_bulk(vec![(p1, r), (p2, r)]);
+        let added2 = ov
+            .try_add_links_structural_bulk(vec![(p1, r), (p2, r)])
+            .unwrap();
         assert_eq!(added2, 0);
+        let order: Vec<_> = ov.links_to_sorted(r).into_iter().map(|(p, _)| p).collect();
+        assert_eq!(order, vec![p1, p2]);
         ov.validate_invariants().unwrap();
+    }
+
+    #[test]
+    fn try_add_link_idempotent_and_conflict() {
+        let mut ov = Overlap::new();
+        let p = PointId::new(1).unwrap();
+        let r = 1usize;
+        assert_eq!(ov.try_add_link_structural_one(p, r).unwrap(), true);
+        ov.try_add_link(p, r, PointId::new(10).unwrap()).unwrap();
+        ov.try_add_link(p, r, PointId::new(10).unwrap()).unwrap();
+        let err = ov
+            .try_add_link(p, r, PointId::new(11).unwrap())
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            MeshSieveError::OverlapResolutionConflict { .. }
+        ));
     }
 
     #[test]
     fn structural_then_resolve() {
         let mut ov = Overlap::new();
         let p = PointId::new(1).unwrap();
-        ov.add_link_structural_one(p, 1);
+        ov.try_add_link_structural_one(p, 1).unwrap();
         let v_unresolved: Vec<_> = ov.links_to(1).collect();
         assert_eq!(v_unresolved, vec![(p, None)]);
         assert!(ov.links_to_resolved(1).next().is_none());
@@ -783,7 +939,7 @@ mod tests {
     fn resolve_idempotent_and_conflict() {
         let mut ov = Overlap::new();
         let p = PointId::new(1).unwrap();
-        ov.add_link_structural_one(p, 1);
+        ov.try_add_link_structural_one(p, 1).unwrap();
         ov.resolve_remote_point(p, 1, PointId::new(10).unwrap())
             .unwrap();
         // Idempotent
@@ -828,7 +984,7 @@ mod tests {
         mesh.add_arrow(f1, v3, ());
 
         let mut ov = Overlap::new();
-        ov.add_link_structural_one(cell, 7);
+        ov.try_add_link_structural_one(cell, 7).unwrap();
         ensure_closure_of_support(&mut ov, &mesh);
 
         let links: Vec<_> = ov.links_to(7).collect();
@@ -843,7 +999,8 @@ mod tests {
         let mut mesh = Mesh::<PointId, ()>::default();
         mesh.add_arrow(PointId::new(1).unwrap(), PointId::new(2).unwrap(), ());
         let mut ov = Overlap::new();
-        ov.add_link_structural_one(PointId::new(1).unwrap(), 7);
+        ov.try_add_link_structural_one(PointId::new(1).unwrap(), 7)
+            .unwrap();
         ensure_closure_of_support(&mut ov, &mesh);
         let count = ov.links_to(7).count();
         ensure_closure_of_support(&mut ov, &mesh);
@@ -855,8 +1012,10 @@ mod tests {
         let mut mesh = Mesh::<PointId, ()>::default();
         mesh.add_arrow(PointId::new(1).unwrap(), PointId::new(2).unwrap(), ());
         let mut ov = Overlap::new();
-        ov.add_link_structural_one(PointId::new(1).unwrap(), 1);
-        ov.add_link_structural_one(PointId::new(1).unwrap(), 2);
+        ov.try_add_link_structural_one(PointId::new(1).unwrap(), 1)
+            .unwrap();
+        ov.try_add_link_structural_one(PointId::new(1).unwrap(), 2)
+            .unwrap();
         ensure_closure_of_support(&mut ov, &mesh);
 
         let set1: std::collections::HashSet<_> = ov.links_to(1).collect();
@@ -893,8 +1052,10 @@ mod tests {
         let r = 9usize;
 
         let mut ov = Overlap::new();
-        ov.add_link_structural_one(PointId::new(1).unwrap(), r);
-        ov.add_link_structural_one(PointId::new(3).unwrap(), r);
+        ov.try_add_link_structural_one(PointId::new(1).unwrap(), r)
+            .unwrap();
+        ov.try_add_link_structural_one(PointId::new(3).unwrap(), r)
+            .unwrap();
 
         ensure_closure_of_support_from_seeds(&mut ov, &mesh, [(PointId::new(1).unwrap(), r)]);
         let links: std::collections::HashSet<_> = ov.links_to(r).collect();
@@ -957,9 +1118,12 @@ mod tests {
     fn links_sorted_deterministic() {
         let mut ov = Overlap::new();
         // insert out of order
-        ov.add_link(PointId::new(3).unwrap(), 1, PointId::new(103).unwrap());
-        ov.add_link(PointId::new(1).unwrap(), 1, PointId::new(101).unwrap());
-        ov.add_link(PointId::new(2).unwrap(), 1, PointId::new(102).unwrap());
+        ov.try_add_link(PointId::new(3).unwrap(), 1, PointId::new(103).unwrap())
+            .unwrap();
+        ov.try_add_link(PointId::new(1).unwrap(), 1, PointId::new(101).unwrap())
+            .unwrap();
+        ov.try_add_link(PointId::new(2).unwrap(), 1, PointId::new(102).unwrap())
+            .unwrap();
 
         let sorted = ov.links_to_sorted(1);
         let order: Vec<_> = sorted.iter().map(|(p, _)| *p).collect();
@@ -1051,7 +1215,61 @@ mod tests {
     #[test]
     fn invariant_happy_path() {
         let mut ov = Overlap::new();
-        ov.add_link_structural_one(PointId::new(1).unwrap(), 2);
+        ov.try_add_link_structural_one(PointId::new(1).unwrap(), 2)
+            .unwrap();
         assert!(ov.validate_invariants().is_ok());
+    }
+
+    #[test]
+    #[should_panic]
+    fn trait_add_arrow_non_bipartite_panics() {
+        let mut ov = Overlap::new();
+        let src = local(PointId::new(1).unwrap());
+        let dst = local(PointId::new(2).unwrap());
+        ov.add_arrow(
+            src,
+            dst,
+            Remote {
+                rank: 0,
+                remote_point: None,
+            },
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn trait_add_arrow_rank_mismatch_panics() {
+        let mut ov = Overlap::new();
+        let src = local(PointId::new(1).unwrap());
+        let dst = part(1);
+        ov.add_arrow(
+            src,
+            dst,
+            Remote {
+                rank: 2,
+                remote_point: None,
+            },
+        );
+    }
+
+    #[cfg(not(any(
+        debug_assertions,
+        feature = "strict-invariants",
+        feature = "check-invariants",
+    )))]
+    #[test]
+    fn trait_add_arrow_invalid_noop_release() {
+        let mut ov = Overlap::new();
+        let src = local(PointId::new(1).unwrap());
+        let dst = local(PointId::new(2).unwrap());
+        ov.add_arrow(
+            src,
+            dst,
+            Remote {
+                rank: 0,
+                remote_point: None,
+            },
+        );
+        assert!(ov.inner.adjacency_out.is_empty());
     }
 }
