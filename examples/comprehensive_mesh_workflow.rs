@@ -107,7 +107,15 @@ fn main() {
     #[cfg(feature = "mpi-support")]
     {
         if !cells.is_empty() {
-            test_distributed_completion(&global_mesh, &partition_map, &comm, rank, size);
+            // Build a full point→owner vector from the cell partition
+            test_distributed_completion(
+                &global_mesh,
+                &cells,
+                &partition_map,
+                &comm,
+                rank,
+                size,
+            );
         }
     }
 
@@ -464,7 +472,8 @@ fn test_metis_partitioning(
 #[cfg(feature = "mpi-support")]
 fn test_distributed_completion(
     global_mesh: &InMemorySieve<PointId, ()>,
-    partition: &[usize],
+    cells: &[PointId],
+    cell_partition: &[usize],
     comm: &MpiComm,
     rank: usize,
     size: usize,
@@ -475,8 +484,21 @@ fn test_distributed_completion(
 
     println!("[rank {}] Testing distributed completion...", rank);
 
+    // Build a complete point→owner vector expected by distribute_mesh
+    let mut max_id = 0u64;
+    for p in global_mesh.points() {
+        max_id = max_id.max(p.get());
+    }
+    let mut parts = vec![0usize; max_id as usize];
+    for (i, &cell) in cells.iter().enumerate() {
+        if let Some(&owner) = cell_partition.get(i) {
+            let idx = (cell.get() - 1) as usize;
+            parts[idx] = owner % size;
+        }
+    }
+
     // Distribute the mesh
-    if let Ok((local_mesh, mut overlap)) = distribute_mesh(global_mesh, partition, comm) {
+    if let Ok((local_mesh, mut overlap)) = distribute_mesh(global_mesh, &parts, comm) {
         println!(
             "[rank {}] Received local mesh with {} points",
             rank,
@@ -544,6 +566,10 @@ fn test_bundle_operations(rank: usize) {
     section.try_set(base1, &[1.0, 2.0]).unwrap();
 
     let mut stack = InMemoryStack::<PointId, PointId, Polarity>::new();
+    // Ensure points exist in the stack before adding arrows (required by API invariants)
+    MutableSieve::add_base_point(stack.base_mut().unwrap(), base1);
+    MutableSieve::add_cap_point(stack.cap_mut().unwrap(), cap1);
+    MutableSieve::add_cap_point(stack.cap_mut().unwrap(), cap2);
     let _ = stack.add_arrow(base1, cap1, Polarity::Forward);
     let _ = stack.add_arrow(base1, cap2, Polarity::Reverse);
 
