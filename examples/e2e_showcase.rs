@@ -1,3 +1,6 @@
+// End-to-end showcase of Mesh Sieve features, using a tiny example mesh.
+// Run with `cargo run --example e2e_showcase --features=mpi-support,rayon`
+
 use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::refine::sieved_array::SievedArray;
 use mesh_sieve::data::section::Section;
@@ -154,7 +157,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             enable_phase2: true,
             enable_phase3: true,
         };
-        let pm = partition(&g, &cfg).expect("partition runs");
+        // On a 2-vertex, 1-edge graph Louvain often returns a single cluster.
+        // That can make k=2 balancing impossible (min_load=0), so fall back to
+        // disabling Phase 1 if we hit an Unbalanced error.
+        let pm = match partition(&g, &cfg) {
+            Ok(pm) => pm,
+            Err(mesh_sieve::partitioning::PartitionerError::Unbalanced { .. }) => {
+                let cfg2 = PartitionerConfig { enable_phase1: false, ..cfg };
+                println!(
+                    "[partition] Phase1 produced 1 cluster; retrying with enable_phase1=false"
+                );
+                partition(&g, &cfg2).expect("partition fallback runs")
+            }
+            Err(e) => panic!("partition runs: {:?}", e),
+        };
         // Sanity metrics
         let cut = edge_cut(&g, &pm);
         let rf_approx = replication_factor(&g, &pm);
