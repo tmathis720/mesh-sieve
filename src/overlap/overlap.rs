@@ -267,6 +267,9 @@ impl Overlap {
     }
 
     /// Fallible bulk structural insert; returns number of **new** edges inserted.
+    ///
+    /// Deterministic: edges are inserted in lexicographic order of `(PointId, rank)`
+    /// regardless of `Hash{Map,Set}` or feature-driven iteration order.
     pub fn try_add_links_structural_bulk<I>(
         &mut self,
         edges: I,
@@ -347,6 +350,9 @@ impl Overlap {
     }
 
     /// Deprecated infallible bulk wrapper.
+    ///
+    /// Deterministic: edges are inserted in lexicographic order of
+    /// `(PointId, rank)`.
     #[deprecated(note = "Use try_add_links_structural_bulk")]
     pub fn add_links_structural_bulk<I>(&mut self, edges: I) -> usize
     where
@@ -761,14 +767,17 @@ pub fn expand_one_layer_mesh<M: Sieve<Point = PointId>>(
     added
 }
 
-/// Ensure closure-of-support: for any `Local(p) -> Part(r)` edge already present,
-/// also link every `q` in `mesh.closure({p})` to `Part(r)`. New links are
-/// structural only (`remote_point = None`).
-pub fn ensure_closure_of_support<M: Sieve<Point = PointId>>(ov: &mut Overlap, mesh: &M) {
-    let mut already: FastSet<(PointId, usize)> = FastSet::default();
-    for (p, r) in ov.existing_pairs() {
-        already.insert((p, r));
-    }
+    /// Ensure closure-of-support: for any `Local(p) -> Part(r)` edge already present,
+    /// also link every `q` in `mesh.closure({p})` to `Part(r)`. New links are
+    /// structural only (`remote_point = None`).
+    ///
+    /// Collected edges are sorted before bulk insertion so the resulting
+    /// adjacency order is deterministic.
+    pub fn ensure_closure_of_support<M: Sieve<Point = PointId>>(ov: &mut Overlap, mesh: &M) {
+        let mut already: FastSet<(PointId, usize)> = FastSet::default();
+        for (p, r) in ov.existing_pairs() {
+            already.insert((p, r));
+        }
 
     let mut new_edges: FastSet<(PointId, usize)> = FastSet::default();
     for (p, r) in already.iter().copied() {
@@ -780,7 +789,9 @@ pub fn ensure_closure_of_support<M: Sieve<Point = PointId>>(ov: &mut Overlap, me
         }
     }
 
-    let res = ov.try_add_links_structural_bulk(new_edges);
+    let mut edges: Vec<(PointId, usize)> = new_edges.into_iter().collect();
+    edges.sort_unstable();
+    let res = ov.try_add_links_structural_bulk(edges);
     #[cfg(any(
         debug_assertions,
         feature = "strict-invariants",
@@ -792,13 +803,16 @@ pub fn ensure_closure_of_support<M: Sieve<Point = PointId>>(ov: &mut Overlap, me
 
 /// Incremental variant: expand closure only from explicit `(point, rank)` seeds.
 ///
-/// Useful when a subset of links was newly added and only those need
-/// propagation. Idempotent and safe to call multiple times.
-pub fn ensure_closure_of_support_from_seeds<M: Sieve<Point = PointId>, I>(
-    ov: &mut Overlap,
-    mesh: &M,
-    seeds: I,
-) where
+    /// Useful when a subset of links was newly added and only those need
+    /// propagation. Idempotent and safe to call multiple times.
+    ///
+    /// Collected edges are sorted before bulk insertion so the resulting
+    /// adjacency order is deterministic.
+    pub fn ensure_closure_of_support_from_seeds<M: Sieve<Point = PointId>, I>(
+        ov: &mut Overlap,
+        mesh: &M,
+        seeds: I,
+    ) where
     I: IntoIterator<Item = (PointId, usize)>,
 {
     let mut already: FastSet<(PointId, usize)> = FastSet::default();
@@ -815,7 +829,9 @@ pub fn ensure_closure_of_support_from_seeds<M: Sieve<Point = PointId>, I>(
         }
     }
 
-    let res = ov.try_add_links_structural_bulk(new_edges);
+    let mut edges: Vec<(PointId, usize)> = new_edges.into_iter().collect();
+    edges.sort_unstable();
+    let res = ov.try_add_links_structural_bulk(edges);
     #[cfg(any(
         debug_assertions,
         feature = "strict-invariants",
