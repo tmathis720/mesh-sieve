@@ -95,9 +95,7 @@ pub fn main() {
         sec.try_set(PointId::new(2).unwrap(), &[2])
             .expect("Failed to set value for PointId 2");
     }
-    complete_section::<u32, VecStorage<u32>, CopyDelta, MpiComm>(
-        &mut sec, &ovlp, &comm, rank,
-    )
+    complete_section::<u32, VecStorage<u32>, CopyDelta, MpiComm>(&mut sec, &ovlp, &comm, rank)
         .expect("section completion failed");
     match rank {
         0 => {

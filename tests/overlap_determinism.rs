@@ -1,8 +1,10 @@
 use mesh_sieve::overlap::overlap::{Overlap, part};
-use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
 use mesh_sieve::topology::point::PointId;
+use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
 
-fn pid(n: u64) -> PointId { PointId::new(n).unwrap() }
+fn pid(n: u64) -> PointId {
+    PointId::new(n).unwrap()
+}
 
 #[test]
 fn bulk_insertion_is_deterministic() {
@@ -10,9 +12,14 @@ fn bulk_insertion_is_deterministic() {
 
     // Scrambled order with duplicates
     let edges = vec![
-        (pid(5), 2), (pid(1), 0), (pid(3), 1),
-        (pid(1), 0), (pid(2), 0), (pid(3), 1),
-        (pid(4), 2), (pid(2), 0),
+        (pid(5), 2),
+        (pid(1), 0),
+        (pid(3), 1),
+        (pid(1), 0),
+        (pid(2), 0),
+        (pid(3), 1),
+        (pid(4), 2),
+        (pid(2), 0),
     ];
 
     let n1 = ov.add_links_structural_bulk(edges.clone());
@@ -21,13 +28,17 @@ fn bulk_insertion_is_deterministic() {
     assert_eq!(n2, 0);
 
     for r in ov.neighbor_ranks() {
-        let locals_in_order: Vec<_> = ov.support(part(r))
+        let locals_in_order: Vec<_> = ov
+            .support(part(r))
             .map(|(src, _rem)| src.expect_local())
             .collect();
 
         let mut expected = locals_in_order.clone();
         expected.sort_unstable();
-        assert_eq!(locals_in_order, expected, "adjacency for Part({r}) not sorted");
+        assert_eq!(
+            locals_in_order, expected,
+            "adjacency for Part({r}) not sorted"
+        );
     }
 }
 
@@ -47,7 +58,8 @@ fn ensure_closure_of_support_order_is_deterministic() {
 
     mesh_sieve::overlap::overlap::ensure_closure_of_support(&mut ov, &mesh);
 
-    let locals_in_order: Vec<_> = ov.support(part(7))
+    let locals_in_order: Vec<_> = ov
+        .support(part(7))
         .map(|(src, _rem)| src.expect_local())
         .collect();
     let mut expected = locals_in_order.clone();

@@ -163,7 +163,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let pm = match partition(&g, &cfg) {
             Ok(pm) => pm,
             Err(mesh_sieve::partitioning::PartitionerError::Unbalanced { .. }) => {
-                let cfg2 = PartitionerConfig { enable_phase1: false, ..cfg };
+                let cfg2 = PartitionerConfig {
+                    enable_phase1: false,
+                    ..cfg
+                };
                 println!(
                     "[partition] Phase1 produced 1 cluster; retrying with enable_phase1=false"
                 );

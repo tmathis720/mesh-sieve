@@ -108,14 +108,7 @@ fn main() {
     {
         if !cells.is_empty() {
             // Build a full point→owner vector from the cell partition
-            test_distributed_completion(
-                &global_mesh,
-                &cells,
-                &partition_map,
-                &comm,
-                rank,
-                size,
-            );
+            test_distributed_completion(&global_mesh, &cells, &partition_map, &comm, rank, size);
         }
     }
 

@@ -42,9 +42,7 @@ fn build_grid() -> (
     let mut section = Section::<f64, VecStorage<f64>>::new(atlas.clone());
     // initialize each point’s value = its ID as f64
     for id in 1u64..=9 {
-        section
-            .try_restrict_mut(PointId::new(id).unwrap())
-            .unwrap()[0] = id as f64;
+        section.try_restrict_mut(PointId::new(id).unwrap()).unwrap()[0] = id as f64;
     }
     (sieve, atlas, section)
 }
@@ -153,9 +151,7 @@ fn main() {
             // 2) send each pid + its value
             for &pid in pids {
                 proc.send(&pid);
-                let val = sec
-                    .try_restrict(PointId::new(pid as u64).unwrap())
-                    .unwrap()[0];
+                let val = sec.try_restrict(PointId::new(pid as u64).unwrap()).unwrap()[0];
                 proc.send(&val);
             }
         }
