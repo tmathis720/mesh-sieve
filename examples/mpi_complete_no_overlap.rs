@@ -11,6 +11,7 @@ fn main() {
     use mesh_sieve::algs::completion::complete_section;
     use mesh_sieve::data::atlas::Atlas;
     use mesh_sieve::data::section::Section;
+    use mesh_sieve::data::storage::VecStorage;
     use mesh_sieve::overlap::delta::CopyDelta;
     use mesh_sieve::overlap::overlap::Overlap;
     use mesh_sieve::topology::point::PointId;
@@ -31,13 +32,13 @@ fn main() {
             .try_insert(PointId::new(2).unwrap(), 1)
             .expect("Failed to insert into atlas");
     }
-    let mut sec = Section::<u32>::new(atlas);
+    let mut sec = Section::<u32, VecStorage<u32>>::new(atlas);
     if rank == 2 {
         sec.try_set(PointId::new(2).unwrap(), &[42])
             .expect("Failed to set section value");
     }
     let mut ovlp = Overlap::default();
-    complete_section::<u32, CopyDelta, MpiComm>(&mut sec, &ovlp, &comm, rank)
+    complete_section::<u32, VecStorage<u32>, CopyDelta, MpiComm>(&mut sec, &ovlp, &comm, rank)
         .expect("section completion failed");
     if rank == 2 {
         match sec.try_restrict(PointId::new(2).unwrap()) {
