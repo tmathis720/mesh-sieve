@@ -61,13 +61,18 @@ fn main() {
     let mut stack = InMemoryStack::<PodU64, PodU64, DummyPayload>::new();
     let mut overlap = InMemorySieve::<PodU64, DummyRemote>::default();
     if rank == 0 {
-        // Add the base point to the base sieve so complete_stack can find it
+        // Add required points to base and cap sieves so `add_arrow` succeeds.
+        // In this API, inserting a self-loop marks point presence.
         stack
             .base_mut()
             .unwrap()
             .add_arrow(PodU64(1), PodU64(1), ());
+        stack
+            .cap_mut()
+            .unwrap()
+            .add_arrow(PodU64(101), PodU64(101), ());
 
-        // Add the vertical arrow with actual data
+        // Add the vertical arrow with actual data now that both points exist
         let _ = stack.add_arrow(PodU64(1), PodU64(101), DummyPayload(42));
 
         // Set up overlap to indicate rank 1 needs data from this base point
@@ -79,6 +84,17 @@ fn main() {
                 remote_point: PodU64(1),
             },
         );
+    } else if rank == 1 {
+        // Receiver must also pre-register the points it will receive arrows for.
+        // Insert base point 1 and cap point 101 so incoming add_arrow succeeds.
+        stack
+            .base_mut()
+            .unwrap()
+            .add_arrow(PodU64(1), PodU64(1), ());
+        stack
+            .cap_mut()
+            .unwrap()
+            .add_arrow(PodU64(101), PodU64(101), ());
     }
     // actually run and unwrap any error from the stack‐completion
     complete_stack(&mut stack, &overlap, &comm, rank, size).expect("MPI stack completion failed");
