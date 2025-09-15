@@ -16,8 +16,13 @@
 //!    must have at least one incoming edge.
 //!
 //! The invariants checker runs in debug builds or when the feature
-//! `strict-invariants` (or its alias `check-invariants`) is enabled. It performs an `O(V + E)` walk over the graph
-//! without cloning payloads.
+//! `strict-invariants` (or its alias `check-invariants`) is enabled. It performs
+//! an `O(V + E)` walk over the graph without cloning payloads. Basic invariants
+//! (bipartite edges, rank consistency, duplicate detection, etc.) are always
+//! verified; with `strict-invariants` enabled it also checks that the
+//! `adjacency_out` and `adjacency_in` maps mirror each other exactly
+//! (payloads and counts), an additional `O(E)` cross-check guarding against
+//! storage regressions.
 //!
 //! The [`Overlap`] newtype wraps an [`InMemorySieve`] and enforces these
 //! invariants for all mutation routes (`add_arrow`, `set_cone`, etc.).
@@ -193,11 +198,7 @@ impl Overlap {
 
     /// Try to insert `Local(p) -> Part(r)` structurally (`remote_point = None`).
     /// Returns `Ok(true)` if inserted, `Ok(false)` if it already existed.
-    fn try_add_structural_edge(
-        &mut self,
-        p: PointId,
-        r: usize,
-    ) -> Result<bool, MeshSieveError> {
+    fn try_add_structural_edge(&mut self, p: PointId, r: usize) -> Result<bool, MeshSieveError> {
         let src = local(p);
         let dst = part(r);
 
@@ -270,10 +271,7 @@ impl Overlap {
     ///
     /// Deterministic: edges are inserted in lexicographic order of `(PointId, rank)`
     /// regardless of `Hash{Map,Set}` or feature-driven iteration order.
-    pub fn try_add_links_structural_bulk<I>(
-        &mut self,
-        edges: I,
-    ) -> Result<usize, MeshSieveError>
+    pub fn try_add_links_structural_bulk<I>(&mut self, edges: I) -> Result<usize, MeshSieveError>
     where
         I: IntoIterator<Item = (PointId, usize)>,
     {
@@ -443,7 +441,14 @@ impl Overlap {
         Ok(())
     }
 
-    /// Debug/feature-gated invariant checker.
+    /// Validate overlap invariants.
+    ///
+    /// Always checks bipartite structure, rank consistency, base/cap partitioning,
+    /// and duplicate edges. With feature `strict-invariants` (alias
+    /// `check-invariants`) enabled, it additionally cross-checks that every
+    /// `adjacency_out` edge has a mirrored entry in `adjacency_in` with identical
+    /// payload and that edge counts match. The strict check is `O(E)` and compiled
+    /// out otherwise.
     pub fn validate_invariants(&self) -> Result<(), MeshSieveError> {
         use MeshSieveError as E;
         use std::collections::HashSet;
@@ -498,6 +503,50 @@ impl Overlap {
                 {
                     return Err(E::OverlapEmptyPart { rank: *r });
                 }
+            }
+        }
+
+        #[cfg(any(feature = "strict-invariants", feature = "check-invariants"))]
+        {
+            let mut out_map: FastMap<(OvlId, OvlId), &Remote> = FastMap::default();
+            let mut out_count: usize = 0;
+            for (src, outs) in &self.inner.adjacency_out {
+                for (dst, rem) in outs {
+                    out_map.insert((*src, *dst), rem);
+                    out_count += 1;
+                }
+            }
+
+            let mut in_count: usize = 0;
+            for (dst, ins) in &self.inner.adjacency_in {
+                for (src, rem_in) in ins {
+                    in_count += 1;
+                    match out_map.get(&(*src, *dst)) {
+                        None => {
+                            return Err(E::OverlapInOutMirrorMissing {
+                                src: *src,
+                                dst: *dst,
+                            });
+                        }
+                        Some(rem_out) => {
+                            if **rem_out != *rem_in {
+                                return Err(E::OverlapInOutPayloadMismatch {
+                                    src: *src,
+                                    dst: *dst,
+                                    out: **rem_out,
+                                    inn: *rem_in,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            if out_count != in_count {
+                return Err(E::OverlapInOutEdgeCountMismatch {
+                    out_edges: out_count,
+                    in_edges: in_count,
+                });
             }
         }
 
@@ -699,6 +748,9 @@ impl Sieve for Overlap {
 }
 
 #[macro_export]
+/// Validate overlap invariants in debug builds or when `strict-invariants`
+/// (alias `check-invariants`) is enabled. In strict mode this also ensures the
+/// in/out adjacency mirrors remain in sync.
 macro_rules! ovl_debug_validate {
     ($ovl:expr) => {
         if cfg!(any(
@@ -767,17 +819,17 @@ pub fn expand_one_layer_mesh<M: Sieve<Point = PointId>>(
     added
 }
 
-    /// Ensure closure-of-support: for any `Local(p) -> Part(r)` edge already present,
-    /// also link every `q` in `mesh.closure({p})` to `Part(r)`. New links are
-    /// structural only (`remote_point = None`).
-    ///
-    /// Collected edges are sorted before bulk insertion so the resulting
-    /// adjacency order is deterministic.
-    pub fn ensure_closure_of_support<M: Sieve<Point = PointId>>(ov: &mut Overlap, mesh: &M) {
-        let mut already: FastSet<(PointId, usize)> = FastSet::default();
-        for (p, r) in ov.existing_pairs() {
-            already.insert((p, r));
-        }
+/// Ensure closure-of-support: for any `Local(p) -> Part(r)` edge already present,
+/// also link every `q` in `mesh.closure({p})` to `Part(r)`. New links are
+/// structural only (`remote_point = None`).
+///
+/// Collected edges are sorted before bulk insertion so the resulting
+/// adjacency order is deterministic.
+pub fn ensure_closure_of_support<M: Sieve<Point = PointId>>(ov: &mut Overlap, mesh: &M) {
+    let mut already: FastSet<(PointId, usize)> = FastSet::default();
+    for (p, r) in ov.existing_pairs() {
+        already.insert((p, r));
+    }
 
     let mut new_edges: FastSet<(PointId, usize)> = FastSet::default();
     for (p, r) in already.iter().copied() {
@@ -803,16 +855,16 @@ pub fn expand_one_layer_mesh<M: Sieve<Point = PointId>>(
 
 /// Incremental variant: expand closure only from explicit `(point, rank)` seeds.
 ///
-    /// Useful when a subset of links was newly added and only those need
-    /// propagation. Idempotent and safe to call multiple times.
-    ///
-    /// Collected edges are sorted before bulk insertion so the resulting
-    /// adjacency order is deterministic.
-    pub fn ensure_closure_of_support_from_seeds<M: Sieve<Point = PointId>, I>(
-        ov: &mut Overlap,
-        mesh: &M,
-        seeds: I,
-    ) where
+/// Useful when a subset of links was newly added and only those need
+/// propagation. Idempotent and safe to call multiple times.
+///
+/// Collected edges are sorted before bulk insertion so the resulting
+/// adjacency order is deterministic.
+pub fn ensure_closure_of_support_from_seeds<M: Sieve<Point = PointId>, I>(
+    ov: &mut Overlap,
+    mesh: &M,
+    seeds: I,
+) where
     I: IntoIterator<Item = (PointId, usize)>,
 {
     let mut already: FastSet<(PointId, usize)> = FastSet::default();
@@ -1287,5 +1339,95 @@ mod tests {
             },
         );
         assert!(ov.inner.adjacency_out.is_empty());
+    }
+}
+
+#[cfg(all(test, any(feature = "strict-invariants", feature = "check-invariants")))]
+mod strict_invariant_tests {
+    use super::*;
+    use crate::mesh_error::MeshSieveError;
+    use crate::topology::point::PointId;
+
+    fn pid(n: u64) -> PointId {
+        PointId::new(n).unwrap()
+    }
+
+    #[test]
+    fn detects_missing_in_mirror() {
+        let mut ov = Overlap::new();
+        ov.try_add_link_structural_one(pid(1), 7).unwrap();
+        ov.debug_validate();
+
+        let src = OvlId::Local(pid(1));
+        let dst = OvlId::Part(7);
+        if let Some(vec_out) = ov.inner.adjacency_out.get_mut(&src) {
+            vec_out.retain(|(d, _)| *d != dst);
+        }
+
+        let err = ov.validate_invariants().unwrap_err();
+        match err {
+            MeshSieveError::OverlapInOutMirrorMissing { src: s, dst: d } => {
+                assert_eq!(s, src);
+                assert_eq!(d, dst);
+            }
+            e => panic!("unexpected error: {e}"),
+        }
+    }
+
+    #[test]
+    fn detects_payload_mismatch() {
+        let mut ov = Overlap::new();
+        ov.try_add_link_structural_one(pid(2), 3).unwrap();
+        ov.resolve_remote_point(pid(2), 3, pid(42)).unwrap();
+        ov.debug_validate();
+
+        let src = OvlId::Local(pid(2));
+        let dst = OvlId::Part(3);
+        if let Some(vec_in) = ov.inner.adjacency_in.get_mut(&dst) {
+            if let Some((_, rem)) = vec_in.iter_mut().find(|(s, _)| *s == src) {
+                rem.remote_point = Some(pid(99));
+            }
+        }
+
+        let err = ov.validate_invariants().unwrap_err();
+        match err {
+            MeshSieveError::OverlapInOutPayloadMismatch {
+                src: s,
+                dst: d,
+                out,
+                inn,
+            } => {
+                assert_eq!(s, src);
+                assert_eq!(d, dst);
+                assert_ne!(out, inn);
+            }
+            e => panic!("unexpected error: {e}"),
+        }
+    }
+
+    #[test]
+    fn detects_count_mismatch() {
+        let mut ov = Overlap::new();
+        ov.try_add_link_structural_one(pid(5), 1).unwrap();
+        ov.try_add_link_structural_one(pid(6), 1).unwrap();
+        ov.debug_validate();
+
+        let dst = OvlId::Part(1);
+        if let Some(vec_in) = ov.inner.adjacency_in.get_mut(&dst) {
+            if let Some(edge) = vec_in.first().cloned() {
+                vec_in.push(edge);
+            }
+        }
+
+        let err = ov.validate_invariants().unwrap_err();
+        match err {
+            MeshSieveError::OverlapInOutEdgeCountMismatch {
+                out_edges,
+                in_edges,
+            } => {
+                assert_ne!(out_edges, in_edges);
+            }
+            e => panic!("unexpected error: {e}"),
+        }
     }
 }
