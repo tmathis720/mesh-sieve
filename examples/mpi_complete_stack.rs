@@ -65,7 +65,7 @@ fn main() {
         stack
             .base_mut()
             .unwrap()
-            .add_arrow(PodU64(1), PodU64(1), DummyPayload::default());
+            .add_arrow(PodU64(1), PodU64(1), ());
 
         // Add the vertical arrow with actual data
         let _ = stack.add_arrow(PodU64(1), PodU64(101), DummyPayload(42));

@@ -5,11 +5,9 @@
 #[cfg(feature = "mpi-support")]
 use mesh_sieve::algs::complete_section;
 #[cfg(feature = "mpi-support")]
-use mesh_sieve::algs::partition;
-#[cfg(feature = "mpi-support")]
 use mesh_sieve::data::atlas::Atlas;
 #[cfg(feature = "mpi-support")]
-use mesh_sieve::data::section::{Map, Section};
+use mesh_sieve::data::section::Section;
 use mesh_sieve::data::storage::VecStorage;
 #[cfg(feature = "mpi-support")]
 use mesh_sieve::topology::point::PointId;
@@ -44,7 +42,9 @@ fn build_grid() -> (
     let mut section = Section::<f64, VecStorage<f64>>::new(atlas.clone());
     // initialize each point’s value = its ID as f64
     for id in 1u64..=9 {
-        section.try_restrict_mut(PointId::new(id).unwrap())[0] = id as f64;
+        section
+            .try_restrict_mut(PointId::new(id).unwrap())
+            .unwrap()[0] = id as f64;
     }
     (sieve, atlas, section)
 }
@@ -153,7 +153,9 @@ fn main() {
             // 2) send each pid + its value
             for &pid in pids {
                 proc.send(&pid);
-                let val = sec.try_restrict(PointId::new(pid as u64).unwrap())[0];
+                let val = sec
+                    .try_restrict(PointId::new(pid as u64).unwrap())
+                    .unwrap()[0];
                 proc.send(&val);
             }
         }
@@ -161,7 +163,7 @@ fn main() {
     } else {
         let mut s = InMemorySieve::new();
         let mut a = Atlas::default();
-        let mut sec = Section::new(a.clone());
+        let mut sec = Section::<f64, VecStorage<f64>>::new(a.clone());
         // 1) receive the number of points rank 0 will send
         let (count, _) = world.process_at_rank(0).receive::<usize>();
         // 2) now loop exactly `count` times
@@ -171,8 +173,8 @@ fn main() {
             let pid = PointId::new(pid as u64).unwrap();
             s.add_point(pid);
             a.try_insert(pid, 1);
-            sec = Section::new(a.clone());
-            sec.try_restrict_mut(pid)[0] = val;
+            sec = Section::<f64, VecStorage<f64>>::new(a.clone());
+            sec.try_restrict_mut(pid).unwrap()[0] = val;
         }
         (s, a, sec)
     };

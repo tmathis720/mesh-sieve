@@ -8,6 +8,7 @@ fn main() {
     use mesh_sieve::algs::completion::complete_section;
     use mesh_sieve::data::atlas::Atlas;
     use mesh_sieve::data::section::Section;
+    use mesh_sieve::data::storage::VecStorage;
     use mesh_sieve::overlap::delta::CopyDelta;
     use mesh_sieve::overlap::overlap::Overlap;
     use mesh_sieve::topology::point::PointId;
@@ -55,7 +56,7 @@ fn main() {
             .try_insert(p0, 1)
             .expect("Failed to insert p0 into atlas");
     }
-    let mut sec = Section::<u32>::new(atlas);
+    let mut sec = Section::<u32, VecStorage<u32>>::new(atlas);
 
     // 5) Seed the owned DOF with a distinct value
     if rank == 0 {
@@ -69,7 +70,7 @@ fn main() {
     println!("[rank {}] neighbour_links: {:?}", rank, links);
 
     // 6) Perform the two-phase exchange
-    complete_section::<u32, CopyDelta, MpiComm>(&mut sec, &ovlp, &comm, rank)
+    complete_section::<u32, VecStorage<u32>, CopyDelta, MpiComm>(&mut sec, &ovlp, &comm, rank)
         .expect("section completion failed");
 
     // 7) Check the result
