@@ -206,6 +206,26 @@ pub enum MeshSieveError {
     #[error("Overlap: empty Part({rank}) node (no incoming edges)")]
     OverlapEmptyPart { rank: usize },
 
+    /// Out edge exists but its mirrored in edge is missing.
+    #[error("overlap in/out mirror missing: {src:?} -> {dst:?}")]
+    OverlapInOutMirrorMissing {
+        src: crate::overlap::overlap::OvlId,
+        dst: crate::overlap::overlap::OvlId,
+    },
+
+    /// Out/in edges exist but payloads differ (rank/remote_point mismatch).
+    #[error("overlap in/out payload mismatch on {src:?} -> {dst:?}: out={out:?} in={inn:?}")]
+    OverlapInOutPayloadMismatch {
+        src: crate::overlap::overlap::OvlId,
+        dst: crate::overlap::overlap::OvlId,
+        out: crate::overlap::overlap::Remote,
+        inn: crate::overlap::overlap::Remote,
+    },
+
+    /// Counts of edges in out vs. in adjacency differ.
+    #[error("overlap in/out edge count mismatch: out={out_edges}, in={in_edges}")]
+    OverlapInOutEdgeCountMismatch { out_edges: usize, in_edges: usize },
+
     #[error(
         "Overlap resolution conflict for (local={local}, rank={rank}): existing={existing:?}, new={new:?}"
     )]
@@ -427,6 +447,34 @@ impl PartialEq for MeshSieveError {
                 OverlapDuplicateEdge { src: s2, dst: d2 },
             ) => s1 == s2 && d1 == d2,
             (OverlapEmptyPart { rank: r1 }, OverlapEmptyPart { rank: r2 }) => r1 == r2,
+            (
+                OverlapInOutMirrorMissing { src: s1, dst: d1 },
+                OverlapInOutMirrorMissing { src: s2, dst: d2 },
+            ) => s1 == s2 && d1 == d2,
+            (
+                OverlapInOutPayloadMismatch {
+                    src: s1,
+                    dst: d1,
+                    out: o1,
+                    inn: i1,
+                },
+                OverlapInOutPayloadMismatch {
+                    src: s2,
+                    dst: d2,
+                    out: o2,
+                    inn: i2,
+                },
+            ) => s1 == s2 && d1 == d2 && o1 == o2 && i1 == i2,
+            (
+                OverlapInOutEdgeCountMismatch {
+                    out_edges: o1,
+                    in_edges: i1,
+                },
+                OverlapInOutEdgeCountMismatch {
+                    out_edges: o2,
+                    in_edges: i2,
+                },
+            ) => o1 == o2 && i1 == i2,
             (
                 OverlapResolutionConflict {
                     local: l1,
