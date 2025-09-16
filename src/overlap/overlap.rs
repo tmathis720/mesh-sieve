@@ -567,6 +567,7 @@ impl Overlap {
     }
 
     /// Iterator of distinct neighbor ranks present as partition nodes.
+    #[inline]
     pub fn neighbor_ranks(&self) -> impl Iterator<Item = usize> + '_ {
         use std::collections::BTreeSet;
         let ranks: BTreeSet<usize> = self
@@ -580,6 +581,7 @@ impl Overlap {
     }
 
     /// Pairs to neighbor `r` (`local`, `Option<remote>`). Includes unresolved links.
+    #[inline]
     pub fn links_to(&self, r: usize) -> impl Iterator<Item = (PointId, Option<PointId>)> + '_ {
         self.support(part(r))
             .filter_map(move |(src, rem)| match src {
@@ -589,6 +591,7 @@ impl Overlap {
     }
 
     /// Only resolved links (local, remote).
+    #[inline]
     pub fn links_to_resolved(&self, r: usize) -> impl Iterator<Item = (PointId, PointId)> + '_ {
         self.links_to(r)
             .filter_map(|(p, opt)| opt.map(|rp| (p, rp)))
