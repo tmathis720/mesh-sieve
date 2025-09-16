@@ -129,6 +129,14 @@ An `Overlap` is a typed sieve over `OvlId = Local(PointId) | Part(usize)` with p
 * `links_to_resolved(r) -> impl Iterator<Item=(PointId, PointId)>`
 * Sorted variants for deterministic I/O.
 
+**Maintenance**
+
+* `prune_empty_parts() -> usize` — remove dangling `Part(r)` vertices left behind after link removals (keeps `check-empty-part` happy).
+* `remove_neighbor_rank(rank) -> bool` — convenience for “rank disappeared”; removes all incident edges and the part node.
+* `retain_neighbor_ranks(keep) -> (edges_removed, parts_removed)` — bulk prune to a supplied rank set; deterministic across hash backends.
+
+> **Common step:** After structural deletions or neighborhood recomputations, call `prune_empty_parts()` so optional invariants stay satisfied before iterating `neighbor_ranks()`.
+
 ---
 
 ## 5. Data: Atlas & Section (storage-generic)

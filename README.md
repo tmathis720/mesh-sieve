@@ -8,7 +8,7 @@
 * **Field Data**: **Atlas** (layout) + **Section** (values) with **fallible** accessors and strong invariants. Fast scatter paths for contiguous layouts.
 * **Storage Abstraction**: `Section<V, S>` where `S: SliceStorage<V>` (built-in `VecStorage`; optional `WgpuStorage` with compute kernels).
 * **Parallel Communication**: pluggable **Communicator** backends (serial `NoComm`, in-process `RayonComm`, feature-gated `MpiComm`).
-* **Overlap**: bipartite local↔rank structure with strict mirror validation; helpers to expand along mesh closure.
+* **Overlap**: bipartite local↔rank structure with strict mirror validation; helpers to expand along mesh closure and prune detached ranks.
 * **Partitioning**: optional METIS helpers and in-tree algorithms.
 * **Testing & CI**: property tests, deterministic iterators, and feature-gated deep invariant checks.
 * **Performance**: point-only adapters (no payload cloning), degree-local updates, preallocation hints, streaming algorithms, and inline hot paths.
@@ -115,6 +115,8 @@ let inserted = ov.add_link_structural_one(p, neighbor); // remote unknown yet
 ov.resolve_remote_point(p, neighbor, PointId::new(42042)?)?;
 ```
 
+After removing links or when ranks disappear, call `ov.prune_empty_parts()` or `ov.retain_neighbor_ranks([...])` to drop empty `Part(r)` nodes before iterating `neighbor_ranks()`.
+
 ### MPI Examples
 
 ```sh
@@ -195,7 +197,7 @@ src/
 | **Section** | `new`, `try_restrict(_)/try_restrict_mut(_)`, `try_set`, `with_atlas_mut`, `with_atlas_mut_resize`, `try_scatter_*`, `try_apply_delta_between_points` |
 | **Storage** | `VecStorage`, *(opt-in)* `WgpuStorage` (delta via copy/compute)                                                                                       |
 | **Deltas**  | `data::refine::SliceDelta` (slice→slice; e.g., `Polarity`), `overlap::ValueDelta` (comm/merge; e.g., `CopyDelta`, `AddDelta`, `ZeroDelta`)            |
-| **Overlap** | `add_link_structural_one`, `add_links_structural_bulk`, `resolve_remote_point(s)`, `ensure_closure_of_support`                                        |
+| **Overlap** | `add_link_structural_one`, `add_links_structural_bulk`, `resolve_remote_point(s)`, `ensure_closure_of_support`, `prune_empty_parts`, `remove_neighbor_rank`, `retain_neighbor_ranks` |
 | **Bundles** | `refine(bases)`, `assemble_with(bases, &Reducer)`                                                                                                     |
 | **Algs**    | completion for sieve/section/stack; communicator trait & backends                                                                                     |
 

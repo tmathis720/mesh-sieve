@@ -58,6 +58,16 @@
 //! - No `my_rank` parameter is needed; neighbors are explicitly modeled as
 //!   `Part(r)` vertices in the graph.
 //!
+//! ## Neighborhood maintenance
+//! - [`prune_empty_parts`](Overlap::prune_empty_parts) removes dangling
+//!   `Part(r)` vertices left behind after link removals, keeping the optional
+//!   `check-empty-part` invariant satisfied.
+//! - [`remove_neighbor_rank`](Overlap::remove_neighbor_rank) deletes a neighbor
+//!   rank and all of its edges in one deterministic pass.
+//! - [`retain_neighbor_ranks`](Overlap::retain_neighbor_ranks) keeps only the
+//!   supplied ranks, pruning everything else in sorted order to guarantee
+//!   reproducible behavior across builds and hash backends.
+//!
 //! ## Accessors
 //! Prefer [`OvlId::try_local`] / [`OvlId::try_part`] when you need contextual
 //! errors, or [`OvlId::as_local`] / [`OvlId::as_part`] for optional probing.
@@ -607,6 +617,111 @@ impl Overlap {
         }
     }
 
+    /// Remove all `Part(r)` vertices with no incoming `Local(_) -> Part(r)` edges.
+    ///
+    /// Returns the number of `Part` vertices removed. Deterministic across builds.
+    pub fn prune_empty_parts(&mut self) -> usize {
+        let mut parts: Vec<OvlId> = self
+            .inner
+            .adjacency_in
+            .keys()
+            .copied()
+            .filter(|id| matches!(id, OvlId::Part(_)))
+            .collect();
+        parts.sort_unstable();
+
+        let mut removed = 0usize;
+        for part_id in parts {
+            let is_empty = self
+                .inner
+                .adjacency_in
+                .get(&part_id)
+                .map_or(true, |incoming| incoming.is_empty());
+
+            if is_empty {
+                crate::topology::sieve::MutableSieve::remove_cap_point(&mut self.inner, part_id);
+                self.inner.adjacency_out.remove(&part_id);
+                removed += 1;
+            }
+        }
+
+        if removed > 0 {
+            self.invalidate_cache();
+            self.debug_validate();
+        }
+        removed
+    }
+
+    /// Remove all edges incident to `Part(rank)` and then drop the vertex.
+    ///
+    /// Returns `true` if `Part(rank)` existed, `false` otherwise.
+    pub fn remove_neighbor_rank(&mut self, rank: usize) -> bool {
+        let pid = part(rank);
+        if !self.inner.adjacency_in.contains_key(&pid)
+            && !self.inner.adjacency_out.contains_key(&pid)
+        {
+            return false;
+        }
+
+        crate::topology::sieve::MutableSieve::remove_cap_point(&mut self.inner, pid);
+        self.inner.adjacency_out.remove(&pid);
+
+        self.invalidate_cache();
+        self.debug_validate();
+        true
+    }
+
+    /// Keep only parts in `keep`; remove other ranks and return `(edges_removed, parts_removed)`.
+    ///
+    /// Deterministic removal order regardless of hash map backend.
+    pub fn retain_neighbor_ranks<I>(&mut self, keep: I) -> (usize, usize)
+    where
+        I: IntoIterator<Item = usize>,
+    {
+        use std::collections::BTreeSet;
+
+        let keep: BTreeSet<usize> = keep.into_iter().collect();
+
+        let mut parts: Vec<(OvlId, usize)> = self
+            .inner
+            .adjacency_in
+            .keys()
+            .copied()
+            .filter_map(|id| match id {
+                OvlId::Part(r) => Some((id, r)),
+                _ => None,
+            })
+            .collect();
+        parts.sort_unstable_by_key(|&(_, rank)| rank);
+
+        let mut edges_removed = 0usize;
+        let mut parts_removed = 0usize;
+
+        for (pid, rank) in parts {
+            if keep.contains(&rank) {
+                continue;
+            }
+
+            let edge_count = self
+                .inner
+                .adjacency_in
+                .get(&pid)
+                .map_or(0, |incoming| incoming.len());
+            edges_removed += edge_count;
+
+            crate::topology::sieve::MutableSieve::remove_cap_point(&mut self.inner, pid);
+            self.inner.adjacency_out.remove(&pid);
+            parts_removed += 1;
+        }
+
+        if edges_removed + parts_removed > 0 {
+            self.invalidate_cache();
+            self.debug_validate();
+        }
+
+        (edges_removed, parts_removed)
+    }
+
     /// Iterator of distinct neighbor ranks present as partition nodes.
     #[inline]
     pub fn neighbor_ranks(&self) -> impl Iterator<Item = usize> + '_ {
@@ -1018,6 +1133,56 @@ mod tests {
 
         let pairs: Vec<_> = ov.links_to_resolved(1).collect();
         assert!(pairs.contains(&(PointId::new(2).unwrap(), PointId::new(101).unwrap())));
+    }
+
+    #[test]
+    fn prune_empty_parts_removes_dangling_part() {
+        let mut ov = Overlap::default();
+        let p = PointId::new(1).unwrap();
+        let rank = 3usize;
+
+        ov.try_add_link_structural_one(p, rank).unwrap();
+        assert_eq!(ov.unresolved_count_to(rank), 1);
+
+        assert!(
+            crate::topology::sieve::Sieve::remove_arrow(&mut ov, local(p), part(rank)).is_some()
+        );
+
+        let removed = ov.prune_empty_parts();
+        assert_eq!(removed, 1);
+        assert!(ov.neighbor_ranks().next().is_none());
+    }
+
+    #[test]
+    fn remove_neighbor_rank_drops_edges_and_part() {
+        let mut ov = Overlap::default();
+        let p1 = PointId::new(1).unwrap();
+        let p2 = PointId::new(2).unwrap();
+        let rank = 5usize;
+
+        ov.try_add_link_structural_one(p1, rank).unwrap();
+        ov.try_add_link_structural_one(p2, rank).unwrap();
+        assert_eq!(ov.unresolved_count_to(rank), 2);
+
+        assert!(ov.remove_neighbor_rank(rank));
+        assert!(!ov.remove_neighbor_rank(rank));
+        assert_eq!(ov.unresolved_count(), 0);
+        assert!(ov.neighbor_ranks().next().is_none());
+    }
+
+    #[test]
+    fn retain_neighbor_ranks_is_deterministic_and_effective() {
+        let mut ov = Overlap::default();
+        let p = PointId::new(42).unwrap();
+
+        for rank in [2usize, 7usize, 3usize] {
+            ov.try_add_link_structural_one(p, rank).unwrap();
+        }
+
+        let (edges_removed, parts_removed) = ov.retain_neighbor_ranks([3usize]);
+        assert_eq!((edges_removed, parts_removed), (2usize, 2usize));
+        let ranks: Vec<_> = ov.neighbor_ranks().collect();
+        assert_eq!(ranks, vec![3usize]);
     }
 
     #[test]

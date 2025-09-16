@@ -165,6 +165,8 @@ ov.add_link_structural_one(v1, /* neighbor rank */ 1);
 ov.resolve_remote_point(v1, 1, /* remote PointId */ PointId::new(5001)?)?;
 ```
 
+After removing links or rebalancing, run `ov.prune_empty_parts()` or `ov.retain_neighbor_ranks([...])` so empty `Part(r)` nodes disappear before enumerating neighbors.
+
 **Completion** routines (in `algs::completion`) use the overlap to:
 
 * **Complete topology:** pull missing arrows to satisfy closure across ranks.
