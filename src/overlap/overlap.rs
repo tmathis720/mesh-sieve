@@ -57,6 +57,12 @@
 //!   variants when constructing on-wire layouts.
 //! - No `my_rank` parameter is needed; neighbors are explicitly modeled as
 //!   `Part(r)` vertices in the graph.
+//!
+//! ## Accessors
+//! Prefer [`OvlId::try_local`] / [`OvlId::try_part`] when you need contextual
+//! errors, or [`OvlId::as_local`] / [`OvlId::as_part`] for optional probing.
+//! The legacy [`OvlId::expect_local`] / [`OvlId::expect_part`] helpers are
+//! deprecated and will be removed in a future major release.
 
 use crate::mesh_error::MeshSieveError;
 use crate::overlap::perf::{FastMap, FastSet};
@@ -85,19 +91,65 @@ impl OvlId {
         matches!(self, OvlId::Part(_))
     }
 
+    /// Returns the wrapped [`PointId`] when `self` is [`OvlId::Local`].
     #[inline]
-    pub fn expect_local(self) -> PointId {
+    pub fn as_local(self) -> Option<PointId> {
         match self {
-            OvlId::Local(p) => p,
-            _ => panic!("expected Local(_)"),
+            OvlId::Local(p) => Some(p),
+            _ => None,
         }
     }
+
+    /// Returns the wrapped rank when `self` is [`OvlId::Part`].
+    #[inline]
+    pub fn as_part(self) -> Option<usize> {
+        match self {
+            OvlId::Part(r) => Some(r),
+            _ => None,
+        }
+    }
+
+    /// Returns the wrapped [`PointId`] or a contextual error when `self` is not [`OvlId::Local`].
+    #[inline]
+    pub fn try_local(self) -> Result<PointId, MeshSieveError> {
+        self.as_local()
+            .ok_or(MeshSieveError::OverlapExpectedLocal { found: self })
+    }
+
+    /// Returns the wrapped rank or a contextual error when `self` is not [`OvlId::Part`].
+    #[inline]
+    pub fn try_part(self) -> Result<usize, MeshSieveError> {
+        self.as_part()
+            .ok_or(MeshSieveError::OverlapExpectedPart { found: self })
+    }
+
+    #[deprecated(
+        since = "2.0.0",
+        note = "Use OvlId::try_local() or OvlId::as_local() instead"
+    )]
+    #[inline]
+    pub fn expect_local(self) -> PointId {
+        self.try_local()
+            .unwrap_or_else(|err| panic!("OvlId::expect_local failed: {err}"))
+    }
+
+    #[deprecated(
+        since = "2.0.0",
+        note = "Use OvlId::try_part() or OvlId::as_part() instead"
+    )]
     #[inline]
     pub fn expect_part(self) -> usize {
-        match self {
-            OvlId::Part(r) => r,
-            _ => panic!("expected Part(_)"),
-        }
+        self.try_part()
+            .unwrap_or_else(|err| panic!("OvlId::expect_part failed: {err}"))
+    }
+}
+
+impl std::convert::TryFrom<OvlId> for PointId {
+    type Error = MeshSieveError;
+
+    #[inline]
+    fn try_from(id: OvlId) -> Result<Self, Self::Error> {
+        id.try_local()
     }
 }
 
@@ -898,6 +950,7 @@ mod tests {
     use super::*;
     use crate::mesh_error::MeshSieveError;
     use crate::topology::sieve::InMemorySieve as Mesh;
+    use std::convert::TryFrom;
 
     fn insert_raw_edge(ov: &mut Overlap, src: OvlId, dst: OvlId, rem: Remote) {
         ov.inner
@@ -910,6 +963,40 @@ mod tests {
             .entry(dst)
             .or_default()
             .push((src, rem));
+    }
+
+    #[test]
+    fn ovlid_as_and_try_helpers() {
+        let pid = PointId::new(7).unwrap();
+        let rank = 3usize;
+        let local_id = local(pid);
+        let part_id = part(rank);
+
+        assert_eq!(local_id.as_local(), Some(pid));
+        assert_eq!(local_id.as_part(), None);
+        assert_eq!(part_id.as_part(), Some(rank));
+        assert_eq!(part_id.as_local(), None);
+
+        assert_eq!(local_id.try_local().unwrap(), pid);
+        assert!(matches!(
+            local_id.try_part(),
+            Err(MeshSieveError::OverlapExpectedPart { found }) if found == local_id
+        ));
+        assert_eq!(part_id.try_part().unwrap(), rank);
+        assert!(matches!(
+            part_id.try_local(),
+            Err(MeshSieveError::OverlapExpectedLocal { found }) if found == part_id
+        ));
+    }
+
+    #[test]
+    fn ovlid_try_from_pointid() {
+        let pid = PointId::new(1).unwrap();
+        let local_id = local(pid);
+        let part_id = part(0);
+
+        assert_eq!(PointId::try_from(local_id).unwrap(), pid);
+        assert!(PointId::try_from(part_id).is_err());
     }
 
     #[test]

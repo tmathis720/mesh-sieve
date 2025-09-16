@@ -30,7 +30,7 @@ fn bulk_insertion_is_deterministic() {
     for r in ov.neighbor_ranks() {
         let locals_in_order: Vec<_> = ov
             .support(part(r))
-            .map(|(src, _rem)| src.expect_local())
+            .map(|(src, _rem)| src.as_local().expect("support yields Local ids"))
             .collect();
 
         let mut expected = locals_in_order.clone();
@@ -60,7 +60,7 @@ fn ensure_closure_of_support_order_is_deterministic() {
 
     let locals_in_order: Vec<_> = ov
         .support(part(7))
-        .map(|(src, _rem)| src.expect_local())
+        .map(|(src, _rem)| src.as_local().expect("support yields Local ids"))
         .collect();
     let mut expected = locals_in_order.clone();
     expected.sort_unstable();
