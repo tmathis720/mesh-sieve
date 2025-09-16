@@ -192,6 +192,14 @@ pub enum MeshSieveError {
         src: crate::overlap::overlap::OvlId,
         dst: crate::overlap::overlap::OvlId,
     },
+    #[error("expected Local(_), found {found:?}")]
+    OverlapExpectedLocal {
+        found: crate::overlap::overlap::OvlId,
+    },
+    #[error("expected Part(_), found {found:?}")]
+    OverlapExpectedPart {
+        found: crate::overlap::overlap::OvlId,
+    },
     #[error("Overlap: payload.rank {found} != Part({expected})")]
     OverlapRankMismatch { expected: usize, found: usize },
     #[error("Overlap: Part node found in base_points()")]
@@ -430,6 +438,8 @@ impl PartialEq for MeshSieveError {
                 OverlapNonBipartite { src: s1, dst: d1 },
                 OverlapNonBipartite { src: s2, dst: d2 },
             ) => s1 == s2 && d1 == d2,
+            (OverlapExpectedLocal { found: f1 }, OverlapExpectedLocal { found: f2 }) => f1 == f2,
+            (OverlapExpectedPart { found: f1 }, OverlapExpectedPart { found: f2 }) => f1 == f2,
             (
                 OverlapRankMismatch {
                     expected: e1,
