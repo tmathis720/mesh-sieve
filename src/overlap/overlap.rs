@@ -321,8 +321,9 @@ impl Overlap {
 
     /// Fallible bulk structural insert; returns number of **new** edges inserted.
     ///
-    /// Deterministic: edges are inserted in lexicographic order of `(PointId, rank)`
-    /// regardless of `Hash{Map,Set}` or feature-driven iteration order.
+    /// Reserves capacity once per touched vertex based on deduplicated counts and
+    /// inserts edges in lexicographic order of `(PointId, rank)` regardless of
+    /// `Hash{Map,Set}` or feature-driven iteration order.
     pub fn try_add_links_structural_bulk<I>(&mut self, edges: I) -> Result<usize, MeshSieveError>
     where
         I: IntoIterator<Item = (PointId, usize)>,
@@ -359,17 +360,7 @@ impl Overlap {
         }
 
         // Deterministic order
-        to_add.sort_unstable_by_key(|(src, dst)| {
-            let p = match *src {
-                OvlId::Local(p) => p,
-                _ => unreachable!(),
-            };
-            let r = match *dst {
-                OvlId::Part(r) => r,
-                _ => unreachable!(),
-            };
-            (p, r)
-        });
+        to_add.sort_unstable();
 
         for (src, k) in need_cone {
             self.inner.reserve_cone(src, k);
@@ -379,10 +370,7 @@ impl Overlap {
         }
 
         for (src, dst) in to_add.iter().copied() {
-            let r = match dst {
-                OvlId::Part(r) => r,
-                _ => unreachable!(),
-            };
+            let r = dst.expect_part();
             self.inner.add_arrow(
                 src,
                 dst,
@@ -401,8 +389,9 @@ impl Overlap {
 
     /// Deprecated infallible bulk wrapper.
     ///
-    /// Deterministic: edges are inserted in lexicographic order of
-    /// `(PointId, rank)`.
+    /// Guarantees that capacity is reserved once per touched vertex using
+    /// deduplicated counts and inserts edges in deterministic (sorted)
+    /// `(PointId, rank)` order.
     #[deprecated(note = "Use try_add_links_structural_bulk")]
     pub fn add_links_structural_bulk<I>(&mut self, edges: I) -> usize
     where
