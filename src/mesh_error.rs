@@ -200,6 +200,13 @@ pub enum MeshSieveError {
     OverlapExpectedPart {
         found: crate::overlap::overlap::OvlId,
     },
+
+    /// Generic I/O error for mesh readers/writers.
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+    /// Parse error while reading mesh formats.
+    #[error("Mesh I/O parse error: {0}")]
+    MeshIoParse(String),
     #[error("Overlap: payload.rank {found} != Part({expected})")]
     OverlapRankMismatch { expected: usize, found: usize },
     #[error("Overlap: Part node found in base_points()")]

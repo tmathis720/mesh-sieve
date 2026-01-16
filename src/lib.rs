@@ -53,6 +53,7 @@
 pub mod algs;
 pub mod data;
 pub mod debug_invariants;
+pub mod io;
 pub mod mesh_error;
 pub mod overlap;
 #[cfg(feature = "mpi-support")]
