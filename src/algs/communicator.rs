@@ -9,6 +9,9 @@
 use once_cell::sync::Lazy;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Condvar, Mutex};
+use std::sync::atomic::{AtomicU32, Ordering};
+
+use crate::mesh_error::{CommError, MeshSieveError};
 
 /// Anything that can be waited on.
 pub trait Wait {
@@ -34,6 +37,26 @@ pub trait Communicator: Send + Sync + 'static {
     fn isend(&self, peer: usize, tag: u16, buf: &[u8]) -> Self::SendHandle;
     fn irecv(&self, peer: usize, tag: u16, buf: &mut [u8]) -> Self::RecvHandle;
 
+    /// Fallible send initiation for backends that can error.
+    fn isend_result(
+        &self,
+        peer: usize,
+        tag: u16,
+        buf: &[u8],
+    ) -> Result<Self::SendHandle, MeshSieveError> {
+        Ok(self.isend(peer, tag, buf))
+    }
+
+    /// Fallible receive initiation for backends that can error.
+    fn irecv_result(
+        &self,
+        peer: usize,
+        tag: u16,
+        buf: &mut [u8],
+    ) -> Result<Self::RecvHandle, MeshSieveError> {
+        Ok(self.irecv(peer, tag, buf))
+    }
+
     /// Returns true if this communicator is NoComm (for test logic)
     fn is_no_comm(&self) -> bool {
         false
@@ -46,6 +69,12 @@ pub trait Communicator: Send + Sync + 'static {
 
     /// Synchronization barrier (default: no-op for non-MPI comms)
     fn barrier(&self) {}
+
+    /// Fallible barrier for backends that can error.
+    fn barrier_result(&self) -> Result<(), MeshSieveError> {
+        self.barrier();
+        Ok(())
+    }
 
     /// Broadcast a byte buffer from `root` to all ranks.
     fn broadcast(&self, root: usize, buf: &mut [u8]) {
@@ -70,6 +99,12 @@ pub trait Communicator: Send + Sync + 'static {
                 buf[..copy_len].copy_from_slice(&data[..copy_len]);
             }
         }
+    }
+
+    /// Fallible broadcast for backends that can error.
+    fn broadcast_result(&self, root: usize, buf: &mut [u8]) -> Result<(), MeshSieveError> {
+        self.broadcast(root, buf);
+        Ok(())
     }
 
     /// All-reduce sum for `u64` buffers.
@@ -117,6 +152,12 @@ pub trait Communicator: Send + Sync + 'static {
         }
     }
 
+    /// Fallible all-reduce for backends that can error.
+    fn allreduce_sum_result(&self, values: &mut [u64]) -> Result<(), MeshSieveError> {
+        self.allreduce_sum(values);
+        Ok(())
+    }
+
     /// All-gather fixed-size byte buffers into `recvbuf` (rank-major order).
     fn allgather(&self, sendbuf: &[u8], recvbuf: &mut [u8]) {
         let size = self.size();
@@ -161,12 +202,59 @@ pub trait Communicator: Send + Sync + 'static {
             }
         }
     }
+
+    /// Fallible all-gather for backends that can error.
+    fn allgather_result(&self, sendbuf: &[u8], recvbuf: &mut [u8]) -> Result<(), MeshSieveError> {
+        self.allgather(sendbuf, recvbuf);
+        Ok(())
+    }
+
+    /// Reserve a contiguous range of tags for this communicator.
+    ///
+    /// Tags in `[RESERVED_TAGS_START, u16::MAX]` are reserved for collectives and
+    /// must not be used by higher-level protocols.
+    fn reserve_tag_range(&self, n: u16) -> Result<CommTag, MeshSieveError> {
+        reserve_tag_range(n)
+    }
 }
+
+/// Tags in this range are reserved for collectives and internal protocols.
+pub const RESERVED_TAGS_START: u16 = COLLECTIVE_TAG_ALLREDUCE_BROADCAST;
 
 const COLLECTIVE_TAG_BROADCAST: u16 = u16::MAX - 1;
 const COLLECTIVE_TAG_ALLGATHER: u16 = u16::MAX - 2;
 const COLLECTIVE_TAG_ALLREDUCE_GATHER: u16 = u16::MAX - 3;
 const COLLECTIVE_TAG_ALLREDUCE_BROADCAST: u16 = u16::MAX - 4;
+
+static NEXT_TAG: AtomicU32 = AtomicU32::new(0);
+
+fn reserve_tag_range(n: u16) -> Result<CommTag, MeshSieveError> {
+    if n == 0 {
+        return Err(MeshSieveError::Communication(CommError(
+            "tag allocation requires n > 0".into(),
+        )));
+    }
+    let n = n as u32;
+    let limit = RESERVED_TAGS_START as u32;
+    let mut current = NEXT_TAG.load(Ordering::Relaxed);
+    loop {
+        let end = current + n - 1;
+        if end >= limit {
+            return Err(MeshSieveError::Communication(CommError(
+                "tag allocation exhausted available user tag range".into(),
+            )));
+        }
+        match NEXT_TAG.compare_exchange(
+            current,
+            end + 1,
+            Ordering::SeqCst,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return Ok(CommTag::new(current as u16)),
+            Err(next) => current = next,
+        }
+    }
+}
 
 fn encode_u64_le(values: &[u64]) -> Vec<u8> {
     let mut out = Vec::with_capacity(values.len() * core::mem::size_of::<u64>());

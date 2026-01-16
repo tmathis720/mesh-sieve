@@ -82,7 +82,7 @@ where
     )?;
 
     #[cfg(debug_assertions)]
-    comm.barrier();
+    comm.barrier_result()?;
 
     Ok(())
 }
@@ -101,7 +101,8 @@ where
     D::Part: bytemuck::Pod + Default,
     C: Communicator + Sync,
 {
-    let tags = SectionCommTags::from_base(CommTag::new(0xBEEF));
+    let base = comm.reserve_tag_range(2)?;
+    let tags = SectionCommTags::from_base(base);
     complete_section_with_tags::<V, S, D, C>(section, overlap, comm, my_rank, tags)
 }
 

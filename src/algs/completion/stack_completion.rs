@@ -10,7 +10,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use crate::algs::wire::{WirePoint, cast_slice, cast_slice_mut};
 use bytemuck::{Pod, Zeroable};
 
-use crate::algs::communicator::{CommTag, StackCommTags, Wait};
+use crate::algs::communicator::{StackCommTags, Wait};
 use crate::algs::completion::size_exchange::exchange_sizes_symmetric;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::sieve::sieve_trait::Sieve;
@@ -143,14 +143,14 @@ where
     for &nbr in &neighbors {
         let n = counts.get(&nbr).copied().unwrap_or(0) as usize;
         let mut buf = vec![WireTriple64::<Pay>::zeroed(); n];
-        let h = comm.irecv(nbr, tags.data.as_u16(), cast_slice_mut(&mut buf));
+        let h = comm.irecv_result(nbr, tags.data.as_u16(), cast_slice_mut(&mut buf))?;
         recv_data.push((nbr, h, buf));
     }
 
     let mut pending_sends = Vec::new();
     for &nbr in &neighbors {
         let out = wires.get(&nbr).map_or(&[][..], |v| &v[..]);
-        pending_sends.push(comm.isend(nbr, tags.data.as_u16(), cast_slice(out)));
+        pending_sends.push(comm.isend_result(nbr, tags.data.as_u16(), cast_slice(out))?);
     }
 
     let mut maybe_err: Option<MeshSieveError> = None;
@@ -215,6 +215,7 @@ where
     O: Sieve<Point = P, Payload = R> + Sync,
     R: HasRank + Copy + Send + 'static,
 {
-    let tags = StackCommTags::from_base(CommTag::new(0xC0DE));
+    let base = comm.reserve_tag_range(2)?;
+    let tags = StackCommTags::from_base(base);
     complete_stack_with_tags::<P, Q, Pay, C, S, O, R>(stack, overlap, comm, my_rank, n_ranks, tags)
 }
