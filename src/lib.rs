@@ -74,6 +74,7 @@ pub mod prelude {
     };
     pub use crate::algs::rcm::distributed_rcm;
     pub use crate::data::atlas::Atlas;
+    pub use crate::data::coordinates::Coordinates;
     #[cfg(feature = "map-adapter")]
     pub use crate::data::section::Map;
     pub use crate::data::section::Section;
@@ -81,6 +82,7 @@ pub mod prelude {
     pub use crate::overlap::delta::{AddDelta, CopyDelta, ValueDelta};
     pub use crate::overlap::overlap::Overlap;
     pub use crate::topology::bounds::{PayloadLike, PointLike};
+    pub use crate::topology::cell_type::CellType;
     pub use crate::topology::labels::LabelSet;
     pub use crate::topology::point::PointId;
     pub use crate::topology::sieve::{
