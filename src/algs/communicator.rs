@@ -515,8 +515,9 @@ mod mpi_backend {
 
     impl MpiComm {
         pub fn new() -> Result<Self, MeshSieveError> {
-            let uni = mpi::initialize()
-                .map_err(|err| MeshSieveError::Communication(CommError(err.to_string())))?;
+            let uni = mpi::initialize().ok_or_else(|| {
+                MeshSieveError::Communication(CommError("MPI initialization failed".to_string()))
+            })?;
             let world = uni.world();
             let rank = world.rank() as usize;
             let size = world.size() as usize;
