@@ -2,6 +2,7 @@ use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::refine::SievedArray;
 use mesh_sieve::data::section::Section;
 use mesh_sieve::data::storage::VecStorage;
+use mesh_sieve::topology::Sieve;
 use mesh_sieve::topology::cell_type::CellType;
 use mesh_sieve::topology::point::PointId;
 use mesh_sieve::topology::refine::refine_mesh;

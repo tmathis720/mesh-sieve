@@ -99,7 +99,7 @@ where
             });
         }
         let cell_type = cell_slice[0];
-        let cone: Vec<PointId> = coarse.cone(cell).collect();
+        let cone: Vec<PointId> = coarse.cone_points(cell).collect();
         let mut fine_cells = Vec::new();
 
         match cell_type {

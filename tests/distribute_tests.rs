@@ -1,8 +1,8 @@
 use mesh_sieve::algs::communicator::NoComm;
 use mesh_sieve::algs::distribute::distribute_mesh;
+use mesh_sieve::topology::InvalidateCache;
 use mesh_sieve::topology::point::PointId;
 use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
-use mesh_sieve::topology::InvalidateCache;
 
 #[derive(Default)]
 struct NonBaseOriginSieve {
@@ -18,8 +18,14 @@ impl InvalidateCache for NonBaseOriginSieve {
 impl Sieve for NonBaseOriginSieve {
     type Point = PointId;
     type Payload = ();
-    type ConeIter<'a> = <InMemorySieve<PointId, ()> as Sieve>::ConeIter<'a> where Self: 'a;
-    type SupportIter<'a> = <InMemorySieve<PointId, ()> as Sieve>::SupportIter<'a> where Self: 'a;
+    type ConeIter<'a>
+        = <InMemorySieve<PointId, ()> as Sieve>::ConeIter<'a>
+    where
+        Self: 'a;
+    type SupportIter<'a>
+        = <InMemorySieve<PointId, ()> as Sieve>::SupportIter<'a>
+    where
+        Self: 'a;
 
     fn cone<'a>(&'a self, p: Self::Point) -> Self::ConeIter<'a> {
         self.inner.cone(p)

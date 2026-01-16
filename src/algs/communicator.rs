@@ -178,7 +178,10 @@ fn encode_u64_le(values: &[u64]) -> Vec<u8> {
 
 fn decode_u64_le(bytes: &[u8], out: &mut [u64]) {
     debug_assert_eq!(bytes.len(), out.len() * core::mem::size_of::<u64>());
-    for (chunk, slot) in bytes.chunks_exact(core::mem::size_of::<u64>()).zip(out.iter_mut()) {
+    for (chunk, slot) in bytes
+        .chunks_exact(core::mem::size_of::<u64>())
+        .zip(out.iter_mut())
+    {
         let mut raw = [0u8; 8];
         raw.copy_from_slice(chunk);
         *slot = u64::from_le_bytes(raw);
@@ -187,7 +190,9 @@ fn decode_u64_le(bytes: &[u8], out: &mut [u64]) {
 
 fn add_u64_le(bytes: &[u8], accum: &mut [u64]) {
     debug_assert_eq!(bytes.len(), accum.len() * core::mem::size_of::<u64>());
-    for (chunk, slot) in bytes.chunks_exact(core::mem::size_of::<u64>()).zip(accum.iter_mut())
+    for (chunk, slot) in bytes
+        .chunks_exact(core::mem::size_of::<u64>())
+        .zip(accum.iter_mut())
     {
         let mut raw = [0u8; 8];
         raw.copy_from_slice(chunk);
@@ -496,8 +501,8 @@ mod test_barrier {
 #[cfg(feature = "mpi-support")]
 mod mpi_backend {
     use super::*;
-    use core::ptr::NonNull;
     use crate::mesh_error::{CommError, MeshSieveError};
+    use core::ptr::NonNull;
     use mpi::collective::{CommunicatorCollectives, Root, SystemOperation};
     use mpi::environment::Universe;
     use mpi::point_to_point::{Destination, Source};
@@ -583,9 +588,7 @@ mod mpi_backend {
         }
 
         fn broadcast(&self, root: usize, buf: &mut [u8]) {
-            self.world
-                .process_at_rank(root as i32)
-                .broadcast_into(buf);
+            self.world.process_at_rank(root as i32).broadcast_into(buf);
         }
 
         fn allreduce_sum(&self, values: &mut [u64]) {

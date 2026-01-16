@@ -27,6 +27,12 @@ pub enum CellType {
     Polyhedron,
 }
 
+impl Default for CellType {
+    fn default() -> Self {
+        CellType::Vertex
+    }
+}
+
 impl CellType {
     /// Returns the topological dimension of the cell, when well-defined.
     pub fn dimension(self) -> u8 {
