@@ -208,10 +208,10 @@ impl SieveSectionReader for GmshReader {
 
         let mut sieve = InMemorySieve::default();
         for (node, _) in &nodes {
-            sieve.add_point(*node);
+            MutableSieve::add_point(&mut sieve, *node);
         }
         for (cell, conn) in &elements {
-            sieve.add_point(*cell);
+            MutableSieve::add_point(&mut sieve, *cell);
             for node in conn {
                 Sieve::add_arrow(&mut sieve, *cell, *node, ());
             }

@@ -31,7 +31,8 @@ $EndElements
         println!("point {point:?} -> {values:?}");
     }
 
-    if let Some((point, _)) = coordinates.section().iter().next() {
+    let first_point = coordinates.section().iter().next().map(|(point, _)| point);
+    if let Some(point) = first_point {
         coordinates
             .section_mut()
             .try_set(point, &[42.0, 0.0, 0.0])?;
