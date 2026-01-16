@@ -128,6 +128,22 @@ pub enum MeshSieveError {
     /// Delta application failed because source and dest slices had different lengths.
     #[error("Delta error: slice length mismatch (src.len={expected}, dest.len={found})")]
     DeltaLengthMismatch { expected: usize, found: usize },
+    /// Refinement template did not match the cell cone size.
+    #[error(
+        "Refinement topology mismatch for cell {cell:?}: template {template} expects {expected} vertices, found {found}"
+    )]
+    RefinementTopologyMismatch {
+        cell: crate::topology::point::PointId,
+        template: &'static str,
+        expected: usize,
+        found: usize,
+    },
+    /// Unsupported cell type encountered during refinement.
+    #[error("Unsupported refinement cell type {cell_type:?} at cell {cell:?}")]
+    UnsupportedRefinementCellType {
+        cell: crate::topology::point::PointId,
+        cell_type: crate::topology::cell_type::CellType,
+    },
     /// Partition‐point computation overflowed to zero (invalid owner).
     #[error("Invalid partition owner: computed raw ID = 0")]
     PartitionPointOverflow,
