@@ -97,11 +97,11 @@ where
 
     // ---------- Build local submesh ----------
     let mut local = InMemorySieve::<PointId, ()>::default();
-    for base in mesh.base_points() {
-        if owner_of(parts, base)? == my_rank {
-            for (dst, _) in mesh.cone(base) {
+    for src in &pts {
+        if owner_of(parts, *src)? == my_rank {
+            for (dst, _) in mesh.cone(*src) {
                 if owner_of(parts, dst)? == my_rank {
-                    local.add_arrow(base, dst, ());
+                    local.add_arrow(*src, dst, ());
                 }
             }
         }
