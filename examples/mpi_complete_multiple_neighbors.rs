@@ -18,7 +18,7 @@ pub fn main() {
     use mesh_sieve::topology::point::PointId;
     use mesh_sieve::topology::sieve::sieve_trait::Sieve;
     use mpi::topology::Communicator;
-    let comm = MpiComm::default();
+    let comm = MpiComm::new().expect("MPI initialization failed");
     let world = &comm.world;
     let size = world.size() as usize;
     let rank = world.rank() as usize;

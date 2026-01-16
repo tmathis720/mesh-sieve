@@ -48,7 +48,7 @@ fn main() {
             PodU64(w)
         }
     }
-    let comm = MpiComm::default();
+    let comm = MpiComm::new().expect("MPI initialization failed");
     let world = &comm.world;
     let size = world.size() as usize;
     let rank = world.rank() as usize;

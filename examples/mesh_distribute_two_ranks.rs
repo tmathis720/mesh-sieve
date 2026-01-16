@@ -14,7 +14,7 @@ fn main() {
     use mesh_sieve::overlap::overlap::{Overlap as OvlGraph, OvlId};
     use mesh_sieve::topology::point::PointId;
     use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
-    let comm = MpiComm::default();
+    let comm = MpiComm::new().expect("MPI initialization failed");
     let size = Communicator::size(&comm);
     let rank = Communicator::rank(&comm);
 

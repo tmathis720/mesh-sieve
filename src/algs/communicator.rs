@@ -46,6 +46,153 @@ pub trait Communicator: Send + Sync + 'static {
 
     /// Synchronization barrier (default: no-op for non-MPI comms)
     fn barrier(&self) {}
+
+    /// Broadcast a byte buffer from `root` to all ranks.
+    fn broadcast(&self, root: usize, buf: &mut [u8]) {
+        if self.size() <= 1 {
+            return;
+        }
+        if self.rank() == root {
+            let mut sends = Vec::with_capacity(self.size().saturating_sub(1));
+            for peer in 0..self.size() {
+                if peer != root {
+                    sends.push(self.isend(peer, COLLECTIVE_TAG_BROADCAST, buf));
+                }
+            }
+            for send in sends {
+                let _ = send.wait();
+            }
+        } else {
+            let mut tmp = vec![0u8; buf.len()];
+            let recv = self.irecv(root, COLLECTIVE_TAG_BROADCAST, &mut tmp);
+            if let Some(data) = recv.wait() {
+                let copy_len = buf.len().min(data.len());
+                buf[..copy_len].copy_from_slice(&data[..copy_len]);
+            }
+        }
+    }
+
+    /// All-reduce sum for `u64` buffers.
+    fn allreduce_sum(&self, values: &mut [u64]) {
+        let size = self.size();
+        if size <= 1 {
+            return;
+        }
+        let root = 0;
+        let encoded = encode_u64_le(values);
+        if self.rank() == root {
+            let mut accum = values.to_vec();
+            let mut recvs = Vec::with_capacity(size.saturating_sub(1));
+            for peer in 0..size {
+                if peer != root {
+                    let mut tmp = vec![0u8; encoded.len()];
+                    let handle = self.irecv(peer, COLLECTIVE_TAG_ALLREDUCE_GATHER, &mut tmp);
+                    recvs.push(handle);
+                }
+            }
+            for recv in recvs {
+                if let Some(data) = recv.wait() {
+                    add_u64_le(&data, &mut accum);
+                }
+            }
+            values.copy_from_slice(&accum);
+            let out_bytes = encode_u64_le(values);
+            let mut sends = Vec::with_capacity(size.saturating_sub(1));
+            for peer in 0..size {
+                if peer != root {
+                    sends.push(self.isend(peer, COLLECTIVE_TAG_ALLREDUCE_BROADCAST, &out_bytes));
+                }
+            }
+            for send in sends {
+                let _ = send.wait();
+            }
+        } else {
+            let send = self.isend(root, COLLECTIVE_TAG_ALLREDUCE_GATHER, &encoded);
+            let mut tmp = vec![0u8; encoded.len()];
+            let recv = self.irecv(root, COLLECTIVE_TAG_ALLREDUCE_BROADCAST, &mut tmp);
+            let _ = send.wait();
+            if let Some(data) = recv.wait() {
+                decode_u64_le(&data, values);
+            }
+        }
+    }
+
+    /// All-gather fixed-size byte buffers into `recvbuf` (rank-major order).
+    fn allgather(&self, sendbuf: &[u8], recvbuf: &mut [u8]) {
+        let size = self.size();
+        let chunk = sendbuf.len();
+        if size == 0 || chunk == 0 {
+            return;
+        }
+        assert_eq!(
+            recvbuf.len(),
+            size * chunk,
+            "recvbuf must be size * sendbuf.len()"
+        );
+        let rank = self.rank();
+        let start = rank * chunk;
+        recvbuf[start..start + chunk].copy_from_slice(sendbuf);
+        if size <= 1 {
+            return;
+        }
+        let mut sends = Vec::with_capacity(size.saturating_sub(1));
+        let mut recvs = Vec::with_capacity(size.saturating_sub(1));
+        for peer in 0..size {
+            if peer == rank {
+                continue;
+            }
+            sends.push(self.isend(peer, COLLECTIVE_TAG_ALLGATHER, sendbuf));
+            let mut tmp = vec![0u8; chunk];
+            let recv = self.irecv(peer, COLLECTIVE_TAG_ALLGATHER, &mut tmp);
+            recvs.push((peer, recv));
+        }
+        for send in sends {
+            let _ = send.wait();
+        }
+        for (peer, recv) in recvs {
+            if let Some(data) = recv.wait() {
+                let offset = peer * chunk;
+                assert_eq!(
+                    data.len(),
+                    chunk,
+                    "allgather received unexpected buffer length"
+                );
+                recvbuf[offset..offset + chunk].copy_from_slice(&data);
+            }
+        }
+    }
+}
+
+const COLLECTIVE_TAG_BROADCAST: u16 = u16::MAX - 1;
+const COLLECTIVE_TAG_ALLGATHER: u16 = u16::MAX - 2;
+const COLLECTIVE_TAG_ALLREDUCE_GATHER: u16 = u16::MAX - 3;
+const COLLECTIVE_TAG_ALLREDUCE_BROADCAST: u16 = u16::MAX - 4;
+
+fn encode_u64_le(values: &[u64]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(values.len() * core::mem::size_of::<u64>());
+    for value in values {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+    out
+}
+
+fn decode_u64_le(bytes: &[u8], out: &mut [u64]) {
+    debug_assert_eq!(bytes.len(), out.len() * core::mem::size_of::<u64>());
+    for (chunk, slot) in bytes.chunks_exact(core::mem::size_of::<u64>()).zip(out.iter_mut()) {
+        let mut raw = [0u8; 8];
+        raw.copy_from_slice(chunk);
+        *slot = u64::from_le_bytes(raw);
+    }
+}
+
+fn add_u64_le(bytes: &[u8], accum: &mut [u64]) {
+    debug_assert_eq!(bytes.len(), accum.len() * core::mem::size_of::<u64>());
+    for (chunk, slot) in bytes.chunks_exact(core::mem::size_of::<u64>()).zip(accum.iter_mut())
+    {
+        let mut raw = [0u8; 8];
+        raw.copy_from_slice(chunk);
+        *slot += u64::from_le_bytes(raw);
+    }
 }
 
 /// Tag newtype for safer tag arithmetic.
@@ -350,7 +497,8 @@ mod test_barrier {
 mod mpi_backend {
     use super::*;
     use core::ptr::NonNull;
-    use mpi::collective::CommunicatorCollectives;
+    use crate::mesh_error::{CommError, MeshSieveError};
+    use mpi::collective::{CommunicatorCollectives, Root, SystemOperation};
     use mpi::environment::Universe;
     use mpi::point_to_point::{Destination, Source};
     use mpi::topology::{Communicator as _, SimpleCommunicator};
@@ -365,18 +513,25 @@ mod mpi_backend {
     unsafe impl Send for MpiComm {}
     unsafe impl Sync for MpiComm {}
 
-    impl Default for MpiComm {
-        fn default() -> Self {
-            let uni = mpi::initialize().unwrap();
+    impl MpiComm {
+        pub fn new() -> Result<Self, MeshSieveError> {
+            let uni = mpi::initialize()
+                .map_err(|err| MeshSieveError::Communication(CommError(err.to_string())))?;
             let world = uni.world();
             let rank = world.rank() as usize;
             let size = world.size() as usize;
-            Self {
+            Ok(Self {
                 _universe: uni,
                 world,
                 rank,
                 size,
-            }
+            })
+        }
+    }
+
+    impl Default for MpiComm {
+        fn default() -> Self {
+            Self::new().expect("MPI initialization failed")
         }
     }
 
@@ -425,6 +580,23 @@ mod mpi_backend {
         fn barrier(&self) {
             self.world.barrier();
         }
+
+        fn broadcast(&self, root: usize, buf: &mut [u8]) {
+            self.world
+                .process_at_rank(root as i32)
+                .broadcast_into(buf);
+        }
+
+        fn allreduce_sum(&self, values: &mut [u64]) {
+            let mut out = vec![0u64; values.len()];
+            self.world
+                .all_reduce_into(values, &mut out, SystemOperation::sum());
+            values.copy_from_slice(&out);
+        }
+
+        fn allgather(&self, sendbuf: &[u8], recvbuf: &mut [u8]) {
+            self.world.all_gather_into(sendbuf, recvbuf);
+        }
     }
 
     pub struct MpiSendHandle {
@@ -447,9 +619,7 @@ mod mpi_backend {
     impl Drop for MpiSendHandle {
         fn drop(&mut self) {
             if let Some(r) = self.req.take() {
-                let _ = r.test();
-                #[cfg(debug_assertions)]
-                eprintln!("[MpiSendHandle::drop] send not explicitly waited");
+                let _ = r.wait();
             }
             if let Some(ptr) = self.buf.take() {
                 unsafe {
@@ -479,9 +649,7 @@ mod mpi_backend {
     impl Drop for MpiRecvHandle {
         fn drop(&mut self) {
             if let Some(r) = self.req.take() {
-                let _ = r.test();
-                #[cfg(debug_assertions)]
-                eprintln!("[MpiRecvHandle::drop] recv not explicitly waited");
+                let _ = r.wait();
             }
             if let Some(ptr) = self.buf.take() {
                 unsafe {

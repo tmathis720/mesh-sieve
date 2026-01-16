@@ -52,7 +52,7 @@ fn rayon_comm_roundtrip_and_tag_isolation() {
 #[test]
 fn mpi_comm_smoke_if_available() {
     use mesh_sieve::algs::communicator::MpiComm;
-    let world = MpiComm::default();
+    let world = MpiComm::new().expect("MPI initialization failed");
     let me = world.rank();
     let n = world.size();
     const TAG: u16 = 0xCAFE;

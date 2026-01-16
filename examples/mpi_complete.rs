@@ -15,7 +15,7 @@ fn main() {
     use mpi::topology::Communicator;
     use std::process;
     // 1) Init MPI
-    let comm = MpiComm::default();
+    let comm = MpiComm::new().expect("MPI initialization failed");
     let world = &comm.world;
     let size = world.size() as usize;
     let rank = world.rank() as usize;

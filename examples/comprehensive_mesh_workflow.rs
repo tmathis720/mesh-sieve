@@ -39,7 +39,7 @@ fn main() {
     use mesh_sieve::topology::stack::{InMemoryStack, Stack};
     use std::marker::PhantomData;
 
-    let comm = MpiComm::default();
+    let comm = MpiComm::new().expect("MPI initialization failed");
     let size = comm.size();
     let rank = comm.rank();
 
