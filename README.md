@@ -65,6 +65,23 @@ for v in g.cone_points(a) { /* point-only: no payload clones */ }
 let reach: Vec<_> = g.closure_iter([a]).collect();
 ```
 
+### Boundary condition labels
+
+```rust
+use mesh_sieve::topology::labels::LabelSet;
+use mesh_sieve::topology::point::PointId;
+
+let mut labels = LabelSet::new();
+let left_wall = PointId::new(11)?;
+let right_wall = PointId::new(12)?;
+
+// Tag boundary points with integer IDs used by your BC setup.
+labels.set_label(left_wall, "boundary", 1);
+labels.set_label(right_wall, "boundary", 2);
+
+let left_boundary: Vec<_> = labels.points_with_label("boundary", 1).collect();
+```
+
 ### Field Data (Atlas + Section over Vec)
 
 ```rust

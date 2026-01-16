@@ -18,6 +18,7 @@ mod _debug_invariants;
 pub mod arrow;
 pub mod bounds;
 pub mod cache;
+pub mod labels;
 pub mod orientation;
 pub mod point;
 pub mod sieve;
@@ -25,6 +26,7 @@ pub mod stack;
 pub mod utils;
 
 pub use cache::InvalidateCache;
+pub use labels::LabelSet;
 pub use orientation::*;
 pub use sieve::*;
 
