@@ -22,6 +22,7 @@ pub mod cell_type;
 pub mod labels;
 pub mod orientation;
 pub mod point;
+pub mod refine;
 pub mod sieve;
 pub mod stack;
 pub mod utils;
