@@ -24,7 +24,7 @@ fn main() {
     use mesh_sieve::algs::rcm::distributed_rcm;
     use mesh_sieve::topology::point::PointId;
     use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
-    let comm = MpiComm::default();
+    let comm = MpiComm::new().expect("MPI initialization failed");
     let rank = comm.rank();
     let size = comm.size();
 

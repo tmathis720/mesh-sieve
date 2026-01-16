@@ -12,7 +12,7 @@ fn main() {
     use mesh_sieve::topology::point::PointId;
     use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
     // 1. Initialize MPI
-    let comm = MpiComm::default();
+    let comm = MpiComm::new().expect("MPI initialization failed");
     if comm.size() != 2 {
         eprintln!("This test requires 2 MPI ranks");
         return;
