@@ -126,6 +126,35 @@ let mut cell_types = Section::<CellType, VecStorage<CellType>>::new(cell_atlas);
 cell_types.try_set(p, &[CellType::Triangle])?;
 ```
 
+### I/O metadata (labels + cell types)
+
+The Gmsh reader populates optional mesh metadata. Element tags become labels
+(`gmsh:physical`, `gmsh:elementary`, and `gmsh:tagN`), and each element receives
+an entry in the `cell_types` section.
+
+```rust
+use mesh_sieve::io::{gmsh::GmshReader, SieveSectionReader};
+use mesh_sieve::topology::cell_type::CellType;
+
+let gmsh = GmshReader::default();
+let mesh = gmsh.read(std::fs::File::open("mesh.msh")?)?;
+
+if let Some(cell) = mesh.sieve.base_points().next() {
+  if let Some(labels) = &mesh.labels {
+    if let Some(tag) = labels.get_label(cell, "gmsh:physical") {
+      println!("physical tag = {tag}");
+    }
+  }
+
+  if let Some(cell_types) = &mesh.cell_types {
+    let kind = cell_types.try_restrict(cell)?[0];
+    if kind == CellType::Triangle {
+      println!("first cell is a triangle");
+    }
+  }
+}
+```
+
 ### Refine/Assemble (Bundle)
 
 ```rust

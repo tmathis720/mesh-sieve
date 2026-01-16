@@ -9,14 +9,18 @@
 //! - Binary files are not supported.
 //! - `.msh` v4.x (block-based) is not supported.
 //! - Higher-order elements are not supported.
-//! - Element tags are ignored (no physical groups or boundary markers yet).
+//! - Element tags are captured as labels (`gmsh:physical`, `gmsh:elementary`,
+//!   and `gmsh:tagN` for additional tags).
 //! - Coordinates are always stored as 3D `(x, y, z)` tuples.
 
 use crate::data::atlas::Atlas;
 use crate::data::coordinates::Coordinates;
+use crate::data::section::Section;
 use crate::data::storage::VecStorage;
 use crate::io::{MeshData, SieveSectionReader};
 use crate::mesh_error::MeshSieveError;
+use crate::topology::cell_type::CellType;
+use crate::topology::labels::LabelSet;
 use crate::topology::point::PointId;
 use crate::topology::sieve::{InMemorySieve, MutableSieve, Sieve};
 use std::collections::BTreeMap;
@@ -57,6 +61,20 @@ impl GmshReader {
         }
     }
 
+    fn element_cell_type(elem_type: u32) -> Option<CellType> {
+        match elem_type {
+            1 => Some(CellType::Segment),
+            2 => Some(CellType::Triangle),
+            3 => Some(CellType::Quadrilateral),
+            4 => Some(CellType::Tetrahedron),
+            5 => Some(CellType::Hexahedron),
+            6 => Some(CellType::Prism),
+            7 => Some(CellType::Pyramid),
+            15 => Some(CellType::Vertex),
+            _ => None,
+        }
+    }
+
     fn parse_point_id(raw: &str) -> Result<PointId, MeshSieveError> {
         let raw = raw
             .parse::<u64>()
@@ -74,18 +92,27 @@ impl SieveSectionReader for GmshReader {
     type Sieve = InMemorySieve<PointId, ()>;
     type Value = f64;
     type Storage = VecStorage<f64>;
+    type CellStorage = VecStorage<CellType>;
 
     fn read<R: Read>(
         &self,
         mut reader: R,
-    ) -> Result<MeshData<Self::Sieve, Self::Value, Self::Storage>, MeshSieveError> {
+    ) -> Result<MeshData<Self::Sieve, Self::Value, Self::Storage, Self::CellStorage>, MeshSieveError>
+    {
         let mut contents = String::new();
         reader.read_to_string(&mut contents)?;
         let mut lines = contents.lines().peekable();
 
         let mut version: Option<String> = None;
         let mut nodes: Vec<(PointId, [f64; 3])> = Vec::new();
-        let mut elements: Vec<(PointId, Vec<PointId>)> = Vec::new();
+        struct ElementRecord {
+            id: PointId,
+            conn: Vec<PointId>,
+            cell_type: CellType,
+            tags: Vec<i32>,
+        }
+
+        let mut elements: Vec<ElementRecord> = Vec::new();
 
         while let Some(line) = lines.next() {
             match line.trim() {
@@ -165,6 +192,11 @@ impl SieveSectionReader for GmshReader {
                                 "unsupported element type: {elem_type}"
                             ))
                         })?;
+                        let cell_type = Self::element_cell_type(elem_type).ok_or_else(|| {
+                            MeshSieveError::MeshIoParse(format!(
+                                "unsupported element type: {elem_type}"
+                            ))
+                        })?;
                         let num_tags = parts
                             .next()
                             .ok_or_else(|| {
@@ -174,8 +206,15 @@ impl SieveSectionReader for GmshReader {
                             .map_err(|_| {
                                 MeshSieveError::MeshIoParse("invalid element tag count".into())
                             })?;
+                        let mut tags = Vec::with_capacity(num_tags);
                         for _ in 0..num_tags {
-                            parts.next();
+                            let tag = parts.next().ok_or_else(|| {
+                                MeshSieveError::MeshIoParse("missing element tag".into())
+                            })?;
+                            let tag = tag.parse::<i32>().map_err(|_| {
+                                MeshSieveError::MeshIoParse("invalid element tag".into())
+                            })?;
+                            tags.push(tag);
                         }
                         let mut conn = Vec::with_capacity(node_count);
                         for _ in 0..node_count {
@@ -184,7 +223,12 @@ impl SieveSectionReader for GmshReader {
                             })?;
                             conn.push(Self::parse_point_id(node_id)?);
                         }
-                        elements.push((elem_id, conn));
+                        elements.push(ElementRecord {
+                            id: elem_id,
+                            conn,
+                            cell_type,
+                            tags,
+                        });
                     }
                     let end = lines
                         .next()
@@ -210,10 +254,10 @@ impl SieveSectionReader for GmshReader {
         for (node, _) in &nodes {
             MutableSieve::add_point(&mut sieve, *node);
         }
-        for (cell, conn) in &elements {
-            MutableSieve::add_point(&mut sieve, *cell);
-            for node in conn {
-                Sieve::add_arrow(&mut sieve, *cell, *node, ());
+        for element in &elements {
+            MutableSieve::add_point(&mut sieve, element.id);
+            for node in &element.conn {
+                Sieve::add_arrow(&mut sieve, element.id, *node, ());
             }
         }
 
@@ -226,10 +270,39 @@ impl SieveSectionReader for GmshReader {
             coords.section_mut().try_set(*node, xyz)?;
         }
 
+        let mut cell_atlas = Atlas::default();
+        for element in &elements {
+            cell_atlas.try_insert(element.id, 1)?;
+        }
+        let mut cell_types = Section::<CellType, VecStorage<CellType>>::new(cell_atlas);
+        for element in &elements {
+            cell_types.try_set(element.id, &[element.cell_type])?;
+        }
+
+        let mut labels = LabelSet::new();
+        let mut has_labels = false;
+        for element in &elements {
+            if let Some(tag) = element.tags.get(0) {
+                labels.set_label(element.id, "gmsh:physical", *tag);
+                has_labels = true;
+            }
+            if let Some(tag) = element.tags.get(1) {
+                labels.set_label(element.id, "gmsh:elementary", *tag);
+                has_labels = true;
+            }
+            for (index, tag) in element.tags.iter().enumerate().skip(2) {
+                let label_name = format!("gmsh:tag{}", index + 1);
+                labels.set_label(element.id, &label_name, *tag);
+                has_labels = true;
+            }
+        }
+
         Ok(MeshData {
             sieve,
             coordinates: Some(coords),
             sections: BTreeMap::new(),
+            labels: has_labels.then_some(labels),
+            cell_types: (!elements.is_empty()).then_some(cell_types),
         })
     }
 }
