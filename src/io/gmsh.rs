@@ -9,7 +9,7 @@
 //! - Binary files are not supported.
 //! - `.msh` v4.x (block-based) is not supported.
 //! - Higher-order elements are not supported.
-//! - Element tags are captured as labels (`gmsh:physical`, `gmsh:elementary`,
+//! - Element tags are captured as labels (`gmsh:physical`, `gmsh:entity`,
 //!   and `gmsh:tagN` for additional tags).
 //! - Coordinates are always stored as 3D `(x, y, z)` tuples.
 
@@ -287,7 +287,7 @@ impl SieveSectionReader for GmshReader {
                 has_labels = true;
             }
             if let Some(tag) = element.tags.get(1) {
-                labels.set_label(element.id, "gmsh:elementary", *tag);
+                labels.set_label(element.id, "gmsh:entity", *tag);
                 has_labels = true;
             }
             for (index, tag) in element.tags.iter().enumerate().skip(2) {
