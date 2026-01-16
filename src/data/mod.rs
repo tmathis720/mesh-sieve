@@ -3,6 +3,7 @@
 
 pub mod atlas;
 pub mod bundle;
+pub mod coordinates;
 pub mod section;
 pub mod slice_storage;
 pub mod storage;
@@ -23,3 +24,12 @@ pub use wgpu::WgpuStorage;
 
 /// Alias for the common Vec-backed section.
 pub type CpuSection<V> = section::Section<V, VecStorage<V>>;
+
+/// Coordinate storage wrapper with an attached dimension.
+pub use coordinates::Coordinates;
+
+/// Alias for the common Vec-backed coordinates bundle.
+pub type CpuCoordinates<V> = coordinates::Coordinates<V, VecStorage<V>>;
+
+/// Section alias for storing `CellType` data over points.
+pub type CellTypeSection<S> = section::Section<crate::topology::cell_type::CellType, S>;

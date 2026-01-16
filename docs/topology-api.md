@@ -29,6 +29,7 @@ This guide explains the design and usage of `mesh-sieve`’s topology layer: poi
 * `stack` – `Stack` trait, `InMemoryStack`, and `ComposedStack`.
 * `bounds` – reusable `PointLike`/`PayloadLike` bounds.
 * `cache` – `InvalidateCache`.
+* `cell_type` – common cell types for topological points (simplex/quad/hex/etc.).
 * `labels` – named integer tags for points (boundary/material IDs).
 * `utils` – DAG checker.
 * `_debug_invariants` – debug-only mirror/uniqueness checks.
@@ -115,6 +116,29 @@ let tagged: Vec<_> = labels.points_with_label("boundary", 2).collect();
 
 Each point can carry multiple labels with different names (e.g., `"boundary"` and
 `"material"`); within a label name, a point maps to a single integer value.
+
+---
+
+## Cell types (`CellType`)
+
+Use `CellType` to annotate points with element shapes such as triangles, quads,
+tets, or hexes. Store the metadata in a `Section<CellType, _>` for a typed,
+per-point mapping, or use `LabelSet` if you already model tags as integer IDs.
+
+```rust
+use mesh_sieve::data::section::Section;
+use mesh_sieve::data::storage::VecStorage;
+use mesh_sieve::data::atlas::Atlas;
+use mesh_sieve::topology::cell_type::CellType;
+use mesh_sieve::topology::point::PointId;
+
+let mut atlas = Atlas::default();
+let p = PointId::new(10)?;
+atlas.try_insert(p, 1)?;
+
+let mut cells = Section::<CellType, VecStorage<CellType>>::new(atlas);
+cells.try_set(p, &[CellType::Hexahedron])?;
+```
 
 ---
 

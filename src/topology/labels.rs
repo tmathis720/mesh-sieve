@@ -32,7 +32,9 @@ impl LabelSet {
 
     /// Returns the label value for `point` under `name`.
     pub fn get_label(&self, point: PointId, name: &str) -> Option<i32> {
-        self.labels.get(name).and_then(|map| map.get(&point).copied())
+        self.labels
+            .get(name)
+            .and_then(|map| map.get(&point).copied())
     }
 
     /// Returns all points with label `name == value`.
@@ -41,14 +43,9 @@ impl LabelSet {
         name: &'a str,
         value: i32,
     ) -> impl Iterator<Item = PointId> + 'a {
-        self.labels
-            .get(name)
-            .into_iter()
-            .flat_map(move |map| {
-                map.iter()
-                    .filter_map(move |(&point, &label_value)| {
-                        (label_value == value).then_some(point)
-                    })
-            })
+        self.labels.get(name).into_iter().flat_map(move |map| {
+            map.iter()
+                .filter_map(move |(&point, &label_value)| (label_value == value).then_some(point))
+        })
     }
 }

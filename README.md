@@ -99,6 +99,33 @@ sec.try_set(p, &[1.0, 2.0, 3.0])?;
 let s = sec.try_restrict(p)?; // &[f64]
 ```
 
+### Geometry + Cell Types
+
+Coordinates are stored as a `Section` with a fixed dimension per point, wrapped by
+`data::coordinates::Coordinates`. Cell types can be attached to topological points
+using either a `Section<CellType, _>` (for strongly typed metadata) or a `LabelSet`
+if you prefer integer tags.
+
+```rust
+use mesh_sieve::data::{coordinates::Coordinates, section::Section, storage::VecStorage};
+use mesh_sieve::topology::cell_type::CellType;
+use mesh_sieve::topology::point::PointId;
+use mesh_sieve::data::atlas::Atlas;
+
+let mut atlas = Atlas::default();
+let p = PointId::new(1)?;
+atlas.try_insert(p, 3)?; // xyz
+
+let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(3, atlas)?;
+coords.try_restrict_mut(p)?.copy_from_slice(&[0.0, 1.0, 2.0]);
+
+// Cell types as a section over points.
+let mut cell_atlas = Atlas::default();
+cell_atlas.try_insert(p, 1)?;
+let mut cell_types = Section::<CellType, VecStorage<CellType>>::new(cell_atlas);
+cell_types.try_set(p, &[CellType::Triangle])?;
+```
+
 ### Refine/Assemble (Bundle)
 
 ```rust
