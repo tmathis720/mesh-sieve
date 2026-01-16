@@ -10,7 +10,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use crate::algs::wire::{WirePoint, cast_slice, cast_slice_mut};
 use bytemuck::{Pod, Zeroable};
 
-use crate::algs::communicator::{StackCommTags, Wait};
+use crate::algs::communicator::{CommTag, StackCommTags, Wait};
 use crate::algs::completion::size_exchange::exchange_sizes_symmetric;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::sieve::sieve_trait::Sieve;
@@ -215,7 +215,8 @@ where
     O: Sieve<Point = P, Payload = R> + Sync,
     R: HasRank + Copy + Send + 'static,
 {
-    let base = comm.reserve_tag_range(2)?;
-    let tags = StackCommTags::from_base(base);
+    // Legacy default tags keep ranks in sync for thread-local comms; use
+    // complete_stack_with_tags for concurrent or coordinated epochs.
+    let tags = StackCommTags::from_base(CommTag::new(0xC0DE));
     complete_stack_with_tags::<P, Q, Pay, C, S, O, R>(stack, overlap, comm, my_rank, n_ranks, tags)
 }

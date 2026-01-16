@@ -192,8 +192,9 @@ where
     S::Payload: Default + Clone + Send + 'static,
     C: Communicator + Sync,
 {
-    let base = comm.reserve_tag_range(2)?;
-    let tags = SieveCommTags::from_base(base);
+    // Legacy default tags keep ranks in sync for thread-local comms; use
+    // complete_sieve_with_tags for concurrent or coordinated epochs.
+    let tags = SieveCommTags::from_base(CommTag::new(0xC0DE));
     complete_sieve_with_tags(mesh, overlap, comm, my_rank, tags)
 }
 

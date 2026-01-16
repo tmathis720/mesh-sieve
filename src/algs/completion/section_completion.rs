@@ -101,8 +101,9 @@ where
     D::Part: bytemuck::Pod + Default,
     C: Communicator + Sync,
 {
-    let base = comm.reserve_tag_range(2)?;
-    let tags = SectionCommTags::from_base(base);
+    // Legacy default tags keep ranks in sync for thread-local comms; use
+    // complete_section_with_tags for concurrent or coordinated epochs.
+    let tags = SectionCommTags::from_base(CommTag::new(0xBEEF));
     complete_section_with_tags::<V, S, D, C>(section, overlap, comm, my_rank, tags)
 }
 
