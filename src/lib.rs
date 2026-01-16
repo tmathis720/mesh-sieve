@@ -81,6 +81,7 @@ pub mod prelude {
     pub use crate::overlap::delta::{AddDelta, CopyDelta, ValueDelta};
     pub use crate::overlap::overlap::Overlap;
     pub use crate::topology::bounds::{PayloadLike, PointLike};
+    pub use crate::topology::labels::LabelSet;
     pub use crate::topology::point::PointId;
     pub use crate::topology::sieve::{
         InMemoryOrientedSieve, InMemoryOrientedSieveArc, InMemorySieve, InMemorySieveArc,

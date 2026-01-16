@@ -29,6 +29,7 @@ This guide explains the design and usage of `mesh-sieve`’s topology layer: poi
 * `stack` – `Stack` trait, `InMemoryStack`, and `ComposedStack`.
 * `bounds` – reusable `PointLike`/`PayloadLike` bounds.
 * `cache` – `InvalidateCache`.
+* `labels` – named integer tags for points (boundary/material IDs).
 * `utils` – DAG checker.
 * `_debug_invariants` – debug-only mirror/uniqueness checks.
 
@@ -91,6 +92,29 @@ let total: Sign = accumulate_path([Sign::default(), Sign(true)]);
 * `PointLike = Copy + Eq + Hash + Ord + Debug`
 * `PayloadLike = Clone`
 * `InvalidateCache` – every mutating backend implements it and clears its derived structures (strata, etc.).
+
+---
+
+## Point labels (`LabelSet`)
+
+Topology labels attach integer tags to points, grouped by a string name. Use them for
+boundary condition IDs, material sets, or other discrete point metadata.
+
+```rust
+use mesh_sieve::topology::labels::LabelSet;
+use mesh_sieve::topology::point::PointId;
+
+let mut labels = LabelSet::new();
+let p = PointId::new(10)?;
+
+labels.set_label(p, "boundary", 2);
+assert_eq!(labels.get_label(p, "boundary"), Some(2));
+
+let tagged: Vec<_> = labels.points_with_label("boundary", 2).collect();
+```
+
+Each point can carry multiple labels with different names (e.g., `"boundary"` and
+`"material"`); within a label name, a point maps to a single integer value.
 
 ---
 
