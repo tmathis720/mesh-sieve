@@ -25,11 +25,11 @@ where
     let mut recv_size: HashMap<usize, (C::RecvHandle, WireCount)> = HashMap::new();
     for &nbr in links.keys() {
         let mut cnt = WireCount::new(0);
-        let h = comm.irecv(
+        let h = comm.irecv_result(
             nbr,
             tag.as_u16(),
             cast_slice_mut(std::slice::from_mut(&mut cnt)),
-        );
+        )?;
         recv_size.insert(nbr, (h, cnt));
     }
 
@@ -38,7 +38,11 @@ where
     let mut send_bufs = Vec::with_capacity(links.len());
     for (&nbr, items) in links.iter() {
         let count = WireCount::new(items.len());
-        pending_sends.push(comm.isend(nbr, tag.as_u16(), cast_slice(std::slice::from_ref(&count))));
+        pending_sends.push(comm.isend_result(
+            nbr,
+            tag.as_u16(),
+            cast_slice(std::slice::from_ref(&count)),
+        )?);
         send_bufs.push(count);
     }
 
@@ -103,11 +107,11 @@ where
     let mut recv_size: HashMap<usize, (C::RecvHandle, WireCount)> = HashMap::new();
     for &nbr in all_neighbors {
         let mut cnt = WireCount::new(0);
-        let h = comm.irecv(
+        let h = comm.irecv_result(
             nbr,
             tag.as_u16(),
             cast_slice_mut(std::slice::from_mut(&mut cnt)),
-        );
+        )?;
         recv_size.insert(nbr, (h, cnt));
     }
 
@@ -116,7 +120,11 @@ where
     let mut send_bufs = Vec::with_capacity(all_neighbors.len());
     for &nbr in all_neighbors {
         let count = WireCount::new(links.get(&nbr).map_or(0, |v| v.len()));
-        pending_sends.push(comm.isend(nbr, tag.as_u16(), cast_slice(std::slice::from_ref(&count))));
+        pending_sends.push(comm.isend_result(
+            nbr,
+            tag.as_u16(),
+            cast_slice(std::slice::from_ref(&count)),
+        )?);
         send_bufs.push(count);
     }
 

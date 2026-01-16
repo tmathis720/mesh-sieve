@@ -43,7 +43,7 @@ where
             .ok_or(MeshSieveError::MissingRecvCount { neighbor: nbr })?
             as usize;
         let mut buffer = vec![0u8; n_items * std::mem::size_of::<D::Part>()];
-        let h = comm.irecv(nbr, base_tag, &mut buffer);
+        let h = comm.irecv_result(nbr, base_tag, &mut buffer)?;
         recv_data.insert(nbr, (h, buffer));
     }
 
@@ -64,7 +64,7 @@ where
             scratch.push(D::restrict(&slice[0]));
         }
         let bytes = cast_slice(&scratch);
-        pending_sends.push(comm.isend(nbr, base_tag, bytes));
+        pending_sends.push(comm.isend_result(nbr, base_tag, bytes)?);
     }
 
     // 3) wait for all recvs and fuse
@@ -149,7 +149,7 @@ where
     for &nbr in all_neighbors {
         let n_points = recv_counts.get(&nbr).copied().unwrap_or(0) as usize;
         let mut buf = vec![0u32; n_points];
-        let h = comm.irecv(nbr, tag_len, cast_slice_mut(&mut buf));
+        let h = comm.irecv_result(nbr, tag_len, cast_slice_mut(&mut buf))?;
         recv_lens.insert(nbr, (h, buf));
     }
 
@@ -169,7 +169,7 @@ where
             lens_out.push(u32::try_from(slice.len()).unwrap_or(u32::MAX));
         }
         let bytes = cast_slice(&lens_out);
-        pending_len_sends.push(comm.isend(nbr, tag_len, bytes));
+        pending_len_sends.push(comm.isend_result(nbr, tag_len, bytes)?);
         keep_len_send_bufs.push(lens_out);
     }
 
@@ -225,7 +225,7 @@ where
     for (&nbr, lens) in &lens_in {
         let total_in: usize = lens.iter().map(|&x| x as usize).sum();
         let mut buf = vec![D::Part::default(); total_in];
-        let h = comm.irecv(nbr, tag_data, cast_slice_mut(&mut buf));
+        let h = comm.irecv_result(nbr, tag_data, cast_slice_mut(&mut buf))?;
         recv_parts.insert(nbr, (h, buf));
     }
 
@@ -247,7 +247,7 @@ where
             }
         }
         let bytes = cast_slice(&flat);
-        pending_data_sends.push(comm.isend(nbr, tag_data, bytes));
+        pending_data_sends.push(comm.isend_result(nbr, tag_data, bytes)?);
         keep_data_send_bufs.push(flat);
     }
 

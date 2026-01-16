@@ -32,16 +32,16 @@ pub fn fetch_adjacency<C: Communicator>(
     for &rank in requests.keys() {
         let mut hdr = WireHdr::new(0);
         let mut cnt = WireCount::new(0);
-        let h_hdr = comm.irecv(
+        let h_hdr = comm.irecv_result(
             rank,
             base_tag,
             cast_slice_mut(std::slice::from_mut(&mut hdr)),
-        );
-        let h_cnt = comm.irecv(
+        )?;
+        let h_cnt = comm.irecv_result(
             rank,
             base_tag + 1,
             cast_slice_mut(std::slice::from_mut(&mut cnt)),
-        );
+        )?;
         recv_counts.push((rank, hdr, cnt, h_hdr, h_cnt));
     }
 
@@ -54,9 +54,17 @@ pub fn fetch_adjacency<C: Communicator>(
         let body: Vec<WirePointRepr> = pts.iter().map(|p| WirePointRepr::of(p.get())).collect();
         let hdr = WireHdr::new(kind as u16);
         let cnt = WireCount::new(body.len());
-        pending_sends.push(comm.isend(rank, base_tag, cast_slice(std::slice::from_ref(&hdr))));
-        pending_sends.push(comm.isend(rank, base_tag + 1, cast_slice(std::slice::from_ref(&cnt))));
-        pending_sends.push(comm.isend(rank, base_tag, cast_slice(&body)));
+        pending_sends.push(comm.isend_result(
+            rank,
+            base_tag,
+            cast_slice(std::slice::from_ref(&hdr)),
+        )?);
+        pending_sends.push(comm.isend_result(
+            rank,
+            base_tag + 1,
+            cast_slice(std::slice::from_ref(&cnt)),
+        )?);
+        pending_sends.push(comm.isend_result(rank, base_tag, cast_slice(&body))?);
         _keep_pts.push(body);
         _keep_hdrs.push(hdr);
         _keep_cnts.push(cnt);
@@ -114,7 +122,7 @@ pub fn fetch_adjacency<C: Communicator>(
     let mut recv_payloads = Vec::new();
     for (&rank, &nrec) in &counts {
         let mut buf = vec![WireAdj::zeroed(); nrec];
-        let h = comm.irecv(rank, base_tag + 2, cast_slice_mut(buf.as_mut_slice()));
+        let h = comm.irecv_result(rank, base_tag + 2, cast_slice_mut(buf.as_mut_slice()))?;
         recv_payloads.push((rank, h, buf));
     }
 

@@ -127,14 +127,14 @@ where
     for &nbr in &neighbors {
         let n = counts.get(&nbr).copied().unwrap_or(0) as usize;
         let mut buf = vec![WireArrow::zeroed(); n];
-        let h = comm.irecv(nbr, tags.data.as_u16(), cast_slice_mut(&mut buf));
+        let h = comm.irecv_result(nbr, tags.data.as_u16(), cast_slice_mut(&mut buf))?;
         recvs.push((nbr, h, buf));
     }
 
     let mut sends = Vec::new();
     for &nbr in &neighbors {
         let out = wires.get(&nbr).map_or(&[][..], |v| &v[..]);
-        sends.push(comm.isend(nbr, tags.data.as_u16(), cast_slice(out)));
+        sends.push(comm.isend_result(nbr, tags.data.as_u16(), cast_slice(out))?);
     }
 
     let mut maybe_err: Option<MeshSieveError> = None;
@@ -192,7 +192,8 @@ where
     S::Payload: Default + Clone + Send + 'static,
     C: Communicator + Sync,
 {
-    let tags = SieveCommTags::from_base(CommTag::new(0xC0DE));
+    let base = comm.reserve_tag_range(2)?;
+    let tags = SieveCommTags::from_base(base);
     complete_sieve_with_tags(mesh, overlap, comm, my_rank, tags)
 }
 
