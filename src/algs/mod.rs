@@ -17,6 +17,11 @@ pub mod traversal_core;
 pub mod traversal_ref;
 pub mod wire;
 
-pub use crate::algs::distribute::distribute_mesh;
+pub use crate::algs::distribute::{
+    distribute_mesh, distribute_with_overlap, CellPartitioner, CustomPartitioner,
+    DistributionConfig, DistributedMeshData, ProvidedPartition,
+};
+#[cfg(feature = "metis-support")]
+pub use crate::algs::distribute::MetisPartitioner;
 pub use completion::complete_section;
 pub use lattice::adjacent;

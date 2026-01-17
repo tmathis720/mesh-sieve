@@ -4,7 +4,7 @@
 //! This is useful for boundary conditions, material IDs, or other
 //! integer annotations on mesh points.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::topology::point::PointId;
 
@@ -47,5 +47,26 @@ impl LabelSet {
             map.iter()
                 .filter_map(move |(&point, &label_value)| (label_value == value).then_some(point))
         })
+    }
+
+    /// Returns a new label set containing only labels on the provided points.
+    pub fn filtered_to_points<I>(&self, points: I) -> Self
+    where
+        I: IntoIterator<Item = PointId>,
+    {
+        let keep: HashSet<PointId> = points.into_iter().collect();
+        if keep.is_empty() {
+            return Self::default();
+        }
+
+        let mut out = LabelSet::new();
+        for (name, values) in &self.labels {
+            for (&point, &value) in values {
+                if keep.contains(&point) {
+                    out.set_label(point, name, value);
+                }
+            }
+        }
+        out
     }
 }
