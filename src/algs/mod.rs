@@ -23,5 +23,8 @@ pub use crate::algs::distribute::{
 };
 #[cfg(feature = "metis-support")]
 pub use crate::algs::distribute::MetisPartitioner;
-pub use completion::complete_section;
+pub use completion::{
+    complete_section, complete_section_with_ownership, complete_section_with_tags,
+    complete_section_with_tags_and_ownership,
+};
 pub use lattice::adjacent;

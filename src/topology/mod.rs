@@ -20,6 +20,7 @@ pub mod bounds;
 pub mod cache;
 pub mod cell_type;
 pub mod labels;
+pub mod ownership;
 pub mod orientation;
 pub mod point;
 pub mod refine;
@@ -30,6 +31,7 @@ pub mod utils;
 pub use cache::InvalidateCache;
 pub use cell_type::CellType;
 pub use labels::LabelSet;
+pub use ownership::{OwnershipEntry, PointOwnership};
 pub use orientation::*;
 pub use sieve::*;
 

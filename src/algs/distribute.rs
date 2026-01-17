@@ -10,6 +10,7 @@ use crate::mesh_error::MeshSieveError;
 use crate::overlap::overlap::{Overlap, OvlId};
 use crate::topology::cell_type::CellType;
 use crate::topology::labels::LabelSet;
+use crate::topology::ownership::PointOwnership;
 use crate::topology::point::PointId;
 use crate::topology::sieve::{InMemorySieve, Sieve};
 use std::collections::{BTreeMap, BTreeSet};
@@ -169,6 +170,8 @@ where
     pub overlap: Overlap,
     /// Point owners derived from the cell partition.
     pub point_owners: Vec<usize>,
+    /// Ownership metadata for local points, including ghost status.
+    pub ownership: PointOwnership,
     /// Cell partition assignment used for distribution.
     pub cell_parts: Vec<usize>,
     /// Optional coordinate section for local points.
@@ -314,6 +317,11 @@ where
         .ok_or(MeshSieveError::PartitionIndexOutOfBounds(my_rank))?;
 
     let overlap = build_overlap_for_rank(my_rank, local_set, &point_ranks)?;
+    let ownership = PointOwnership::from_local_set(
+        local_set.iter().copied(),
+        &point_owners,
+        my_rank,
+    )?;
 
     let local_sieve = build_local_sieve(mesh_data, local_set);
     let labels = mesh_data
@@ -352,6 +360,7 @@ where
         sieve: local_sieve,
         overlap,
         point_owners,
+        ownership,
         cell_parts,
         coordinates,
         sections,

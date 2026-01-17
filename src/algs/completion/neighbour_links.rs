@@ -9,6 +9,7 @@ use crate::data::section::Section;
 use crate::data::storage::Storage;
 use crate::mesh_error::MeshSieveError;
 use crate::overlap::overlap::{Overlap, local};
+use crate::topology::ownership::PointOwnership;
 use crate::topology::point::PointId;
 use crate::topology::sieve::sieve_trait::Sieve;
 use std::collections::HashMap;
@@ -76,6 +77,51 @@ where
     // for vec in out.values_mut() {
     //     vec.sort_unstable_by_key(|&(l, r)| (l.get(), r.get()));
     // }
+
+    Ok(out)
+}
+
+/// Compute the neighbor‐links for section completion using explicit ownership metadata.
+pub fn neighbour_links_with_ownership<V, S>(
+    section: &Section<V, S>,
+    ovlp: &Overlap,
+    ownership: &PointOwnership,
+    my_rank: usize,
+) -> Result<HashMap<usize, Vec<(PointId, PointId)>>, MeshSieveError>
+where
+    S: Storage<V>,
+{
+    let mut out: HashMap<usize, Vec<(PointId, PointId)>> = HashMap::new();
+
+    for p in section.atlas().points() {
+        let owner = ownership.owner_or_err(p)?;
+        if owner == my_rank {
+            for (_dst, rem) in ovlp.cone(local(p)) {
+                if rem.rank != my_rank {
+                    let remote_pt = rem
+                        .remote_point
+                        .ok_or(MeshSieveError::OverlapLinkMissing(p, rem.rank))?;
+                    out.entry(rem.rank).or_default().push((p, remote_pt));
+                }
+            }
+        } else {
+            let mut remote_point = None;
+            for (_dst, rem) in ovlp.cone(local(p)) {
+                if rem.rank == owner {
+                    remote_point = rem.remote_point;
+                    break;
+                }
+            }
+            let remote_pt = remote_point.ok_or(MeshSieveError::OverlapLinkMissing(p, owner))?;
+            out.entry(owner).or_default().push((remote_pt, p));
+        }
+    }
+
+    if out.is_empty() {
+        return Err(MeshSieveError::MissingOverlap {
+            source: format!("rank {my_rank} has no neighbour links").into(),
+        });
+    }
 
     Ok(out)
 }

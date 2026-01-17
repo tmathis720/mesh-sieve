@@ -7,13 +7,16 @@ use std::collections::{BTreeSet, HashSet};
 
 use crate::algs::communicator::{CommTag, Communicator, SectionCommTags};
 use crate::algs::completion::{
-    data_exchange, neighbour_links::neighbour_links, size_exchange::exchange_sizes_symmetric,
+    data_exchange,
+    neighbour_links::{neighbour_links, neighbour_links_with_ownership},
+    size_exchange::exchange_sizes_symmetric,
 };
 use crate::data::section::Section;
 use crate::data::storage::Storage;
 use crate::mesh_error::MeshSieveError;
 use crate::overlap::delta::ValueDelta;
 use crate::overlap::overlap::Overlap;
+use crate::topology::ownership::PointOwnership;
 
 /// Complete a section using explicit communication tags.
 pub fn complete_section_with_tags<V, S, D, C>(
@@ -87,6 +90,73 @@ where
     Ok(())
 }
 
+/// Complete a section using explicit ownership metadata and communication tags.
+pub fn complete_section_with_tags_and_ownership<V, S, D, C>(
+    section: &mut Section<V, S>,
+    overlap: &Overlap,
+    ownership: &PointOwnership,
+    comm: &C,
+    my_rank: usize,
+    tags: SectionCommTags,
+) -> Result<(), MeshSieveError>
+where
+    V: Clone + Default + Send + PartialEq + 'static,
+    S: Storage<V>,
+    D: ValueDelta<V> + Send + Sync + 'static,
+    D::Part: bytemuck::Pod + Default,
+    C: Communicator + Sync,
+{
+    #[cfg(any(
+        debug_assertions,
+        feature = "strict-invariants",
+        feature = "check-invariants"
+    ))]
+    overlap.validate_invariants()?;
+
+    {
+        let mut nb: BTreeSet<usize> = overlap.neighbor_ranks().collect();
+        nb.remove(&my_rank);
+        if nb.is_empty() {
+            return Ok(());
+        }
+    }
+
+    let links =
+        neighbour_links_with_ownership::<V, S>(section, overlap, ownership, my_rank).map_err(
+            |e| MeshSieveError::CommError {
+                neighbor: my_rank,
+                source: format!("neighbour_links_with_ownership failed: {e}").into(),
+            },
+        )?;
+
+    let mut all: BTreeSet<usize> = overlap.neighbor_ranks().collect();
+    all.extend(links.keys().copied());
+    all.remove(&my_rank);
+    let all_neighbors: HashSet<usize> = all.into_iter().collect();
+
+    let counts =
+        exchange_sizes_symmetric(&links, comm, tags.sizes, &all_neighbors).map_err(|e| {
+            MeshSieveError::CommError {
+                neighbor: my_rank,
+                source: format!("exchange_sizes_symmetric failed: {e}").into(),
+            }
+        })?;
+
+    data_exchange::exchange_data_symmetric::<V, S, D, C>(
+        &links,
+        &counts,
+        comm,
+        tags.data.as_u16(),
+        section,
+        &all_neighbors,
+    )?;
+
+    #[cfg(debug_assertions)]
+    comm.barrier_result()?;
+
+    Ok(())
+}
+
 /// Convenience wrapper using a legacy default tag (0xBEEF).
 pub fn complete_section<V, S, D, C>(
     section: &mut Section<V, S>,
@@ -105,6 +175,32 @@ where
     // complete_section_with_tags for concurrent or coordinated epochs.
     let tags = SectionCommTags::from_base(CommTag::new(0xBEEF));
     complete_section_with_tags::<V, S, D, C>(section, overlap, comm, my_rank, tags)
+}
+
+/// Convenience wrapper using ownership metadata with a legacy default tag (0xBEEF).
+pub fn complete_section_with_ownership<V, S, D, C>(
+    section: &mut Section<V, S>,
+    overlap: &Overlap,
+    ownership: &PointOwnership,
+    comm: &C,
+    my_rank: usize,
+) -> Result<(), MeshSieveError>
+where
+    V: Clone + Default + Send + PartialEq + 'static,
+    S: Storage<V>,
+    D: ValueDelta<V> + Send + Sync + 'static,
+    D::Part: bytemuck::Pod + Default,
+    C: Communicator + Sync,
+{
+    let tags = SectionCommTags::from_base(CommTag::new(0xBEEF));
+    complete_section_with_tags_and_ownership::<V, S, D, C>(
+        section,
+        overlap,
+        ownership,
+        comm,
+        my_rank,
+        tags,
+    )
 }
 
 #[cfg(test)]
