@@ -55,7 +55,9 @@ pub enum MeshSieveError {
     SievedArrayPointNotInAtlas(crate::topology::point::PointId),
 
     /// Mismatch between expected and provided slice length for a point.
-    #[error("Section error: slice length mismatch for {point:?}: expected {expected}, got {found}")]
+    #[error(
+        "Section error: slice length mismatch for {point:?}: expected {expected}, got {found}"
+    )]
     SliceLengthMismatch {
         point: crate::topology::point::PointId,
         expected: usize,
@@ -223,6 +225,9 @@ pub enum MeshSieveError {
     /// Generic I/O error for mesh readers/writers.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+    /// Invalid or inverted geometry detected.
+    #[error("Geometry error: {0}")]
+    InvalidGeometry(String),
     /// Parse error while reading mesh formats.
     #[error("Mesh I/O parse error: {0}")]
     MeshIoParse(String),
@@ -280,6 +285,7 @@ impl PartialEq for MeshSieveError {
             | (ZeroLengthSlice, ZeroLengthSlice)
             | (PartitionPointOverflow, PartitionPointOverflow)
             | (GpuMappingFailed, GpuMappingFailed) => true,
+            (InvalidGeometry(a), InvalidGeometry(b)) => a == b,
             (UnsupportedStackOperation(a), UnsupportedStackOperation(b)) => a == b,
             (MissingPointInCone(a), MissingPointInCone(b)) => a == b,
             (UnknownPoint(a), UnknownPoint(b)) => a == b,
