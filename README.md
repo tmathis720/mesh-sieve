@@ -106,6 +106,9 @@ Coordinates are stored as a `Section` with a fixed dimension per point, wrapped 
 using either a `Section<CellType, _>` (for strongly typed metadata) or a `LabelSet`
 if you prefer integer tags.
 
+See [docs/geometry-quality.md](docs/geometry-quality.md) for expected coordinate
+layouts and examples of geometry quality checks.
+
 ```rust
 use mesh_sieve::data::{coordinates::Coordinates, section::Section, storage::VecStorage};
 use mesh_sieve::topology::cell_type::CellType;

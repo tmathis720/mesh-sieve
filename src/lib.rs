@@ -53,6 +53,7 @@
 pub mod algs;
 pub mod data;
 pub mod debug_invariants;
+pub mod geometry;
 pub mod io;
 pub mod mesh_error;
 pub mod overlap;
@@ -71,14 +72,15 @@ pub mod prelude {
     #[cfg(feature = "rayon")]
     pub use crate::algs::communicator::RayonComm;
     pub use crate::algs::completion::{
-        complete_section, complete_section_with_ownership, complete_section_with_tags_and_ownership,
-        complete_sieve, complete_stack, complete_stack_with_tags,
-    };
-    pub use crate::algs::distribute::{
-        distribute_with_overlap, CustomPartitioner, DistributionConfig, ProvidedPartition,
+        complete_section, complete_section_with_ownership,
+        complete_section_with_tags_and_ownership, complete_sieve, complete_stack,
+        complete_stack_with_tags,
     };
     #[cfg(feature = "metis-support")]
     pub use crate::algs::distribute::MetisPartitioner;
+    pub use crate::algs::distribute::{
+        CustomPartitioner, DistributionConfig, ProvidedPartition, distribute_with_overlap,
+    };
     pub use crate::algs::rcm::distributed_rcm;
     pub use crate::data::atlas::Atlas;
     pub use crate::data::coordinates::Coordinates;

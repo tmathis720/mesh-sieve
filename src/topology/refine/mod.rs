@@ -16,8 +16,10 @@
 //! [`crate::data::refine::SievedArray::try_refine_with_sifter`], enabling transfer of
 //! cell-wise data from the coarse mesh to the refined mesh.
 
+use crate::data::coordinates::Coordinates;
 use crate::data::section::Section;
 use crate::data::storage::Storage;
+use crate::geometry::quality::validate_cell_geometry;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::arrow::Polarity;
 use crate::topology::cell_type::CellType;
@@ -47,6 +49,13 @@ pub struct RefinedMeshWithOwnership {
     pub cell_refinement: RefinementMap,
     /// Updated ownership metadata including new points.
     pub ownership: PointOwnership,
+}
+
+/// Optional settings for refinement.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RefineOptions {
+    /// When enabled, validate cell geometry and reject inverted or degenerate elements.
+    pub check_geometry: bool,
 }
 
 /// Reference 1→4 subdivision of a triangle given vertices and mid-edge points.
@@ -231,6 +240,58 @@ pub fn refine_mesh<S>(
 where
     S: Storage<CellType>,
 {
+    refine_mesh_with_options::<S, crate::data::storage::VecStorage<f64>>(
+        coarse,
+        cell_types,
+        None,
+        RefineOptions::default(),
+    )
+}
+
+/// Refine a 2D/3D mesh using reference subdivision templates with optional checks.
+///
+/// Returns a refined [`InMemorySieve`] plus a refinement map for carrying
+/// cell-wise data via [`crate::data::refine::SievedArray::try_refine_with_sifter`].
+///
+/// # Errors
+/// - [`MeshSieveError::InvalidGeometry`] when geometry checks are requested and fail.
+/// - [`MeshSieveError::UnsupportedRefinementCellType`] for unsupported cell types.
+/// - [`MeshSieveError::RefinementTopologyMismatch`] if vertex counts do not match templates.
+/// - [`MeshSieveError::SliceLengthMismatch`] if the cell-type section is not length-1.
+pub fn refine_mesh_with_options<S, Cs>(
+    coarse: &mut impl Sieve<Point = PointId>,
+    cell_types: &Section<CellType, S>,
+    coordinates: Option<&Coordinates<f64, Cs>>,
+    options: RefineOptions,
+) -> Result<RefinedMesh, MeshSieveError>
+where
+    S: Storage<CellType>,
+    Cs: Storage<f64>,
+{
+    if options.check_geometry {
+        let coords = coordinates.ok_or_else(|| {
+            MeshSieveError::InvalidGeometry("geometry checks requested without coordinates".into())
+        })?;
+        for (cell, cell_slice) in cell_types.iter() {
+            if cell_slice.len() != 1 {
+                return Err(MeshSieveError::SliceLengthMismatch {
+                    point: cell,
+                    expected: 1,
+                    found: cell_slice.len(),
+                });
+            }
+            let cell_type = cell_slice[0];
+            let expected = expected_vertex_count(cell_type)
+                .ok_or(MeshSieveError::UnsupportedRefinementCellType { cell, cell_type })?;
+            let vertices = cell_vertices(coarse, cell, expected)?;
+            if let Err(err) = validate_cell_geometry(cell_type, &vertices, coords) {
+                return Err(MeshSieveError::InvalidGeometry(format!(
+                    "cell {cell:?}: {err}"
+                )));
+            }
+        }
+    }
+
     let mut max_id = 0u64;
     for p in coarse.chart_points()? {
         max_id = max_id.max(p.get());
@@ -457,7 +518,47 @@ pub fn refine_mesh_with_ownership<S>(
 where
     S: Storage<CellType>,
 {
-    let refined = refine_mesh(coarse, cell_types)?;
+    let refined = refine_mesh_with_options::<S, crate::data::storage::VecStorage<f64>>(
+        coarse,
+        cell_types,
+        None,
+        RefineOptions::default(),
+    )?;
+    let mut refined_ownership = ownership.clone();
+
+    for (cell, fine_cells) in &refined.cell_refinement {
+        let owner = refined_ownership.owner_or_err(*cell)?;
+        for (fine_cell, _) in fine_cells {
+            refined_ownership.set_owner_min(*fine_cell, owner, my_rank)?;
+            for p in refined.sieve.cone_points(*fine_cell) {
+                if refined_ownership.entry(p).is_none() {
+                    refined_ownership.set_owner_min(p, owner, my_rank)?;
+                }
+            }
+        }
+    }
+
+    Ok(RefinedMeshWithOwnership {
+        sieve: refined.sieve,
+        cell_refinement: refined.cell_refinement,
+        ownership: refined_ownership,
+    })
+}
+
+/// Refine a mesh and update point ownership metadata with optional geometry checks.
+pub fn refine_mesh_with_ownership_and_options<S, Cs>(
+    coarse: &mut impl Sieve<Point = PointId>,
+    cell_types: &Section<CellType, S>,
+    ownership: &PointOwnership,
+    my_rank: usize,
+    coordinates: Option<&Coordinates<f64, Cs>>,
+    options: RefineOptions,
+) -> Result<RefinedMeshWithOwnership, MeshSieveError>
+where
+    S: Storage<CellType>,
+    Cs: Storage<f64>,
+{
+    let refined = refine_mesh_with_options(coarse, cell_types, coordinates, options)?;
     let mut refined_ownership = ownership.clone();
 
     for (cell, fine_cells) in &refined.cell_refinement {

@@ -17,6 +17,7 @@ use crate::data::atlas::Atlas;
 use crate::data::coordinates::Coordinates;
 use crate::data::section::Section;
 use crate::data::storage::VecStorage;
+use crate::geometry::quality::validate_cell_geometry;
 use crate::io::{MeshData, SieveSectionReader};
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cell_type::CellType;
@@ -29,6 +30,13 @@ use std::io::Read;
 /// Gmsh `.msh` reader for ASCII v2.2 meshes.
 #[derive(Debug, Default, Clone)]
 pub struct GmshReader;
+
+/// Optional settings for Gmsh import.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct GmshReadOptions {
+    /// When enabled, validate cell geometry and reject inverted or degenerate elements.
+    pub check_geometry: bool,
+}
 
 impl GmshReader {
     fn parse_version(line: &str) -> Result<&str, MeshSieveError> {
@@ -86,19 +94,17 @@ impl GmshReader {
         raw.parse::<f64>()
             .map_err(|_| MeshSieveError::MeshIoParse(format!("invalid coordinate: {raw}")))
     }
-}
 
-impl SieveSectionReader for GmshReader {
-    type Sieve = InMemorySieve<PointId, ()>;
-    type Value = f64;
-    type Storage = VecStorage<f64>;
-    type CellStorage = VecStorage<CellType>;
-
-    fn read<R: Read>(
+    /// Read mesh data with explicit import options.
+    pub fn read_with_options<R: Read>(
         &self,
-        mut reader: R,
-    ) -> Result<MeshData<Self::Sieve, Self::Value, Self::Storage, Self::CellStorage>, MeshSieveError>
-    {
+        reader: R,
+        options: GmshReadOptions,
+    ) -> Result<
+        MeshData<InMemorySieve<PointId, ()>, f64, VecStorage<f64>, VecStorage<CellType>>,
+        MeshSieveError,
+    > {
+        let mut reader = reader;
         let mut contents = String::new();
         reader.read_to_string(&mut contents)?;
         let mut lines = contents.lines().peekable();
@@ -270,6 +276,18 @@ impl SieveSectionReader for GmshReader {
             coords.section_mut().try_set(*node, xyz)?;
         }
 
+        if options.check_geometry {
+            for element in &elements {
+                if let Err(err) = validate_cell_geometry(element.cell_type, &element.conn, &coords)
+                {
+                    return Err(MeshSieveError::InvalidGeometry(format!(
+                        "element {id:?}: {err}",
+                        id = element.id
+                    )));
+                }
+            }
+        }
+
         let mut cell_atlas = Atlas::default();
         for element in &elements {
             cell_atlas.try_insert(element.id, 1)?;
@@ -304,5 +322,20 @@ impl SieveSectionReader for GmshReader {
             labels: has_labels.then_some(labels),
             cell_types: (!elements.is_empty()).then_some(cell_types),
         })
+    }
+}
+
+impl SieveSectionReader for GmshReader {
+    type Sieve = InMemorySieve<PointId, ()>;
+    type Value = f64;
+    type Storage = VecStorage<f64>;
+    type CellStorage = VecStorage<CellType>;
+
+    fn read<R: Read>(
+        &self,
+        mut reader: R,
+    ) -> Result<MeshData<Self::Sieve, Self::Value, Self::Storage, Self::CellStorage>, MeshSieveError>
+    {
+        self.read_with_options(&mut reader, GmshReadOptions::default())
     }
 }
