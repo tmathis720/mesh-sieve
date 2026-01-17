@@ -1,10 +1,18 @@
 // src/algs/distribute.rs
 
 use crate::algs::communicator::Communicator;
+use crate::data::atlas::Atlas;
+use crate::data::coordinates::Coordinates;
+use crate::data::section::Section;
+use crate::data::storage::Storage;
+use crate::io::MeshData;
 use crate::mesh_error::MeshSieveError;
 use crate::overlap::overlap::{Overlap, OvlId};
+use crate::topology::cell_type::CellType;
+use crate::topology::labels::LabelSet;
 use crate::topology::point::PointId;
 use crate::topology::sieve::{InMemorySieve, Sieve};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Distribute a global mesh across ranks, returning the local submesh and overlap graph.
 ///
@@ -128,6 +136,455 @@ pub fn resolve_overlap_identity(overlap: &mut Overlap) {
             .resolve_remote_point(p, r, p)
             .expect("resolve_remote_point failed");
     }
+}
+
+/// Configuration for overlap-aware distribution.
+#[derive(Clone, Copy, Debug)]
+pub struct DistributionConfig {
+    /// Number of ghost layers to include around the partition boundary.
+    pub overlap_depth: usize,
+    /// Whether to copy global section-like data onto ghost points.
+    pub synchronize_sections: bool,
+}
+
+impl Default for DistributionConfig {
+    fn default() -> Self {
+        Self {
+            overlap_depth: 1,
+            synchronize_sections: true,
+        }
+    }
+}
+
+/// Result of distributing a mesh plus associated data.
+#[derive(Debug)]
+pub struct DistributedMeshData<V, St, CtSt>
+where
+    St: Storage<V> + Clone,
+    CtSt: Storage<CellType> + Clone,
+{
+    /// Local topology with ghost layers included.
+    pub sieve: InMemorySieve<PointId, ()>,
+    /// Overlap graph with resolved remote IDs.
+    pub overlap: Overlap,
+    /// Point owners derived from the cell partition.
+    pub point_owners: Vec<usize>,
+    /// Cell partition assignment used for distribution.
+    pub cell_parts: Vec<usize>,
+    /// Optional coordinate section for local points.
+    pub coordinates: Option<Coordinates<V, St>>,
+    /// Named local sections for distributed points.
+    pub sections: BTreeMap<String, Section<V, St>>,
+    /// Point labels filtered to the local point set.
+    pub labels: Option<LabelSet>,
+    /// Optional cell-type section for local points.
+    pub cell_types: Option<Section<CellType, CtSt>>,
+}
+
+/// Partition hook for distributing cell-based meshes.
+pub trait CellPartitioner<M>
+where
+    M: Sieve<Point = PointId, Payload = ()>,
+{
+    /// Return a partition index for each input cell.
+    fn partition_cells(
+        &self,
+        mesh: &M,
+        cells: &[PointId],
+        n_parts: usize,
+    ) -> Result<Vec<usize>, MeshSieveError>;
+}
+
+/// Use a precomputed cell partition.
+pub struct ProvidedPartition<'a> {
+    pub parts: &'a [usize],
+}
+
+impl<M> CellPartitioner<M> for ProvidedPartition<'_>
+where
+    M: Sieve<Point = PointId, Payload = ()>,
+{
+    fn partition_cells(
+        &self,
+        _mesh: &M,
+        cells: &[PointId],
+        _n_parts: usize,
+    ) -> Result<Vec<usize>, MeshSieveError> {
+        if self.parts.len() != cells.len() {
+            return Err(MeshSieveError::PartitionIndexOutOfBounds(self.parts.len()));
+        }
+        Ok(self.parts.to_vec())
+    }
+}
+
+/// Use a custom partitioner callback.
+pub struct CustomPartitioner<F>(pub F);
+
+impl<M, F> CellPartitioner<M> for CustomPartitioner<F>
+where
+    M: Sieve<Point = PointId, Payload = ()>,
+    F: Fn(&M, &[PointId], usize) -> Result<Vec<usize>, MeshSieveError>,
+{
+    fn partition_cells(
+        &self,
+        mesh: &M,
+        cells: &[PointId],
+        n_parts: usize,
+    ) -> Result<Vec<usize>, MeshSieveError> {
+        (self.0)(mesh, cells, n_parts)
+    }
+}
+
+/// Partition cells using METIS (requires the `metis-support` feature).
+#[cfg(feature = "metis-support")]
+pub struct MetisPartitioner;
+
+#[cfg(feature = "metis-support")]
+impl<M> CellPartitioner<M> for MetisPartitioner
+where
+    M: Sieve<Point = PointId, Payload = ()>,
+{
+    fn partition_cells(
+        &self,
+        mesh: &M,
+        cells: &[PointId],
+        n_parts: usize,
+    ) -> Result<Vec<usize>, MeshSieveError> {
+        let dual = crate::algs::dual_graph::build_dual(mesh, cells.to_vec());
+        let partition = dual.metis_partition(
+            n_parts
+                .try_into()
+                .map_err(|_| MeshSieveError::PartitionIndexOutOfBounds(n_parts))?,
+        );
+        Ok(partition.part.into_iter().map(|p| p as usize).collect())
+    }
+}
+
+/// High-level distribution with overlap expansion and data synchronization.
+///
+/// This orchestrates:
+/// 1. Cell partitioning (METIS or custom hook),
+/// 2. Point-owner assignment,
+/// 3. Ghost-layer construction to the requested depth,
+/// 4. Overlap resolution (remote IDs),
+/// 5. Optional synchronization of sections/coordinates/cell types by copying
+///    global data onto local ghost points.
+///
+/// Labels are filtered directly to local points so they survive redistribution
+/// even when no synchronization is required.
+///
+/// # Assumptions
+/// This helper assumes all ranks share a consistent global `PointId` space, so
+/// remote IDs are resolved using the identity mapping.
+pub fn distribute_with_overlap<M, V, St, CtSt, C, P>(
+    mesh_data: &MeshData<M, V, St, CtSt>,
+    cells: &[PointId],
+    partitioner: &P,
+    config: DistributionConfig,
+    comm: &C,
+) -> Result<DistributedMeshData<V, St, CtSt>, MeshSieveError>
+where
+    M: Sieve<Point = PointId, Payload = ()>,
+    V: Clone + Default + Send + PartialEq + 'static,
+    St: Storage<V> + Clone,
+    CtSt: Storage<CellType> + Clone,
+    C: Communicator + Sync,
+    P: CellPartitioner<M>,
+{
+    let my_rank = comm.rank();
+    let n_ranks = comm.size().max(1);
+    let cell_parts = partitioner.partition_cells(&mesh_data.sieve, cells, n_ranks)?;
+    if cell_parts.len() != cells.len() {
+        return Err(MeshSieveError::PartitionIndexOutOfBounds(cell_parts.len()));
+    }
+    if cell_parts.iter().any(|&p| p >= n_ranks) {
+        let bad = cell_parts.iter().copied().max().unwrap_or(0);
+        return Err(MeshSieveError::PartitionIndexOutOfBounds(bad));
+    }
+
+    let points: Vec<PointId> = mesh_data.sieve.points().collect();
+    let max_id = points.iter().map(|p| p.get()).max().unwrap_or(0) as usize;
+    let point_owners = assign_point_owners(mesh_data, cells, &cell_parts, max_id)?;
+
+    let adjacency = build_adjacency(&mesh_data.sieve, max_id);
+    let local_sets = build_local_sets(&points, &point_owners, &adjacency, n_ranks, config);
+    let point_ranks = build_point_ranks(&local_sets, max_id);
+    let local_set = local_sets
+        .get(my_rank)
+        .ok_or(MeshSieveError::PartitionIndexOutOfBounds(my_rank))?;
+
+    let overlap = build_overlap_for_rank(my_rank, local_set, &point_ranks)?;
+
+    let local_sieve = build_local_sieve(mesh_data, local_set);
+    let labels = mesh_data
+        .labels
+        .as_ref()
+        .map(|l| l.filtered_to_points(local_set.iter().copied()));
+
+    let coordinates = match &mesh_data.coordinates {
+        Some(coords) => {
+            let section =
+                build_local_section(coords.section(), local_set, &point_owners, my_rank, config)?;
+            Some(Coordinates::from_section(coords.dimension(), section)?)
+        }
+        None => None,
+    };
+
+    let mut sections = BTreeMap::new();
+    for (name, section) in &mesh_data.sections {
+        let local_section =
+            build_local_section(section, local_set, &point_owners, my_rank, config)?;
+        sections.insert(name.clone(), local_section);
+    }
+
+    let cell_types = match &mesh_data.cell_types {
+        Some(section) => Some(build_local_section(
+            section,
+            local_set,
+            &point_owners,
+            my_rank,
+            config,
+        )?),
+        None => None,
+    };
+
+    Ok(DistributedMeshData {
+        sieve: local_sieve,
+        overlap,
+        point_owners,
+        cell_parts,
+        coordinates,
+        sections,
+        labels,
+        cell_types,
+    })
+}
+
+fn assign_point_owners<M, V, St, CtSt>(
+    mesh_data: &MeshData<M, V, St, CtSt>,
+    cells: &[PointId],
+    cell_parts: &[usize],
+    max_id: usize,
+) -> Result<Vec<usize>, MeshSieveError>
+where
+    M: Sieve<Point = PointId, Payload = ()>,
+    St: Storage<V> + Clone,
+    CtSt: Storage<CellType> + Clone,
+{
+    let mut owners = vec![0usize; max_id];
+    let mut seen = vec![false; max_id];
+    for (cell, &part) in cells.iter().zip(cell_parts.iter()) {
+        for p in mesh_data.sieve.closure_iter(std::iter::once(*cell)) {
+            let idx = p
+                .get()
+                .checked_sub(1)
+                .ok_or(MeshSieveError::PartitionIndexOutOfBounds(p.get() as usize))?
+                as usize;
+            if idx >= owners.len() {
+                return Err(MeshSieveError::PartitionIndexOutOfBounds(idx));
+            }
+            if !seen[idx] || part < owners[idx] {
+                owners[idx] = part;
+                seen[idx] = true;
+            }
+        }
+    }
+    Ok(owners)
+}
+
+fn build_adjacency<M>(mesh: &M, max_id: usize) -> Vec<BTreeSet<PointId>>
+where
+    M: Sieve<Point = PointId, Payload = ()>,
+{
+    let mut adjacency = vec![BTreeSet::new(); max_id];
+    for src in mesh.points() {
+        let src_idx = (src.get() - 1) as usize;
+        for (dst, _) in mesh.cone(src) {
+            let dst_idx = (dst.get() - 1) as usize;
+            if src_idx < max_id {
+                adjacency[src_idx].insert(dst);
+            }
+            if dst_idx < max_id {
+                adjacency[dst_idx].insert(src);
+            }
+        }
+    }
+    adjacency
+}
+
+fn build_local_sets(
+    points: &[PointId],
+    owners: &[usize],
+    adjacency: &[BTreeSet<PointId>],
+    n_ranks: usize,
+    config: DistributionConfig,
+) -> Vec<BTreeSet<PointId>> {
+    let mut owned_sets = vec![BTreeSet::new(); n_ranks];
+    for &p in points {
+        let idx = (p.get() - 1) as usize;
+        if let Some(&owner) = owners.get(idx) {
+            if owner < n_ranks {
+                owned_sets[owner].insert(p);
+            }
+        }
+    }
+
+    let mut boundary = vec![BTreeSet::new(); n_ranks];
+    for &p in points {
+        let p_idx = (p.get() - 1) as usize;
+        let owner_p = owners.get(p_idx).copied().unwrap_or(0);
+        if owner_p >= n_ranks {
+            continue;
+        }
+        for q in adjacency.get(p_idx).into_iter().flat_map(|s| s.iter()) {
+            let q_idx = (q.get() - 1) as usize;
+            let owner_q = owners.get(q_idx).copied().unwrap_or(0);
+            if owner_p != owner_q && owner_p < n_ranks {
+                boundary[owner_p].insert(p);
+            }
+        }
+    }
+
+    let mut local_sets = Vec::with_capacity(n_ranks);
+    for rank in 0..n_ranks {
+        let mut local = owned_sets[rank].clone();
+        if config.overlap_depth == 0 {
+            local_sets.push(local);
+            continue;
+        }
+
+        let mut ghost = BTreeSet::new();
+        let mut frontier = BTreeSet::new();
+        for p in &boundary[rank] {
+            let p_idx = (p.get() - 1) as usize;
+            for q in adjacency.get(p_idx).into_iter().flat_map(|s| s.iter()) {
+                let q_idx = (q.get() - 1) as usize;
+                if owners.get(q_idx).copied().unwrap_or(0) != rank && ghost.insert(*q) {
+                    frontier.insert(*q);
+                }
+            }
+        }
+
+        for _ in 1..config.overlap_depth {
+            if frontier.is_empty() {
+                break;
+            }
+            let mut next_frontier = BTreeSet::new();
+            for p in &frontier {
+                let p_idx = (p.get() - 1) as usize;
+                for q in adjacency.get(p_idx).into_iter().flat_map(|s| s.iter()) {
+                    let q_idx = (q.get() - 1) as usize;
+                    if owners.get(q_idx).copied().unwrap_or(0) != rank && ghost.insert(*q) {
+                        next_frontier.insert(*q);
+                    }
+                }
+            }
+            frontier = next_frontier;
+        }
+
+        local.extend(ghost);
+        local_sets.push(local);
+    }
+
+    local_sets
+}
+
+fn build_point_ranks(
+    local_sets: &[BTreeSet<PointId>],
+    max_id: usize,
+) -> Vec<Vec<usize>> {
+    let mut point_ranks = vec![Vec::new(); max_id];
+    for (rank, points) in local_sets.iter().enumerate() {
+        for &p in points {
+            let idx = (p.get() - 1) as usize;
+            if idx < max_id {
+                point_ranks[idx].push(rank);
+            }
+        }
+    }
+    for ranks in &mut point_ranks {
+        ranks.sort_unstable();
+        ranks.dedup();
+    }
+    point_ranks
+}
+
+fn build_overlap_for_rank(
+    rank: usize,
+    local_set: &BTreeSet<PointId>,
+    point_ranks: &[Vec<usize>],
+) -> Result<Overlap, MeshSieveError> {
+    let mut edges = Vec::new();
+    for &p in local_set {
+        let idx = (p.get() - 1) as usize;
+        if let Some(ranks) = point_ranks.get(idx) {
+            for &nbr in ranks {
+                if nbr != rank {
+                    edges.push((p, nbr));
+                }
+            }
+        }
+    }
+    edges.sort_unstable();
+    edges.dedup();
+    let mut overlap = Overlap::default();
+    overlap.try_add_links_structural_bulk(edges.iter().copied())?;
+    overlap.resolve_remote_points(edges.into_iter().map(|(p, r)| (p, r, p)))?;
+    Ok(overlap)
+}
+
+fn build_local_sieve<M, V, St, CtSt>(
+    mesh_data: &MeshData<M, V, St, CtSt>,
+    local_set: &BTreeSet<PointId>,
+) -> InMemorySieve<PointId, ()>
+where
+    M: Sieve<Point = PointId, Payload = ()>,
+    St: Storage<V> + Clone,
+    CtSt: Storage<CellType> + Clone,
+{
+    let mut local = InMemorySieve::<PointId, ()>::default();
+    let points: Vec<PointId> = mesh_data.sieve.points().collect();
+    for src in &points {
+        if !local_set.contains(src) {
+            continue;
+        }
+        for (dst, _) in mesh_data.sieve.cone(*src) {
+            if local_set.contains(&dst) {
+                local.add_arrow(*src, dst, ());
+            }
+        }
+    }
+    local
+}
+
+fn build_local_section<V, St>(
+    section: &Section<V, St>,
+    local_set: &BTreeSet<PointId>,
+    owners: &[usize],
+    my_rank: usize,
+    config: DistributionConfig,
+) -> Result<Section<V, St>, MeshSieveError>
+where
+    V: Clone + Default,
+    St: Storage<V> + Clone,
+{
+    let mut atlas = Atlas::default();
+    for p in local_set {
+        if let Some((_off, len)) = section.atlas().get(*p) {
+            atlas.try_insert(*p, len)?;
+        }
+    }
+    let mut local_section = Section::<V, St>::new(atlas);
+    let points: Vec<PointId> = local_section.atlas().points().collect();
+    for p in points {
+        let idx = (p.get() - 1) as usize;
+        let is_owner = owners.get(idx).copied().unwrap_or(0) == my_rank;
+        if config.synchronize_sections || is_owner {
+            let data = section.try_restrict(p)?;
+            local_section.try_set(p, data)?;
+        }
+    }
+    Ok(local_section)
 }
 
 #[inline]
