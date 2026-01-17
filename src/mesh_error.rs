@@ -103,6 +103,9 @@ pub enum MeshSieveError {
     /// Attempted to use a scatter plan built from an outdated atlas.
     #[error("plan stale: built for atlas version {expected}, current {found}")]
     AtlasPlanStale { expected: u64, found: u64 },
+    /// Missing ownership metadata for a point.
+    #[error("Ownership missing for point {0:?}")]
+    MissingOwnership(crate::topology::point::PointId),
     /// Point's slice length changed across atlas rebuild.
     #[error("atlas point length changed for {point:?} (expected={expected}, found={found})")]
     AtlasPointLengthChanged {
@@ -389,6 +392,7 @@ impl PartialEq for MeshSieveError {
                     found: f2,
                 },
             ) => e1 == e2 && f1 == f2,
+            (MissingOwnership(a), MissingOwnership(b)) => a == b,
             (
                 SievedArrayPrimitiveConversionFailure(a),
                 SievedArrayPrimitiveConversionFailure(b),

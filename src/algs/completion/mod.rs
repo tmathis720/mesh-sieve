@@ -6,7 +6,10 @@ pub mod sieve_completion;
 pub mod size_exchange;
 pub mod stack_completion;
 
-pub use section_completion::{complete_section, complete_section_with_tags};
+pub use section_completion::{
+    complete_section, complete_section_with_ownership, complete_section_with_tags,
+    complete_section_with_tags_and_ownership,
+};
 pub use sieve_completion::{complete_sieve, complete_sieve_with_tags};
 pub use stack_completion::{complete_stack, complete_stack_with_tags};
 

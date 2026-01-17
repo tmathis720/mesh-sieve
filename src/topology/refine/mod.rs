@@ -21,6 +21,7 @@ use crate::data::storage::Storage;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::arrow::Polarity;
 use crate::topology::cell_type::CellType;
+use crate::topology::ownership::PointOwnership;
 use crate::topology::point::PointId;
 use crate::topology::sieve::{InMemorySieve, Sieve};
 use std::collections::HashMap;
@@ -35,6 +36,17 @@ pub struct RefinedMesh {
     pub sieve: InMemorySieve<PointId, ()>,
     /// Mapping from coarse cell to refined cells (all `Polarity::Forward`).
     pub cell_refinement: RefinementMap,
+}
+
+/// Output of [`refine_mesh_with_ownership`], including ownership metadata updates.
+#[derive(Clone, Debug)]
+pub struct RefinedMeshWithOwnership {
+    /// Refined topology (cells → vertices).
+    pub sieve: InMemorySieve<PointId, ()>,
+    /// Mapping from coarse cell to refined cells (all `Polarity::Forward`).
+    pub cell_refinement: RefinementMap,
+    /// Updated ownership metadata including new points.
+    pub ownership: PointOwnership,
 }
 
 /// Reference 1→4 subdivision of a triangle given vertices and mid-edge points.
@@ -427,6 +439,43 @@ where
     Ok(RefinedMesh {
         sieve: refined,
         cell_refinement: refinement_map,
+    })
+}
+
+/// Refine a mesh and update point ownership metadata consistently.
+///
+/// Ownership for new points is inherited from the owning rank of the coarse
+/// cell that spawned them. When a new point is shared by multiple refined cells,
+/// the smallest owner rank encountered is retained to guarantee deterministic
+/// ownership assignment.
+pub fn refine_mesh_with_ownership<S>(
+    coarse: &mut impl Sieve<Point = PointId>,
+    cell_types: &Section<CellType, S>,
+    ownership: &PointOwnership,
+    my_rank: usize,
+) -> Result<RefinedMeshWithOwnership, MeshSieveError>
+where
+    S: Storage<CellType>,
+{
+    let refined = refine_mesh(coarse, cell_types)?;
+    let mut refined_ownership = ownership.clone();
+
+    for (cell, fine_cells) in &refined.cell_refinement {
+        let owner = refined_ownership.owner_or_err(*cell)?;
+        for (fine_cell, _) in fine_cells {
+            refined_ownership.set_owner_min(*fine_cell, owner, my_rank)?;
+            for p in refined.sieve.cone_points(*fine_cell) {
+                if refined_ownership.entry(p).is_none() {
+                    refined_ownership.set_owner_min(p, owner, my_rank)?;
+                }
+            }
+        }
+    }
+
+    Ok(RefinedMeshWithOwnership {
+        sieve: refined.sieve,
+        cell_refinement: refined.cell_refinement,
+        ownership: refined_ownership,
     })
 }
 
