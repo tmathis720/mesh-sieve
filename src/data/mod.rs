@@ -3,6 +3,7 @@
 
 pub mod atlas;
 pub mod bundle;
+pub mod constrained_section;
 pub mod coordinates;
 pub mod section;
 pub mod slice_storage;
@@ -16,6 +17,9 @@ pub mod refine;
 #[allow(deprecated)]
 pub use crate::debug_invariants::DebugInvariants;
 
+pub use constrained_section::{
+    ConstrainedSection, ConstraintSet, DofConstraint, apply_constraints_to_section,
+};
 pub use section::Section;
 pub use slice_storage::SliceStorage;
 pub use storage::{Storage, VecStorage};

@@ -83,6 +83,9 @@ pub mod prelude {
     };
     pub use crate::algs::rcm::distributed_rcm;
     pub use crate::data::atlas::Atlas;
+    pub use crate::data::constrained_section::{
+        ConstrainedSection, ConstraintSet, DofConstraint, apply_constraints_to_section,
+    };
     pub use crate::data::coordinates::Coordinates;
     #[cfg(feature = "map-adapter")]
     pub use crate::data::section::Map;

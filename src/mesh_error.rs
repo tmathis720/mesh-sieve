@@ -55,9 +55,7 @@ pub enum MeshSieveError {
     SievedArrayPointNotInAtlas(crate::topology::point::PointId),
 
     /// Mismatch between expected and provided slice length for a point.
-    #[error(
-        "Section error: slice length mismatch for {point:?}: expected {expected}, got {found}"
-    )]
+    #[error("Section error: slice length mismatch for {point:?}: expected {expected}, got {found}")]
     SliceLengthMismatch {
         point: crate::topology::point::PointId,
         expected: usize,
@@ -133,6 +131,13 @@ pub enum MeshSieveError {
     /// Delta application failed because source and dest slices had different lengths.
     #[error("Delta error: slice length mismatch (src.len={expected}, dest.len={found})")]
     DeltaLengthMismatch { expected: usize, found: usize },
+    /// Constraint index is out of bounds for a point slice.
+    #[error("Constraint error at point {point:?}: DOF index {index} out of bounds (len={len})")]
+    ConstraintIndexOutOfBounds {
+        point: crate::topology::point::PointId,
+        index: usize,
+        len: usize,
+    },
     /// Refinement template did not match the cell cone size.
     #[error(
         "Refinement topology mismatch for cell {cell:?}: template {template} expects {expected} vertices, found {found}"
