@@ -27,6 +27,7 @@ use crate::topology::point::PointId;
 use crate::topology::sieve::{InMemorySieve, MutableSieve, Sieve};
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
+use std::str::FromStr;
 
 /// Gmsh `.msh` reader for ASCII v2.2 meshes.
 #[derive(Debug, Default, Clone)]

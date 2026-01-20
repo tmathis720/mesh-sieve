@@ -1,3 +1,5 @@
+// Example demonstrating reading and writing mixed sections in a mesh using Mesh Sieve.
+// cargo run --example mixed_sections
 use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::coordinates::Coordinates;
 use mesh_sieve::data::mixed_section::MixedSectionStore;

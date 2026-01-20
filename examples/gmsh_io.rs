@@ -1,3 +1,4 @@
+// cargo run --example gmsh_io
 use mesh_sieve::io::SieveSectionReader;
 use mesh_sieve::io::gmsh::GmshReader;
 use mesh_sieve::mesh_error::MeshSieveError;
