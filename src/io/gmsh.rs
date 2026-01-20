@@ -8,13 +8,14 @@
 //! # Limitations
 //! - Binary files are not supported.
 //! - `.msh` v4.x (block-based) is not supported.
-//! - Higher-order elements are supported, but are stored as the base cell type.
+//! - Higher-order elements are supported, stored as base cell types with
+//!   higher-order geometry stored in the coordinates.
 //! - Element tags are captured as labels (`gmsh:physical`, `gmsh:entity`,
 //!   and `gmsh:tagN` for additional tags).
 //! - Coordinates preserve the inferred mesh dimension (1D/2D/3D).
 
 use crate::data::atlas::Atlas;
-use crate::data::coordinates::Coordinates;
+use crate::data::coordinates::{Coordinates, HighOrderCoordinates};
 use crate::data::mixed_section::{MixedSectionStore, ScalarType, TaggedSection};
 use crate::data::section::Section;
 use crate::data::storage::VecStorage;
@@ -25,7 +26,7 @@ use crate::topology::cell_type::CellType;
 use crate::topology::labels::LabelSet;
 use crate::topology::point::PointId;
 use crate::topology::sieve::{InMemorySieve, MutableSieve, Sieve};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{Read, Write};
 use std::str::FromStr;
 
@@ -580,31 +581,78 @@ impl GmshReader {
         let mesh_dimension = Self::mesh_dimension(&elements, &nodes);
         let coord_dimension = mesh_dimension.max(1).min(3);
 
+        let node_lookup: HashMap<PointId, [f64; 3]> = nodes.iter().cloned().collect();
+        let mut vertex_nodes = HashSet::new();
+        for element in &elements {
+            let min_nodes = Self::element_min_nodes(element.cell_type);
+            for node in element.conn.iter().take(min_nodes) {
+                vertex_nodes.insert(*node);
+            }
+        }
+        if elements.is_empty() {
+            for (node, _) in &nodes {
+                vertex_nodes.insert(*node);
+            }
+        }
+
         let mut sieve = InMemorySieve::default();
-        for (node, _) in &nodes {
+        for node in &vertex_nodes {
             MutableSieve::add_point(&mut sieve, *node);
         }
         for element in &elements {
             MutableSieve::add_point(&mut sieve, element.id);
-            for node in &element.conn {
+            let min_nodes = Self::element_min_nodes(element.cell_type);
+            for node in element.conn.iter().take(min_nodes) {
                 Sieve::add_arrow(&mut sieve, element.id, *node, ());
             }
         }
 
         let mut atlas = Atlas::default();
-        for (node, _) in &nodes {
+        for node in &vertex_nodes {
             atlas.try_insert(*node, coord_dimension)?;
         }
         let mut coords = Coordinates::try_new(coord_dimension, atlas)?;
-        for (node, xyz) in &nodes {
-            coords
-                .section_mut()
-                .try_set(*node, &xyz[..coord_dimension])?;
+        for node in &vertex_nodes {
+            if let Some(xyz) = node_lookup.get(node) {
+                coords
+                    .section_mut()
+                    .try_set(*node, &xyz[..coord_dimension])?;
+            }
+        }
+
+        let mut high_order_entries: Vec<(PointId, Vec<f64>)> = Vec::new();
+        for element in &elements {
+            let min_nodes = Self::element_min_nodes(element.cell_type);
+            let extra_nodes = element.conn.iter().skip(min_nodes);
+            let mut data = Vec::new();
+            for node in extra_nodes {
+                let xyz = node_lookup.get(node).ok_or_else(|| {
+                    MeshSieveError::MeshIoParse(format!("missing node coordinates for {node:?}"))
+                })?;
+                data.extend_from_slice(&xyz[..coord_dimension]);
+            }
+            if !data.is_empty() {
+                high_order_entries.push((element.id, data));
+            }
+        }
+        if !high_order_entries.is_empty() {
+            let mut ho_atlas = Atlas::default();
+            for (cell, data) in &high_order_entries {
+                ho_atlas.try_insert(*cell, data.len())?;
+            }
+            let mut ho_section = Section::<f64, VecStorage<f64>>::new(ho_atlas);
+            for (cell, data) in high_order_entries {
+                ho_section.try_set(cell, &data)?;
+            }
+            let high_order = HighOrderCoordinates::from_section(coord_dimension, ho_section)?;
+            coords.set_high_order(high_order)?;
         }
 
         if options.check_geometry {
             for element in &elements {
-                if let Err(err) = validate_cell_geometry(element.cell_type, &element.conn, &coords)
+                let min_nodes = Self::element_min_nodes(element.cell_type);
+                if let Err(err) =
+                    validate_cell_geometry(element.cell_type, &element.conn[..min_nodes], &coords)
                 {
                     return Err(MeshSieveError::InvalidGeometry(format!(
                         "element {id:?}: {err}",

@@ -2,7 +2,7 @@
 
 use crate::algs::communicator::Communicator;
 use crate::data::atlas::Atlas;
-use crate::data::coordinates::Coordinates;
+use crate::data::coordinates::{Coordinates, HighOrderCoordinates};
 use crate::data::global_map::LocalToGlobalMap;
 use crate::data::mixed_section::{MixedSectionStore, TaggedSection};
 use crate::data::section::Section;
@@ -374,7 +374,19 @@ where
         Some(coords) => {
             let section =
                 build_local_section(coords.section(), local_set, &point_owners, my_rank, config)?;
-            Some(Coordinates::from_section(coords.dimension(), section)?)
+            let mut out = Coordinates::from_section(coords.dimension(), section)?;
+            if let Some(high_order) = coords.high_order() {
+                let ho_section = build_local_section(
+                    high_order.section(),
+                    local_set,
+                    &point_owners,
+                    my_rank,
+                    config,
+                )?;
+                let ho = HighOrderCoordinates::from_section(high_order.dimension(), ho_section)?;
+                out.set_high_order(ho)?;
+            }
+            Some(out)
         }
         None => None,
     };

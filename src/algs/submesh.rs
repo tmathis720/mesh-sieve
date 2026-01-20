@@ -1,7 +1,7 @@
 //! Submesh extraction utilities.
 
 use crate::data::atlas::Atlas;
-use crate::data::coordinates::Coordinates;
+use crate::data::coordinates::{Coordinates, HighOrderCoordinates};
 use crate::data::mixed_section::{MixedSectionStore, TaggedSection};
 use crate::data::section::Section;
 use crate::data::storage::Storage;
@@ -187,7 +187,13 @@ where
     S: Storage<V> + Clone,
 {
     let section = transfer_section(coords.section(), parent_to_sub, parent_points)?;
-    Coordinates::from_section(coords.dimension(), section)
+    let mut out = Coordinates::from_section(coords.dimension(), section)?;
+    if let Some(high_order) = coords.high_order() {
+        let ho_section = transfer_section(high_order.section(), parent_to_sub, parent_points)?;
+        let ho = HighOrderCoordinates::from_section(high_order.dimension(), ho_section)?;
+        out.set_high_order(ho)?;
+    }
+    Ok(out)
 }
 
 fn remap_labels(labels: &LabelSet, parent_to_sub: &HashMap<PointId, PointId>) -> LabelSet {
