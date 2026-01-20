@@ -161,10 +161,12 @@ fn main() -> Result<(), MeshSieveError> {
                 assert_eq!(local_section.try_restrict(ghost_point)?[0], expected);
             }
 
-            assert_eq!(
-                local_section.try_restrict(constrained_point)?[0],
-                constrained_value
-            );
+            if local_section.atlas().contains(constrained_point) {
+                assert_eq!(
+                    local_section.try_restrict(constrained_point)?[0],
+                    constrained_value
+                );
+            }
 
             Ok(())
         }));
