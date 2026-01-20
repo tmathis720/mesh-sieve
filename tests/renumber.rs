@@ -54,6 +54,7 @@ fn build_mesh(
         mixed_sections: Default::default(),
         labels: Some(labels),
         cell_types: None,
+        discretization: None,
     }
 }
 

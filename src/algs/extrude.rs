@@ -59,6 +59,7 @@
 use crate::algs::interpolate::{InterpolationOrdering, interpolate_edges_faces_with_ordering};
 use crate::data::atlas::Atlas;
 use crate::data::coordinates::Coordinates;
+use crate::data::discretization::Discretization;
 use crate::data::section::Section;
 use crate::data::storage::{Storage, VecStorage};
 use crate::io::MeshData;
@@ -124,6 +125,7 @@ where
         options,
         None,
         None,
+        None,
     )
 }
 
@@ -155,6 +157,7 @@ where
         options,
         mesh.labels.as_ref(),
         Some(&mesh.sections),
+        mesh.discretization.as_ref(),
     )
 }
 
@@ -167,6 +170,7 @@ fn extrude_surface_layers_inner<S, CtSt, Cs, St>(
     options: ExtrudeOptions,
     labels: Option<&LabelSet>,
     sections: Option<&BTreeMap<String, Section<f64, St>>>,
+    discretization: Option<&Discretization>,
 ) -> Result<
     MeshData<InMemorySieve<PointId, ()>, f64, VecStorage<f64>, VecStorage<CellType>>,
     MeshSieveError,
@@ -300,7 +304,7 @@ where
         mixed_sections: crate::data::mixed_section::MixedSectionStore::default(),
         labels: labels_out,
         cell_types: Some(cell_types_out),
-        discretization: mesh.discretization.clone(),
+        discretization: discretization.cloned(),
     })
 }
 
