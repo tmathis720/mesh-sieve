@@ -116,7 +116,7 @@ where
     CtSt: Storage<CellType>,
     Cs: Storage<f64>,
 {
-    extrude_surface_layers_inner(
+    extrude_surface_layers_inner::<S, CtSt, Cs, VecStorage<f64>>(
         surface,
         cell_types,
         coordinates,

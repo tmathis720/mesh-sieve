@@ -184,6 +184,7 @@ where
                 | CellType::Quadrilateral
                 | CellType::Tetrahedron
                 | CellType::Hexahedron
+                | CellType::Prism
                 | CellType::Polygon(_)
                 | CellType::Polyhedron
         ) {
@@ -204,6 +205,7 @@ fn expected_vertex_count(cell_type: CellType) -> Option<usize> {
         CellType::Tetrahedron => Some(4),
         CellType::Hexahedron => Some(8),
         CellType::Polygon(n) => Some(n as usize),
+        CellType::Prism => Some(6),
         CellType::Polyhedron => None,
         _ => None,
     }
@@ -277,6 +279,17 @@ fn cell_edges(
             [vertices[2], vertices[6]],
             [vertices[3], vertices[7]],
         ],
+        CellType::Prism => vec![
+            [vertices[0], vertices[1]],
+            [vertices[1], vertices[2]],
+            [vertices[2], vertices[0]],
+            [vertices[3], vertices[4]],
+            [vertices[4], vertices[5]],
+            [vertices[5], vertices[3]],
+            [vertices[0], vertices[3]],
+            [vertices[1], vertices[4]],
+            [vertices[2], vertices[5]],
+        ],
         CellType::Polyhedron => polyhedron_edges(vertices, polyhedron_faces)?,
         _ => {
             return Err(MeshSieveError::InvalidGeometry(format!(
@@ -335,6 +348,28 @@ fn cell_faces(
             ),
             (
                 vec![vertices[3], vertices[0], vertices[4], vertices[7]],
+                CellType::Quadrilateral,
+            ),
+        ],
+        CellType::Prism => vec![
+            (
+                vec![vertices[0], vertices[1], vertices[2]],
+                CellType::Triangle,
+            ),
+            (
+                vec![vertices[3], vertices[4], vertices[5]],
+                CellType::Triangle,
+            ),
+            (
+                vec![vertices[0], vertices[1], vertices[4], vertices[3]],
+                CellType::Quadrilateral,
+            ),
+            (
+                vec![vertices[1], vertices[2], vertices[5], vertices[4]],
+                CellType::Quadrilateral,
+            ),
+            (
+                vec![vertices[2], vertices[0], vertices[3], vertices[5]],
                 CellType::Quadrilateral,
             ),
         ],
