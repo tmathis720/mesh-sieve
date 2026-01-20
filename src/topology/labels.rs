@@ -69,4 +69,17 @@ impl LabelSet {
         }
         out
     }
+
+    /// Returns true when the label set has no entries.
+    pub fn is_empty(&self) -> bool {
+        self.labels.is_empty()
+    }
+
+    /// Iterate over all labels as `(name, point, value)`.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, PointId, i32)> + '_ {
+        self.labels.iter().flat_map(|(name, map)| {
+            map.iter()
+                .map(move |(&point, &value)| (name.as_str(), point, value))
+        })
+    }
 }

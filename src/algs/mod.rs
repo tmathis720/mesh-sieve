@@ -16,6 +16,7 @@ pub mod traversal;
 pub mod traversal_core;
 pub mod traversal_ref;
 pub mod wire;
+pub mod submesh;
 
 pub use crate::algs::distribute::{
     distribute_mesh, distribute_with_overlap, CellPartitioner, CustomPartitioner,
@@ -28,3 +29,4 @@ pub use completion::{
     complete_section_with_tags_and_ownership,
 };
 pub use lattice::adjacent;
+pub use submesh::{extract_by_label, SubmeshMaps};
