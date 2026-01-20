@@ -7,7 +7,7 @@ fn main() -> Result<(), MeshSieveError> {
     let mut sieve = InMemorySieve::<PointId, ()>::default();
 
     let v = |i| PointId::new(i).unwrap();
-    let c = |i| PointId::new(100 + i).unwrap();
+    let c = |i| PointId::new(100_u64 + i).unwrap();
 
     // 2x1 quad mesh (two cells) with vertices laid out on x = 0, 1, 2.
     // Cell c0 uses vertices v0, v1, v4, v3.

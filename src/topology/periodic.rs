@@ -197,7 +197,7 @@ where
 /// Any arrow that maps to a self-loop is skipped.
 pub fn quotient_sieve<S>(sieve: &S, equivalence: &mut PointEquivalence) -> S
 where
-    S: Sieve + Default,
+    S: Sieve<Point = PointId> + Default,
     S::Payload: Clone,
 {
     let mut quotient = S::default();
