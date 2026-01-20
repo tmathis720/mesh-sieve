@@ -16,9 +16,9 @@
 //! [`crate::data::refine::SievedArray::try_refine_with_sifter`], enabling transfer of
 //! cell-wise data from the coarse mesh to the refined mesh.
 
-use crate::algs::interpolate::{interpolate_edges_faces, InterpolationResult};
+use crate::algs::interpolate::{InterpolationResult, interpolate_edges_faces};
 use crate::data::atlas::Atlas;
-use crate::data::coordinates::Coordinates;
+use crate::data::coordinates::{Coordinates, HighOrderCoordinates};
 use crate::data::section::Section;
 use crate::data::storage::{Storage, VecStorage};
 use crate::geometry::quality::validate_cell_geometry;
@@ -40,6 +40,8 @@ pub struct RefinedMesh {
     pub sieve: InMemorySieve<PointId, ()>,
     /// Mapping from coarse cell to refined cells (all `Polarity::Forward`).
     pub cell_refinement: RefinementMap,
+    /// Optional coordinates for the refined mesh vertices.
+    pub coordinates: Option<Coordinates<f64, VecStorage<f64>>>,
 }
 
 /// Output of [`refine_mesh_with_ownership`], including ownership metadata updates.
@@ -51,6 +53,8 @@ pub struct RefinedMeshWithOwnership {
     pub cell_refinement: RefinementMap,
     /// Updated ownership metadata including new points.
     pub ownership: PointOwnership,
+    /// Optional coordinates for the refined mesh vertices.
+    pub coordinates: Option<Coordinates<f64, VecStorage<f64>>>,
 }
 
 /// Output of [`refine_mesh_full_topology`], including a full topology and types.
@@ -62,6 +66,8 @@ pub struct RefinedMeshWithTopology {
     pub cell_refinement: RefinementMap,
     /// Cell types for the refined topology (cells, edges, faces, vertices).
     pub cell_types: Section<CellType, VecStorage<CellType>>,
+    /// Optional coordinates for the refined mesh vertices.
+    pub coordinates: Option<Coordinates<f64, VecStorage<f64>>>,
 }
 
 /// Optional settings for refinement.
@@ -353,6 +359,7 @@ where
     let mut refinement_map: RefinementMap = Vec::new();
     let mut edge_midpoints: HashMap<(PointId, PointId), PointId> = HashMap::new();
     let mut face_centers: HashMap<Vec<PointId>, PointId> = HashMap::new();
+    let mut point_sources: HashMap<PointId, Vec<PointId>> = HashMap::new();
 
     for (cell, cell_slice) in cell_types.iter() {
         if cell_slice.len() != 1 {
@@ -372,9 +379,27 @@ where
             CellType::Triangle => {
                 let vertices = [vertices[0], vertices[1], vertices[2]];
                 let midpoints = [
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[0], vertices[1])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[1], vertices[2])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[2], vertices[0])?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[0],
+                        vertices[1],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[1],
+                        vertices[2],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[2],
+                        vertices[0],
+                    )?,
                 ];
                 for verts in triangle_subdivision(vertices, midpoints) {
                     let fine_cell = alloc_point(&mut next_id)?;
@@ -387,12 +412,37 @@ where
             CellType::Quadrilateral => {
                 let vertices = [vertices[0], vertices[1], vertices[2], vertices[3]];
                 let midpoints = [
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[0], vertices[1])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[1], vertices[2])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[2], vertices[3])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[3], vertices[0])?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[0],
+                        vertices[1],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[1],
+                        vertices[2],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[2],
+                        vertices[3],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[3],
+                        vertices[0],
+                    )?,
                 ];
                 let center = alloc_point(&mut next_id)?;
+                point_sources.insert(center, vertices.to_vec());
                 for verts in quadrilateral_subdivision(vertices, midpoints, center) {
                     let fine_cell = alloc_point(&mut next_id)?;
                     for v in verts {
@@ -404,12 +454,48 @@ where
             CellType::Tetrahedron => {
                 let vertices = [vertices[0], vertices[1], vertices[2], vertices[3]];
                 let midpoints = [
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[0], vertices[1])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[1], vertices[2])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[2], vertices[0])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[0], vertices[3])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[1], vertices[3])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[2], vertices[3])?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[0],
+                        vertices[1],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[1],
+                        vertices[2],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[2],
+                        vertices[0],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[0],
+                        vertices[3],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[1],
+                        vertices[3],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[2],
+                        vertices[3],
+                    )?,
                 ];
                 for verts in tetrahedron_subdivision(vertices, midpoints) {
                     let fine_cell = alloc_point(&mut next_id)?;
@@ -431,52 +517,131 @@ where
                     vertices[7],
                 ];
                 let edge_midpoints = [
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[0], vertices[1])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[1], vertices[2])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[2], vertices[3])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[3], vertices[0])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[4], vertices[5])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[5], vertices[6])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[6], vertices[7])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[7], vertices[4])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[0], vertices[4])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[1], vertices[5])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[2], vertices[6])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[3], vertices[7])?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[0],
+                        vertices[1],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[1],
+                        vertices[2],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[2],
+                        vertices[3],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[3],
+                        vertices[0],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[4],
+                        vertices[5],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[5],
+                        vertices[6],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[6],
+                        vertices[7],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[7],
+                        vertices[4],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[0],
+                        vertices[4],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[1],
+                        vertices[5],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[2],
+                        vertices[6],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[3],
+                        vertices[7],
+                    )?,
                 ];
                 let face_centers = [
                     face_center(
                         &mut face_centers,
+                        &mut point_sources,
                         &mut next_id,
                         &[vertices[0], vertices[1], vertices[2], vertices[3]],
                     )?,
                     face_center(
                         &mut face_centers,
+                        &mut point_sources,
                         &mut next_id,
                         &[vertices[4], vertices[5], vertices[6], vertices[7]],
                     )?,
                     face_center(
                         &mut face_centers,
+                        &mut point_sources,
                         &mut next_id,
                         &[vertices[0], vertices[1], vertices[5], vertices[4]],
                     )?,
                     face_center(
                         &mut face_centers,
+                        &mut point_sources,
                         &mut next_id,
                         &[vertices[1], vertices[2], vertices[6], vertices[5]],
                     )?,
                     face_center(
                         &mut face_centers,
+                        &mut point_sources,
                         &mut next_id,
                         &[vertices[2], vertices[3], vertices[7], vertices[6]],
                     )?,
                     face_center(
                         &mut face_centers,
+                        &mut point_sources,
                         &mut next_id,
                         &[vertices[3], vertices[0], vertices[4], vertices[7]],
                     )?,
                 ];
                 let center = alloc_point(&mut next_id)?;
+                point_sources.insert(center, vertices.to_vec());
                 for verts in hexahedron_subdivision(vertices, edge_midpoints, face_centers, center)
                 {
                     let fine_cell = alloc_point(&mut next_id)?;
@@ -496,14 +661,50 @@ where
                     vertices[5],
                 ];
                 let bottom_midpoints = [
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[0], vertices[1])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[1], vertices[2])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[2], vertices[0])?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[0],
+                        vertices[1],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[1],
+                        vertices[2],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[2],
+                        vertices[0],
+                    )?,
                 ];
                 let top_midpoints = [
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[3], vertices[4])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[4], vertices[5])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[5], vertices[3])?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[3],
+                        vertices[4],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[4],
+                        vertices[5],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[5],
+                        vertices[3],
+                    )?,
                 ];
                 for verts in prism_subdivision(vertices, bottom_midpoints, top_midpoints) {
                     let fine_cell = alloc_point(&mut next_id)?;
@@ -522,13 +723,38 @@ where
                     vertices[4],
                 ];
                 let base_midpoints = [
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[0], vertices[1])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[1], vertices[2])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[2], vertices[3])?,
-                    midpoint(&mut edge_midpoints, &mut next_id, vertices[3], vertices[0])?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[0],
+                        vertices[1],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[1],
+                        vertices[2],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[2],
+                        vertices[3],
+                    )?,
+                    midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[3],
+                        vertices[0],
+                    )?,
                 ];
                 let base_center = face_center(
                     &mut face_centers,
+                    &mut point_sources,
                     &mut next_id,
                     &[vertices[0], vertices[1], vertices[2], vertices[3]],
                 )?;
@@ -546,9 +772,21 @@ where
         refinement_map.push((cell, fine_cells));
     }
 
+    let refined_coordinates = if let Some(coords) = coordinates {
+        Some(build_refined_coordinates(
+            &refined,
+            coords,
+            &point_sources,
+            &refinement_map,
+        )?)
+    } else {
+        None
+    };
+
     Ok(RefinedMesh {
         sieve: refined,
         cell_refinement: refinement_map,
+        coordinates: refined_coordinates,
     })
 }
 
@@ -592,6 +830,7 @@ where
         sieve: refined.sieve,
         cell_refinement: refined.cell_refinement,
         cell_types: refined_cell_types,
+        coordinates: refined.coordinates,
     })
 }
 
@@ -634,6 +873,7 @@ where
         sieve: refined.sieve,
         cell_refinement: refined.cell_refinement,
         ownership: refined_ownership,
+        coordinates: refined.coordinates,
     })
 }
 
@@ -669,6 +909,7 @@ where
         sieve: refined.sieve,
         cell_refinement: refined.cell_refinement,
         ownership: refined_ownership,
+        coordinates: refined.coordinates,
     })
 }
 
@@ -682,6 +923,7 @@ fn alloc_point(next_id: &mut u64) -> Result<PointId, MeshSieveError> {
 
 fn midpoint(
     edge_midpoints: &mut HashMap<(PointId, PointId), PointId>,
+    point_sources: &mut HashMap<PointId, Vec<PointId>>,
     next_id: &mut u64,
     a: PointId,
     b: PointId,
@@ -692,11 +934,13 @@ fn midpoint(
     }
     let p = alloc_point(next_id)?;
     edge_midpoints.insert(key, p);
+    point_sources.insert(p, vec![a, b]);
     Ok(p)
 }
 
 fn face_center(
     face_centers: &mut HashMap<Vec<PointId>, PointId>,
+    point_sources: &mut HashMap<PointId, Vec<PointId>>,
     next_id: &mut u64,
     vertices: &[PointId],
 ) -> Result<PointId, MeshSieveError> {
@@ -707,6 +951,7 @@ fn face_center(
     }
     let p = alloc_point(next_id)?;
     face_centers.insert(key, p);
+    point_sources.insert(p, vertices.to_vec());
     Ok(p)
 }
 
@@ -816,6 +1061,84 @@ where
     }
 
     Ok(cell_types)
+}
+
+fn build_refined_coordinates<Cs>(
+    refined: &InMemorySieve<PointId, ()>,
+    coarse_coords: &Coordinates<f64, Cs>,
+    point_sources: &HashMap<PointId, Vec<PointId>>,
+    refinement_map: &RefinementMap,
+) -> Result<Coordinates<f64, VecStorage<f64>>, MeshSieveError>
+where
+    Cs: Storage<f64>,
+{
+    let dimension = coarse_coords.dimension();
+    let mut atlas = Atlas::default();
+    let mut vertices = Vec::new();
+    for p in refined.points() {
+        if refined.cone_points(p).next().is_none() {
+            atlas.try_insert(p, dimension)?;
+            vertices.push(p);
+        }
+    }
+
+    let mut section = Section::<f64, VecStorage<f64>>::new(atlas);
+    for vertex in vertices {
+        if coarse_coords.section().atlas().contains(vertex) {
+            let values = coarse_coords.try_restrict(vertex)?;
+            section.try_set(vertex, values)?;
+            continue;
+        }
+        let sources = point_sources.get(&vertex).ok_or_else(|| {
+            MeshSieveError::InvalidGeometry(format!(
+                "missing coordinate sources for refined vertex {vertex:?}"
+            ))
+        })?;
+        if sources.is_empty() {
+            return Err(MeshSieveError::InvalidGeometry(format!(
+                "missing coordinate sources for refined vertex {vertex:?}"
+            )));
+        }
+        let mut accum = vec![0.0; dimension];
+        for source in sources {
+            let values = coarse_coords.try_restrict(*source)?;
+            for (idx, value) in values.iter().enumerate().take(dimension) {
+                accum[idx] += value;
+            }
+        }
+        let denom = sources.len() as f64;
+        for value in &mut accum {
+            *value /= denom;
+        }
+        section.try_set(vertex, &accum)?;
+    }
+
+    let mut out = Coordinates::from_section(dimension, section)?;
+    if let Some(high_order) = coarse_coords.high_order() {
+        let mut ho_entries = Vec::new();
+        for (cell, fine_cells) in refinement_map {
+            if !high_order.section().atlas().contains(*cell) {
+                continue;
+            }
+            let values = high_order.section().try_restrict(*cell)?;
+            for (fine_cell, _) in fine_cells {
+                ho_entries.push((*fine_cell, values.to_vec()));
+            }
+        }
+        if !ho_entries.is_empty() {
+            let mut ho_atlas = Atlas::default();
+            for (cell, values) in &ho_entries {
+                ho_atlas.try_insert(*cell, values.len())?;
+            }
+            let mut ho_section = Section::<f64, VecStorage<f64>>::new(ho_atlas);
+            for (cell, values) in ho_entries {
+                ho_section.try_set(cell, &values)?;
+            }
+            let high_order = HighOrderCoordinates::from_section(dimension, ho_section)?;
+            out.set_high_order(high_order)?;
+        }
+    }
+    Ok(out)
 }
 
 fn cell_vertices(

@@ -35,6 +35,8 @@ pub type CpuSection<V> = section::Section<V, VecStorage<V>>;
 
 /// Coordinate storage wrapper with an attached dimension.
 pub use coordinates::Coordinates;
+/// Higher-order coordinate storage wrapper.
+pub use coordinates::HighOrderCoordinates;
 
 /// Alias for the common Vec-backed coordinates bundle.
 pub type CpuCoordinates<V> = coordinates::Coordinates<V, VecStorage<V>>;
