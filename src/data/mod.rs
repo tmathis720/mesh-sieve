@@ -8,6 +8,7 @@ pub mod coordinates;
 pub mod discretization;
 pub mod global_map;
 pub mod mixed_section;
+pub mod multi_section;
 pub mod section;
 pub mod slice_storage;
 pub mod storage;
@@ -26,6 +27,7 @@ pub use constrained_section::{
 pub use discretization::{Discretization, DofLayout, FieldDiscretization, RegionKey};
 pub use global_map::LocalToGlobalMap;
 pub use mixed_section::{MixedScalar, MixedSectionStore, ScalarType, TaggedSection};
+pub use multi_section::{FieldSection, MultiSection};
 pub use section::Section;
 pub use slice_storage::SliceStorage;
 pub use storage::{Storage, VecStorage};
