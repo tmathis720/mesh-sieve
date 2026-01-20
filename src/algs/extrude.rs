@@ -178,6 +178,7 @@ where
         sieve,
         coordinates: Some(coords),
         sections: BTreeMap::new(),
+        mixed_sections: crate::data::mixed_section::MixedSectionStore::default(),
         labels: None,
         cell_types: Some(cell_types_out),
     })

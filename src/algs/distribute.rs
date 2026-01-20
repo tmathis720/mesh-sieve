@@ -3,6 +3,7 @@
 use crate::algs::communicator::Communicator;
 use crate::data::atlas::Atlas;
 use crate::data::coordinates::Coordinates;
+use crate::data::mixed_section::{MixedSectionStore, TaggedSection};
 use crate::data::section::Section;
 use crate::data::storage::Storage;
 use crate::io::MeshData;
@@ -178,6 +179,8 @@ where
     pub coordinates: Option<Coordinates<V, St>>,
     /// Named local sections for distributed points.
     pub sections: BTreeMap<String, Section<V, St>>,
+    /// Tagged local sections with mixed scalar types.
+    pub mixed_sections: MixedSectionStore,
     /// Point labels filtered to the local point set.
     pub labels: Option<LabelSet>,
     /// Optional cell-type section for local points.
@@ -317,11 +320,8 @@ where
         .ok_or(MeshSieveError::PartitionIndexOutOfBounds(my_rank))?;
 
     let overlap = build_overlap_for_rank(my_rank, local_set, &point_ranks)?;
-    let ownership = PointOwnership::from_local_set(
-        local_set.iter().copied(),
-        &point_owners,
-        my_rank,
-    )?;
+    let ownership =
+        PointOwnership::from_local_set(local_set.iter().copied(), &point_owners, my_rank)?;
 
     let local_sieve = build_local_sieve(mesh_data, local_set);
     let labels = mesh_data
@@ -345,6 +345,13 @@ where
         sections.insert(name.clone(), local_section);
     }
 
+    let mut mixed_sections = MixedSectionStore::default();
+    for (name, section) in mesh_data.mixed_sections.iter() {
+        let local_section =
+            build_local_tagged_section(section, local_set, &point_owners, my_rank, config)?;
+        mixed_sections.insert_tagged(name.clone(), local_section);
+    }
+
     let cell_types = match &mesh_data.cell_types {
         Some(section) => Some(build_local_section(
             section,
@@ -364,6 +371,7 @@ where
         cell_parts,
         coordinates,
         sections,
+        mixed_sections,
         labels,
         cell_types,
     })
@@ -498,10 +506,7 @@ fn build_local_sets(
     local_sets
 }
 
-fn build_point_ranks(
-    local_sets: &[BTreeSet<PointId>],
-    max_id: usize,
-) -> Vec<Vec<usize>> {
+fn build_point_ranks(local_sets: &[BTreeSet<PointId>], max_id: usize) -> Vec<Vec<usize>> {
     let mut point_ranks = vec![Vec::new(); max_id];
     for (rank, points) in local_sets.iter().enumerate() {
         for &p in points {
@@ -594,6 +599,35 @@ where
         }
     }
     Ok(local_section)
+}
+
+fn build_local_tagged_section(
+    section: &TaggedSection,
+    local_set: &BTreeSet<PointId>,
+    owners: &[usize],
+    my_rank: usize,
+    config: DistributionConfig,
+) -> Result<TaggedSection, MeshSieveError> {
+    Ok(match section {
+        TaggedSection::F64(sec) => TaggedSection::F64(build_local_section(
+            sec, local_set, owners, my_rank, config,
+        )?),
+        TaggedSection::F32(sec) => TaggedSection::F32(build_local_section(
+            sec, local_set, owners, my_rank, config,
+        )?),
+        TaggedSection::I32(sec) => TaggedSection::I32(build_local_section(
+            sec, local_set, owners, my_rank, config,
+        )?),
+        TaggedSection::I64(sec) => TaggedSection::I64(build_local_section(
+            sec, local_set, owners, my_rank, config,
+        )?),
+        TaggedSection::U32(sec) => TaggedSection::U32(build_local_section(
+            sec, local_set, owners, my_rank, config,
+        )?),
+        TaggedSection::U64(sec) => TaggedSection::U64(build_local_section(
+            sec, local_set, owners, my_rank, config,
+        )?),
+    })
 }
 
 #[inline]

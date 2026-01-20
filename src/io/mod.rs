@@ -9,6 +9,7 @@ pub mod gmsh;
 pub mod hdf5;
 
 use crate::data::coordinates::Coordinates;
+use crate::data::mixed_section::MixedSectionStore;
 use crate::data::section::Section;
 use crate::data::storage::Storage;
 use crate::mesh_error::MeshSieveError;
@@ -31,6 +32,8 @@ where
     pub coordinates: Option<Coordinates<V, St>>,
     /// Named sections keyed by user-provided identifiers.
     pub sections: BTreeMap<String, Section<V, St>>,
+    /// Tagged sections with mixed scalar types.
+    pub mixed_sections: MixedSectionStore,
     /// Optional integer labels associated with mesh points.
     pub labels: Option<LabelSet>,
     /// Optional cell type section over mesh points.
@@ -48,6 +51,7 @@ where
             sieve,
             coordinates: None,
             sections: BTreeMap::new(),
+            mixed_sections: MixedSectionStore::default(),
             labels: None,
             cell_types: None,
         }
