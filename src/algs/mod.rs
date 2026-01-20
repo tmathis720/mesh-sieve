@@ -5,6 +5,7 @@
 
 pub mod communicator;
 pub mod completion;
+pub mod adjacency_graph;
 pub mod distribute;
 pub mod dual_graph;
 pub mod extrude;
