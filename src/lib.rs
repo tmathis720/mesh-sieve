@@ -98,6 +98,9 @@ pub mod prelude {
     pub use crate::topology::cell_type::CellType;
     pub use crate::topology::labels::LabelSet;
     pub use crate::topology::ownership::{OwnershipEntry, PointOwnership};
+    pub use crate::topology::periodic::{
+        PeriodicMap, PointEquivalence, collapse_points, quotient_sieve,
+    };
     pub use crate::topology::point::PointId;
     pub use crate::topology::sieve::{
         InMemoryOrientedSieve, InMemoryOrientedSieveArc, InMemorySieve, InMemorySieveArc,

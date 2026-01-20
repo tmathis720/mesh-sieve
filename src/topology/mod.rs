@@ -15,17 +15,18 @@
 //! remain perfect mirrors and contain no parallel edges.
 
 mod _debug_invariants;
+pub mod adapt;
 pub mod arrow;
 pub mod bounds;
 pub mod cache;
 pub mod cell_type;
 pub mod coarsen;
 pub mod labels;
-pub mod ownership;
 pub mod orientation;
+pub mod ownership;
+pub mod periodic;
 pub mod point;
 pub mod refine;
-pub mod adapt;
 pub mod sieve;
 pub mod stack;
 pub mod utils;
@@ -33,8 +34,8 @@ pub mod utils;
 pub use cache::InvalidateCache;
 pub use cell_type::CellType;
 pub use labels::LabelSet;
-pub use ownership::{OwnershipEntry, PointOwnership};
 pub use orientation::*;
+pub use ownership::{OwnershipEntry, PointOwnership};
 pub use sieve::*;
 
 #[cfg(test)]
