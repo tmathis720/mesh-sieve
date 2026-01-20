@@ -5,7 +5,6 @@ use mesh_sieve::io::gmsh::GmshReader;
 use mesh_sieve::io::SieveSectionReader;
 use mesh_sieve::mesh_error::MeshSieveError;
 use mesh_sieve::topology::cell_type::CellType;
-use mesh_sieve::topology::point::PointId;
 use mesh_sieve::topology::sieve::Sieve;
 
 fn main() -> Result<(), MeshSieveError> {
@@ -31,8 +30,12 @@ $EndElements
     let mut mesh = reader.read(msh.as_bytes())?;
 
     let labels = mesh.labels.as_ref().expect("Gmsh reader adds labels");
-    let cell_1 = PointId::new(1)?;
-    let cell_2 = PointId::new(2)?;
+    let cells_7: Vec<_> = labels.points_with_label("gmsh:physical", 7).collect();
+    let cells_8: Vec<_> = labels.points_with_label("gmsh:physical", 8).collect();
+    assert_eq!(cells_7.len(), 1);
+    assert_eq!(cells_8.len(), 1);
+    let cell_1 = cells_7[0];
+    let cell_2 = cells_8[0];
     assert_eq!(labels.get_label(cell_1, "gmsh:physical"), Some(7));
     assert_eq!(labels.get_label(cell_2, "gmsh:physical"), Some(8));
 

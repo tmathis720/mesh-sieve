@@ -13,6 +13,7 @@
 //! - Element tags are captured as labels (`gmsh:physical`, `gmsh:entity`,
 //!   and `gmsh:tagN` for additional tags).
 //! - Coordinates preserve the inferred mesh dimension (1D/2D/3D).
+//! - Element IDs are remapped when they collide with node IDs.
 
 use crate::data::atlas::Atlas;
 use crate::data::coordinates::{Coordinates, HighOrderCoordinates};
@@ -412,6 +413,7 @@ impl GmshReader {
         let mut nodes: Vec<(PointId, [f64; 3])> = Vec::new();
         let mut elements: Vec<ElementRecord> = Vec::new();
         let mut mixed_sections = MixedSectionStore::default();
+        let mut element_data_names: HashSet<String> = HashSet::new();
 
         while let Some(line) = lines.next() {
             match line.trim() {
@@ -563,6 +565,7 @@ impl GmshReader {
                         num_components,
                         "ElementData",
                     )?;
+                    element_data_names.insert(name.clone());
                     mixed_sections.insert_tagged(name, tagged);
                 }
                 _ => {
@@ -580,6 +583,12 @@ impl GmshReader {
 
         let mesh_dimension = Self::mesh_dimension(&elements, &nodes);
         let coord_dimension = mesh_dimension.max(1).min(3);
+
+        Self::remap_elements_if_needed(
+            &mut elements,
+            &mut mixed_sections,
+            &element_data_names,
+        )?;
 
         let node_lookup: HashMap<PointId, [f64; 3]> = nodes.iter().cloned().collect();
         let mut vertex_nodes = HashSet::new();
@@ -718,6 +727,116 @@ impl GmshReader {
             },
             CellType::Polyhedron => 4,
         }
+    }
+
+    fn remap_elements_if_needed(
+        elements: &mut [ElementRecord],
+        mixed_sections: &mut MixedSectionStore,
+        element_data_names: &HashSet<String>,
+    ) -> Result<(), MeshSieveError> {
+        if elements.is_empty() {
+            return Ok(());
+        }
+
+        let mut vertex_nodes = HashSet::new();
+        for element in elements.iter() {
+            for node in &element.conn {
+                vertex_nodes.insert(*node);
+            }
+        }
+        if vertex_nodes.is_empty() {
+            return Ok(());
+        }
+
+        let needs_remap = elements
+            .iter()
+            .any(|element| vertex_nodes.contains(&element.id));
+        if !needs_remap {
+            return Ok(());
+        }
+
+        let max_node_id = vertex_nodes
+            .iter()
+            .map(|point| point.get())
+            .max()
+            .unwrap_or(0);
+        let mut next_id = max_node_id
+            .checked_add(1)
+            .ok_or(MeshSieveError::InvalidPointId)?;
+        let mut id_map = HashMap::with_capacity(elements.len());
+        for element in elements.iter_mut() {
+            let old_id = element.id;
+            let new_id = PointId::new(next_id)?;
+            next_id = next_id
+                .checked_add(1)
+                .ok_or(MeshSieveError::InvalidPointId)?;
+            id_map.insert(old_id, new_id);
+            element.id = new_id;
+        }
+
+        if !element_data_names.is_empty() {
+            for (name, section) in mixed_sections.iter_mut() {
+                if element_data_names.contains(name) {
+                    Self::remap_tagged_section(name, section, &id_map)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn remap_tagged_section(
+        name: &str,
+        section: &mut TaggedSection,
+        id_map: &HashMap<PointId, PointId>,
+    ) -> Result<(), MeshSieveError> {
+        match section {
+            TaggedSection::F64(sec) => {
+                *sec = Self::remap_section(name, sec, id_map)?;
+            }
+            TaggedSection::F32(sec) => {
+                *sec = Self::remap_section(name, sec, id_map)?;
+            }
+            TaggedSection::I32(sec) => {
+                *sec = Self::remap_section(name, sec, id_map)?;
+            }
+            TaggedSection::I64(sec) => {
+                *sec = Self::remap_section(name, sec, id_map)?;
+            }
+            TaggedSection::U32(sec) => {
+                *sec = Self::remap_section(name, sec, id_map)?;
+            }
+            TaggedSection::U64(sec) => {
+                *sec = Self::remap_section(name, sec, id_map)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn remap_section<T: Clone + Default>(
+        name: &str,
+        section: &Section<T, VecStorage<T>>,
+        id_map: &HashMap<PointId, PointId>,
+    ) -> Result<Section<T, VecStorage<T>>, MeshSieveError> {
+        let mut entries = Vec::new();
+        for (point, slice) in section.iter() {
+            let remapped = id_map.get(&point).copied().ok_or_else(|| {
+                MeshSieveError::MeshIoParse(format!(
+                    "{name} references unknown element id {point:?}"
+                ))
+            })?;
+            entries.push((remapped, slice.to_vec()));
+        }
+
+        let mut atlas = Atlas::default();
+        for (point, values) in &entries {
+            atlas.try_insert(*point, values.len())?;
+        }
+        let mut remapped = Section::<T, VecStorage<T>>::new(atlas);
+        for (point, values) in entries {
+            remapped.try_set(point, &values)?;
+        }
+        Ok(remapped)
     }
 
     fn mesh_dimension(elements: &[ElementRecord], nodes: &[(PointId, [f64; 3])]) -> usize {
