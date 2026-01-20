@@ -1,10 +1,15 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 
 use mesh_sieve::algs::traversal::{TraversalCache, closure, closure_cached, star, star_cached};
+use mesh_sieve::topology::point::PointId;
 use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
 use mesh_sieve::topology::sieve::Sieve;
 
-fn build_binary_tree(levels: u32) -> InMemorySieve<u32> {
+fn pid(raw: u32) -> PointId {
+    PointId::new(u64::from(raw)).expect("nonzero PointId")
+}
+
+fn build_binary_tree(levels: u32) -> InMemorySieve<PointId> {
     let mut sieve = InMemorySieve::new();
     let mut start = 1u32;
     let mut end = 1u32;
@@ -12,8 +17,8 @@ fn build_binary_tree(levels: u32) -> InMemorySieve<u32> {
         for parent in start..=end {
             let left = parent * 2;
             let right = parent * 2 + 1;
-            sieve.add_arrow(parent, left, ());
-            sieve.add_arrow(parent, right, ());
+            sieve.add_arrow(pid(parent), pid(left), ());
+            sieve.add_arrow(pid(parent), pid(right), ());
         }
         start = end + 1;
         end = end * 2 + 1;
@@ -26,8 +31,8 @@ fn bench_traversal_cache(c: &mut Criterion) {
 
     for &levels in &[10u32, 12u32] {
         let sieve = build_binary_tree(levels);
-        let root = 1u32;
-        let leaf = 1u32 << (levels - 1);
+        let root = pid(1u32);
+        let leaf = pid(1u32 << (levels - 1));
 
         group.bench_with_input(
             BenchmarkId::new("closure_no_cache", levels),

@@ -80,7 +80,10 @@ where
     }
 }
 
-impl<P> InvalidateCache for TraversalCache<P> {
+impl<P> InvalidateCache for TraversalCache<P>
+where
+    P: Copy + Eq + std::hash::Hash + Ord,
+{
     fn invalidate_cache(&mut self) {
         self.clear();
     }
