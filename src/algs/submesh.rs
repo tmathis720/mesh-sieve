@@ -115,6 +115,7 @@ where
             mixed_sections,
             labels: labels_out,
             cell_types,
+            discretization: mesh.discretization.clone(),
         },
         SubmeshMaps {
             parent_to_sub,

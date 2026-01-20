@@ -91,6 +91,7 @@ pub mod prelude {
         ConstrainedSection, ConstraintSet, DofConstraint, apply_constraints_to_section,
     };
     pub use crate::data::coordinates::Coordinates;
+    pub use crate::data::discretization::{Discretization, DofLayout, FieldDiscretization, RegionKey};
     pub use crate::data::global_map::LocalToGlobalMap;
     #[cfg(feature = "map-adapter")]
     pub use crate::data::section::Map;
