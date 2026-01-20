@@ -3,6 +3,7 @@
 use crate::algs::communicator::Communicator;
 use crate::data::atlas::Atlas;
 use crate::data::coordinates::Coordinates;
+use crate::data::global_map::LocalToGlobalMap;
 use crate::data::mixed_section::{MixedSectionStore, TaggedSection};
 use crate::data::section::Section;
 use crate::data::storage::Storage;
@@ -185,6 +186,46 @@ where
     pub labels: Option<LabelSet>,
     /// Optional cell-type section for local points.
     pub cell_types: Option<Section<CellType, CtSt>>,
+}
+
+impl<V, St, CtSt> DistributedMeshData<V, St, CtSt>
+where
+    St: Storage<V> + Clone,
+    CtSt: Storage<CellType> + Clone,
+{
+    /// Build a global DOF map for a specific local section using ownership metadata.
+    pub fn build_global_map_for_section<C>(
+        &self,
+        section: &Section<V, St>,
+        comm: &C,
+    ) -> Result<LocalToGlobalMap, MeshSieveError>
+    where
+        C: Communicator + Sync,
+    {
+        LocalToGlobalMap::from_section_with_ownership(
+            section,
+            &self.overlap,
+            &self.ownership,
+            comm,
+            comm.rank(),
+        )
+    }
+
+    /// Build global DOF maps for all named sections in this distributed mesh.
+    pub fn build_global_section_maps<C>(
+        &self,
+        comm: &C,
+    ) -> Result<BTreeMap<String, LocalToGlobalMap>, MeshSieveError>
+    where
+        C: Communicator + Sync,
+    {
+        let mut maps = BTreeMap::new();
+        for (name, section) in &self.sections {
+            let map = self.build_global_map_for_section(section, comm)?;
+            maps.insert(name.clone(), map);
+        }
+        Ok(maps)
+    }
 }
 
 /// Partition hook for distributing cell-based meshes.
