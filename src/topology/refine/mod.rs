@@ -729,7 +729,7 @@ where
     CtSt: Storage<CellType>,
 {
     let mut cells = Vec::new();
-    let mut max_dim = None;
+    let mut max_dim: Option<u8> = None;
 
     for (point, cell_slice) in cell_types.iter() {
         if cell_slice.len() != 1 {
