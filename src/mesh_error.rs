@@ -238,6 +238,15 @@ pub enum MeshSieveError {
     MeshIoParse(String),
     #[error("Overlap: payload.rank {found} != Part({expected})")]
     OverlapRankMismatch { expected: usize, found: usize },
+    /// Periodic mapping for a slave point conflicted with existing entry.
+    #[error(
+        "Periodic mapping conflict for slave {slave:?}: existing master {existing:?}, new master {new:?}"
+    )]
+    PeriodicMappingConflict {
+        slave: crate::topology::point::PointId,
+        existing: crate::topology::point::PointId,
+        new: crate::topology::point::PointId,
+    },
     #[error("Overlap: Part node found in base_points()")]
     OverlapPartInBasePoints,
     #[error("Overlap: Local node found in cap_points()")]
