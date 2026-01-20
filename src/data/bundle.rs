@@ -8,6 +8,7 @@
 //! This abstraction supports push (refine) and pull (assemble) of data
 //! across mesh hierarchy levels, as described in Knepley & Karpeev (2009).
 
+use crate::data::constrained_section::{apply_constraints_to_section, ConstraintSet};
 #[allow(unused_imports)]
 use crate::data::refine::delta::SliceDelta;
 use crate::data::section::Section;
@@ -163,6 +164,32 @@ where
         Ok(())
     }
 
+    /// Apply constraints to the underlying section.
+    pub fn apply_constraints<C>(
+        &mut self,
+        constraints: &C,
+    ) -> Result<(), crate::mesh_error::MeshSieveError>
+    where
+        V: Clone,
+        C: ConstraintSet<V>,
+    {
+        apply_constraints_to_section(&mut self.section, constraints)
+    }
+
+    /// **Refine** with constraints applied after the refinement step.
+    pub fn refine_with_constraints<C>(
+        &mut self,
+        bases: impl IntoIterator<Item = PointId>,
+        constraints: &C,
+    ) -> Result<(), crate::mesh_error::MeshSieveError>
+    where
+        V: Clone,
+        C: ConstraintSet<V>,
+    {
+        self.refine(bases)?;
+        self.apply_constraints(constraints)
+    }
+
     /// **Assemble**: pull data *up* the stack (cap → base) using element-wise averaging.
     ///
     /// For each base point, gathers slices from all cap points and replaces the base
@@ -238,6 +265,22 @@ where
         Ok(())
     }
 
+    /// Assemble using the provided reducer, then apply constraints.
+    pub fn assemble_with_constraints<R, C>(
+        &mut self,
+        bases: impl IntoIterator<Item = PointId>,
+        reducer: &R,
+        constraints: &C,
+    ) -> Result<(), crate::mesh_error::MeshSieveError>
+    where
+        V: Clone,
+        R: SliceReducer<V>,
+        C: ConstraintSet<V>,
+    {
+        self.assemble_with(bases, reducer)?;
+        self.apply_constraints(constraints)
+    }
+
     /// Backward-compatible assemble: element-wise average of cap slices.
     ///
     /// # Migration
@@ -254,6 +297,23 @@ where
             + std::ops::Div<Output = V>,
     {
         self.assemble_with(bases, &AverageReducer)
+    }
+
+    /// Backward-compatible assemble with constraints using element-wise averaging.
+    pub fn assemble_with_constraints_default<C>(
+        &mut self,
+        bases: impl IntoIterator<Item = PointId>,
+        constraints: &C,
+    ) -> Result<(), crate::mesh_error::MeshSieveError>
+    where
+        V: Clone
+            + Default
+            + num_traits::FromPrimitive
+            + std::ops::AddAssign
+            + std::ops::Div<Output = V>,
+        C: ConstraintSet<V>,
+    {
+        self.assemble_with_constraints(bases, &AverageReducer, constraints)
     }
 
     /// Iterate over `(cap_point, &[V])` pairs for all DOFs attached to base `p`.

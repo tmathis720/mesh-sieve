@@ -231,6 +231,40 @@ use mesh_sieve::overlap::delta::ValueDelta as OverlapDelta;
 
 ---
 
+### 5.5 Constrained fields (`ConstrainedSection`)
+
+`ConstrainedSection` wraps a `Section` with per-point DOF constraints (indices + values).
+Use it to enforce Dirichlet-style values after refinement/assembly.
+
+```rust
+use mesh_sieve::data::atlas::Atlas;
+use mesh_sieve::data::constrained_section::ConstrainedSection;
+use mesh_sieve::data::section::Section;
+use mesh_sieve::data::storage::VecStorage;
+use mesh_sieve::topology::labels::LabelSet;
+use mesh_sieve::topology::point::PointId;
+
+let mut atlas = Atlas::default();
+let p = PointId::new(7)?;
+atlas.try_insert(p, 3)?;
+let section = Section::<f64, VecStorage<f64>>::new(atlas);
+
+let mut labels = LabelSet::new();
+labels.set_label(p, "boundary", 1);
+
+let mut constrained = ConstrainedSection::new(section);
+for point in labels.points_with_label("boundary", 1) {
+    constrained.insert_constraint(point, 2, 0.0)?;
+}
+constrained.apply_constraints()?;
+```
+
+For mesh workflows that refine or assemble, apply constraints afterwards with
+`Bundle::refine_with_constraints` and `Bundle::assemble_with_constraints` to keep
+boundary conditions enforced.
+
+---
+
 ## 6. Bundles (topology + data workflow)
 
 ```rust
@@ -248,10 +282,12 @@ let mut b: Bundle<f64> = Bundle {
 * **Refine (base→cap)**
   `bundle.refine(bases) -> Result<()>`
   Streams through `stack.lift(base)` and applies `Polarity` as a `SliceDelta`. No per-base heap allocations.
+  To keep Dirichlet values enforced, use `bundle.refine_with_constraints(bases, &constraints)`.
 
 * **Assemble (cap→base)**
   `bundle.assemble_with(bases, &AverageReducer) -> Result<()>`
   **Robust fix**: length validation happens **in the caller** so reducer can stay context-free (no fake `PointId`). Uses a streaming pattern (no `Vec` per base).
+  Use `bundle.assemble_with_constraints(bases, &AverageReducer, &constraints)` to apply constraints after assembly.
 
 ---
 

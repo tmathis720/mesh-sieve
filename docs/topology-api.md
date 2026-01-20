@@ -117,6 +117,32 @@ let tagged: Vec<_> = labels.points_with_label("boundary", 2).collect();
 Each point can carry multiple labels with different names (e.g., `"boundary"` and
 `"material"`); within a label name, a point maps to a single integer value.
 
+You can combine `LabelSet` with constrained fields by iterating the label markers and
+adding DOF constraints for those points:
+
+```rust
+use mesh_sieve::data::constrained_section::ConstrainedSection;
+use mesh_sieve::data::storage::VecStorage;
+use mesh_sieve::data::section::Section;
+use mesh_sieve::data::atlas::Atlas;
+use mesh_sieve::topology::labels::LabelSet;
+use mesh_sieve::topology::point::PointId;
+
+let mut atlas = Atlas::default();
+let p = PointId::new(10)?;
+atlas.try_insert(p, 3)?;
+let mut section = Section::<f64, VecStorage<f64>>::new(atlas);
+
+let mut labels = LabelSet::new();
+labels.set_label(p, "boundary", 1);
+
+let mut constrained = ConstrainedSection::new(section);
+for point in labels.points_with_label("boundary", 1) {
+    constrained.insert_constraint(point, 0, 0.0)?;
+}
+constrained.apply_constraints()?;
+```
+
 ---
 
 ## Cell types (`CellType`)
