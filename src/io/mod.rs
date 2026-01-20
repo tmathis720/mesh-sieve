@@ -3,7 +3,10 @@
 //! This module provides trait-based readers and writers for loading and
 //! saving `Sieve` topologies together with associated `Section` data.
 
+pub mod cgns;
+pub mod exodus;
 pub mod gmsh;
+pub mod hdf5;
 
 use crate::data::coordinates::Coordinates;
 use crate::data::section::Section;
@@ -66,10 +69,7 @@ pub trait SieveSectionReader {
     fn read<R: Read>(
         &self,
         reader: R,
-    ) -> Result<
-        MeshData<Self::Sieve, Self::Value, Self::Storage, Self::CellStorage>,
-        MeshSieveError,
-    >;
+    ) -> Result<MeshData<Self::Sieve, Self::Value, Self::Storage, Self::CellStorage>, MeshSieveError>;
 }
 
 /// Trait for mesh writers that serialize sieve + section data.
