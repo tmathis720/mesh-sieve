@@ -584,8 +584,7 @@ impl GmshReader {
         let node_lookup: HashMap<PointId, [f64; 3]> = nodes.iter().cloned().collect();
         let mut vertex_nodes = HashSet::new();
         for element in &elements {
-            let min_nodes = Self::element_min_nodes(element.cell_type);
-            for node in element.conn.iter().take(min_nodes) {
+            for node in &element.conn {
                 vertex_nodes.insert(*node);
             }
         }
@@ -601,8 +600,7 @@ impl GmshReader {
         }
         for element in &elements {
             MutableSieve::add_point(&mut sieve, element.id);
-            let min_nodes = Self::element_min_nodes(element.cell_type);
-            for node in element.conn.iter().take(min_nodes) {
+            for node in &element.conn {
                 Sieve::add_arrow(&mut sieve, element.id, *node, ());
             }
         }
