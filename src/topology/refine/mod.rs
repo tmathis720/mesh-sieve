@@ -16,9 +16,11 @@
 //! [`crate::data::refine::SievedArray::try_refine_with_sifter`], enabling transfer of
 //! cell-wise data from the coarse mesh to the refined mesh.
 
+use crate::algs::interpolate::{interpolate_edges_faces, InterpolationResult};
+use crate::data::atlas::Atlas;
 use crate::data::coordinates::Coordinates;
 use crate::data::section::Section;
-use crate::data::storage::Storage;
+use crate::data::storage::{Storage, VecStorage};
 use crate::geometry::quality::validate_cell_geometry;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::arrow::Polarity;
@@ -26,7 +28,7 @@ use crate::topology::cell_type::CellType;
 use crate::topology::ownership::PointOwnership;
 use crate::topology::point::PointId;
 use crate::topology::sieve::{InMemorySieve, Sieve};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Mapping from coarse cells to refined cells, with orientation hints.
 pub type RefinementMap = Vec<(PointId, Vec<(PointId, Polarity)>)>;
@@ -51,11 +53,58 @@ pub struct RefinedMeshWithOwnership {
     pub ownership: PointOwnership,
 }
 
+/// Output of [`refine_mesh_full_topology`], including a full topology and types.
+#[derive(Clone, Debug)]
+pub struct RefinedMeshWithTopology {
+    /// Refined topology (cells → faces → edges → vertices).
+    pub sieve: InMemorySieve<PointId, ()>,
+    /// Mapping from coarse cell to refined cells (all `Polarity::Forward`).
+    pub cell_refinement: RefinementMap,
+    /// Cell types for the refined topology (cells, edges, faces, vertices).
+    pub cell_types: Section<CellType, VecStorage<CellType>>,
+}
+
 /// Optional settings for refinement.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RefineOptions {
     /// When enabled, validate cell geometry and reject inverted or degenerate elements.
     pub check_geometry: bool,
+}
+
+/// Pre-interpolate a cell→vertex topology to a full cell→face→edge→vertex mesh.
+pub fn pre_interpolate_topology<S, CtSt>(
+    sieve: &mut S,
+    cell_types: &mut Section<CellType, CtSt>,
+) -> Result<InterpolationResult, MeshSieveError>
+where
+    S: crate::topology::sieve::MutableSieve<Point = PointId>,
+    S::Payload: Default,
+    CtSt: Storage<CellType> + Clone,
+{
+    interpolate_edges_faces(sieve, cell_types)
+}
+
+/// Collapse a full topology to cell→vertex connectivity for refinement.
+pub fn collapse_to_cell_vertices<CtSt>(
+    sieve: &mut impl Sieve<Point = PointId>,
+    cell_types: &Section<CellType, CtSt>,
+) -> Result<InMemorySieve<PointId, ()>, MeshSieveError>
+where
+    CtSt: Storage<CellType>,
+{
+    let cells = collect_top_cells(cell_types)?;
+    let mut collapsed = InMemorySieve::<PointId, ()>::default();
+
+    for (cell, cell_type) in cells {
+        let expected = expected_vertex_count(cell_type)
+            .ok_or(MeshSieveError::UnsupportedRefinementCellType { cell, cell_type })?;
+        let vertices = cell_vertices(sieve, cell, expected)?;
+        for v in vertices {
+            collapsed.add_arrow(cell, v, ());
+        }
+    }
+
+    Ok(collapsed)
 }
 
 /// Reference 1→4 subdivision of a triangle given vertices and mid-edge points.
@@ -503,6 +552,49 @@ where
     })
 }
 
+/// Refine a mesh and return a full cell→face→edge→vertex topology.
+///
+/// This path is suitable for mixed-element meshes that already carry edges and faces.
+/// The refined mesh includes interpolated edges/faces that are kept consistent across
+/// shared boundaries via canonical vertex keys.
+pub fn refine_mesh_full_topology<S>(
+    coarse: &mut impl Sieve<Point = PointId>,
+    cell_types: &Section<CellType, S>,
+) -> Result<RefinedMeshWithTopology, MeshSieveError>
+where
+    S: Storage<CellType>,
+{
+    refine_mesh_full_topology_with_options::<S, crate::data::storage::VecStorage<f64>>(
+        coarse,
+        cell_types,
+        None,
+        RefineOptions::default(),
+    )
+}
+
+/// Refine a mesh and return a full cell→face→edge→vertex topology with options.
+pub fn refine_mesh_full_topology_with_options<S, Cs>(
+    coarse: &mut impl Sieve<Point = PointId>,
+    cell_types: &Section<CellType, S>,
+    coordinates: Option<&Coordinates<f64, Cs>>,
+    options: RefineOptions,
+) -> Result<RefinedMeshWithTopology, MeshSieveError>
+where
+    S: Storage<CellType>,
+    Cs: Storage<f64>,
+{
+    let cell_only = cell_only_section(cell_types)?;
+    let mut refined = refine_mesh_with_options(coarse, &cell_only, coordinates, options)?;
+    let mut refined_cell_types = build_refined_cell_types(&refined, &cell_only)?;
+    interpolate_edges_faces(&mut refined.sieve, &mut refined_cell_types)?;
+
+    Ok(RefinedMeshWithTopology {
+        sieve: refined.sieve,
+        cell_refinement: refined.cell_refinement,
+        cell_types: refined_cell_types,
+    })
+}
+
 /// Refine a mesh and update point ownership metadata consistently.
 ///
 /// Ownership for new points is inherited from the owning rank of the coarse
@@ -628,6 +720,102 @@ fn expected_vertex_count(cell_type: CellType) -> Option<usize> {
         CellType::Pyramid => Some(5),
         _ => None,
     }
+}
+
+fn collect_top_cells<CtSt>(
+    cell_types: &Section<CellType, CtSt>,
+) -> Result<Vec<(PointId, CellType)>, MeshSieveError>
+where
+    CtSt: Storage<CellType>,
+{
+    let mut cells = Vec::new();
+    let mut max_dim = None;
+
+    for (point, cell_slice) in cell_types.iter() {
+        if cell_slice.len() != 1 {
+            return Err(MeshSieveError::SliceLengthMismatch {
+                point,
+                expected: 1,
+                found: cell_slice.len(),
+            });
+        }
+        let cell_type = cell_slice[0];
+        let dim = cell_type.dimension();
+        max_dim = Some(max_dim.map_or(dim, |current| current.max(dim)));
+        cells.push((point, cell_type));
+    }
+
+    let max_dim = max_dim.unwrap_or(0);
+    cells.retain(|(_, cell_type)| cell_type.dimension() == max_dim);
+    Ok(cells)
+}
+
+fn cell_only_section<CtSt>(
+    cell_types: &Section<CellType, CtSt>,
+) -> Result<Section<CellType, VecStorage<CellType>>, MeshSieveError>
+where
+    CtSt: Storage<CellType>,
+{
+    let cells = collect_top_cells(cell_types)?;
+    let mut atlas = Atlas::default();
+    for (cell, _) in &cells {
+        atlas
+            .try_insert(*cell, 1)
+            .map_err(|e| MeshSieveError::AtlasInsertionFailed(*cell, Box::new(e)))?;
+    }
+    let mut filtered = Section::<CellType, VecStorage<CellType>>::new(atlas);
+    for (cell, cell_type) in cells {
+        filtered.try_set(cell, &[cell_type])?;
+    }
+    Ok(filtered)
+}
+
+fn build_refined_cell_types<CtSt>(
+    refined: &RefinedMesh,
+    coarse_cells: &Section<CellType, CtSt>,
+) -> Result<Section<CellType, VecStorage<CellType>>, MeshSieveError>
+where
+    CtSt: Storage<CellType>,
+{
+    let mut cell_map = HashMap::new();
+    for (cell, cell_slice) in coarse_cells.iter() {
+        if cell_slice.len() != 1 {
+            return Err(MeshSieveError::SliceLengthMismatch {
+                point: cell,
+                expected: 1,
+                found: cell_slice.len(),
+            });
+        }
+        cell_map.insert(cell, cell_slice[0]);
+    }
+
+    let mut atlas = Atlas::default();
+    let mut points = HashSet::new();
+    for p in refined.sieve.points() {
+        if points.insert(p) {
+            atlas
+                .try_insert(p, 1)
+                .map_err(|e| MeshSieveError::AtlasInsertionFailed(p, Box::new(e)))?;
+        }
+    }
+    let mut cell_types = Section::<CellType, VecStorage<CellType>>::new(atlas);
+
+    for p in refined.sieve.points() {
+        if refined.sieve.cone_points(p).next().is_none() {
+            cell_types.try_set(p, &[CellType::Vertex])?;
+        }
+    }
+
+    for (cell, fine_cells) in &refined.cell_refinement {
+        let cell_type = *cell_map
+            .get(cell)
+            .ok_or(MeshSieveError::PointNotInAtlas(*cell))?;
+        for (fine_cell, _) in fine_cells {
+            cell_types.try_set(*fine_cell, &[cell_type])?;
+        }
+    }
+
+    Ok(cell_types)
 }
 
 fn cell_vertices(
