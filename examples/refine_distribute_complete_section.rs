@@ -73,7 +73,8 @@ fn build_refined_mesh_data() -> Result<
     let constrained_point = refined
         .sieve
         .points()
-        .find(|p| refined.sieve.cone_points(*p).next().is_none())
+        .filter(|p| refined.sieve.cone_points(*p).next().is_none())
+        .min_by_key(|p| p.get())
         .expect("at least one vertex");
     let constrained_value = -10.0;
     let mut constrained = ConstrainedSection::new(section);
