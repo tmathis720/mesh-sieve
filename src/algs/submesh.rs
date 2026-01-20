@@ -2,6 +2,7 @@
 
 use crate::data::atlas::Atlas;
 use crate::data::coordinates::Coordinates;
+use crate::data::mixed_section::{MixedSectionStore, TaggedSection};
 use crate::data::section::Section;
 use crate::data::storage::Storage;
 use crate::io::MeshData;
@@ -74,7 +75,11 @@ where
     }
 
     let coordinates = match &mesh.coordinates {
-        Some(coords) => Some(transfer_coordinates(coords, &parent_to_sub, &parent_points)?),
+        Some(coords) => Some(transfer_coordinates(
+            coords,
+            &parent_to_sub,
+            &parent_points,
+        )?),
         None => None,
     };
 
@@ -83,6 +88,14 @@ where
         sections.insert(
             name.clone(),
             transfer_section(section, &parent_to_sub, &parent_points)?,
+        );
+    }
+
+    let mut mixed_sections = MixedSectionStore::default();
+    for (name, section) in mesh.mixed_sections.iter() {
+        mixed_sections.insert_tagged(
+            name.clone(),
+            transfer_tagged_section(section, &parent_to_sub, &parent_points)?,
         );
     }
 
@@ -99,6 +112,7 @@ where
             sieve,
             coordinates,
             sections,
+            mixed_sections,
             labels: labels_out,
             cell_types,
         },
@@ -134,6 +148,33 @@ where
         }
     }
     Ok(out)
+}
+
+fn transfer_tagged_section(
+    section: &TaggedSection,
+    parent_to_sub: &HashMap<PointId, PointId>,
+    parent_points: &[PointId],
+) -> Result<TaggedSection, MeshSieveError> {
+    Ok(match section {
+        TaggedSection::F64(sec) => {
+            TaggedSection::F64(transfer_section(sec, parent_to_sub, parent_points)?)
+        }
+        TaggedSection::F32(sec) => {
+            TaggedSection::F32(transfer_section(sec, parent_to_sub, parent_points)?)
+        }
+        TaggedSection::I32(sec) => {
+            TaggedSection::I32(transfer_section(sec, parent_to_sub, parent_points)?)
+        }
+        TaggedSection::I64(sec) => {
+            TaggedSection::I64(transfer_section(sec, parent_to_sub, parent_points)?)
+        }
+        TaggedSection::U32(sec) => {
+            TaggedSection::U32(transfer_section(sec, parent_to_sub, parent_points)?)
+        }
+        TaggedSection::U64(sec) => {
+            TaggedSection::U64(transfer_section(sec, parent_to_sub, parent_points)?)
+        }
+    })
 }
 
 fn transfer_coordinates<V, S>(

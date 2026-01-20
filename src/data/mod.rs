@@ -5,6 +5,7 @@ pub mod atlas;
 pub mod bundle;
 pub mod constrained_section;
 pub mod coordinates;
+pub mod mixed_section;
 pub mod section;
 pub mod slice_storage;
 pub mod storage;
@@ -18,8 +19,9 @@ pub mod refine;
 pub use crate::debug_invariants::DebugInvariants;
 
 pub use constrained_section::{
-    ConstrainedSection, ConstraintSet, DofConstraint, apply_constraints_to_section,
+    apply_constraints_to_section, ConstrainedSection, ConstraintSet, DofConstraint,
 };
+pub use mixed_section::{MixedScalar, MixedSectionStore, ScalarType, TaggedSection};
 pub use section::Section;
 pub use slice_storage::SliceStorage;
 pub use storage::{Storage, VecStorage};

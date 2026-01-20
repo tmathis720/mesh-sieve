@@ -15,6 +15,7 @@
 
 use crate::data::atlas::Atlas;
 use crate::data::coordinates::Coordinates;
+use crate::data::mixed_section::{MixedSectionStore, ScalarType, TaggedSection};
 use crate::data::section::Section;
 use crate::data::storage::VecStorage;
 use crate::geometry::quality::validate_cell_geometry;
@@ -125,6 +126,272 @@ impl GmshReader {
             .map_err(|_| MeshSieveError::MeshIoParse(format!("invalid coordinate: {raw}")))
     }
 
+    fn parse_string_tag(raw: &str) -> String {
+        raw.trim().trim_matches('"').to_string()
+    }
+
+    fn parse_scalar_type(tags: &[String]) -> ScalarType {
+        tags.iter()
+            .find_map(|tag| tag.strip_prefix("mesh_sieve:type="))
+            .and_then(ScalarType::parse)
+            .unwrap_or(ScalarType::F64)
+    }
+
+    fn section_from_entries<T: Clone + Default>(
+        entries: Vec<(PointId, Vec<T>)>,
+        num_components: usize,
+    ) -> Result<Section<T, VecStorage<T>>, MeshSieveError> {
+        let mut atlas = Atlas::default();
+        for (point, values) in &entries {
+            if values.len() != num_components {
+                return Err(MeshSieveError::MeshIoParse(format!(
+                    "entry length mismatch for {point:?}"
+                )));
+            }
+            atlas.try_insert(*point, num_components)?;
+        }
+        let mut section = Section::new(atlas);
+        for (point, values) in entries {
+            section.try_set(point, &values)?;
+        }
+        Ok(section)
+    }
+
+    fn parse_data_block<'a>(
+        lines: &mut std::iter::Peekable<std::str::Lines<'a>>,
+        block_name: &str,
+    ) -> Result<(String, ScalarType, usize, Vec<(PointId, Vec<String>)>), MeshSieveError> {
+        let string_count_line = lines.next().ok_or_else(|| {
+            MeshSieveError::MeshIoParse(format!("missing {block_name} string tag count"))
+        })?;
+        let string_count = string_count_line.trim().parse::<usize>().map_err(|_| {
+            MeshSieveError::MeshIoParse(format!("invalid {block_name} string tag count"))
+        })?;
+        let mut string_tags = Vec::with_capacity(string_count);
+        for _ in 0..string_count {
+            let line = lines.next().ok_or_else(|| {
+                MeshSieveError::MeshIoParse(format!("missing {block_name} string tag"))
+            })?;
+            string_tags.push(Self::parse_string_tag(line));
+        }
+        let scalar_type = Self::parse_scalar_type(&string_tags);
+        let name = string_tags
+            .first()
+            .cloned()
+            .unwrap_or_else(|| format!("gmsh:{block_name}"));
+
+        let real_count_line = lines.next().ok_or_else(|| {
+            MeshSieveError::MeshIoParse(format!("missing {block_name} real tag count"))
+        })?;
+        let real_count = real_count_line.trim().parse::<usize>().map_err(|_| {
+            MeshSieveError::MeshIoParse(format!("invalid {block_name} real tag count"))
+        })?;
+        for _ in 0..real_count {
+            lines.next().ok_or_else(|| {
+                MeshSieveError::MeshIoParse(format!("missing {block_name} real tag"))
+            })?;
+        }
+
+        let int_count_line = lines.next().ok_or_else(|| {
+            MeshSieveError::MeshIoParse(format!("missing {block_name} integer tag count"))
+        })?;
+        let int_count = int_count_line.trim().parse::<usize>().map_err(|_| {
+            MeshSieveError::MeshIoParse(format!("invalid {block_name} integer tag count"))
+        })?;
+        let mut int_tags = Vec::with_capacity(int_count);
+        for _ in 0..int_count {
+            let tag_line = lines.next().ok_or_else(|| {
+                MeshSieveError::MeshIoParse(format!("missing {block_name} integer tag"))
+            })?;
+            let tag = tag_line.trim().parse::<i64>().map_err(|_| {
+                MeshSieveError::MeshIoParse(format!("invalid {block_name} integer tag"))
+            })?;
+            int_tags.push(tag);
+        }
+        if int_tags.len() < 3 {
+            return Err(MeshSieveError::MeshIoParse(format!(
+                "{block_name} expects at least 3 integer tags"
+            )));
+        }
+        let num_components = usize::try_from(int_tags[1]).map_err(|_| {
+            MeshSieveError::MeshIoParse(format!("invalid {block_name} component count"))
+        })?;
+        let num_entries = usize::try_from(int_tags[2]).map_err(|_| {
+            MeshSieveError::MeshIoParse(format!("invalid {block_name} entry count"))
+        })?;
+        let mut entries = Vec::with_capacity(num_entries);
+        for _ in 0..num_entries {
+            let data_line = lines.next().ok_or_else(|| {
+                MeshSieveError::MeshIoParse(format!("missing {block_name} entry"))
+            })?;
+            let mut parts = data_line.split_whitespace();
+            let id_str = parts.next().ok_or_else(|| {
+                MeshSieveError::MeshIoParse(format!("missing {block_name} entry id"))
+            })?;
+            let point = Self::parse_point_id(id_str)?;
+            let mut values = Vec::with_capacity(num_components);
+            for _ in 0..num_components {
+                let value_str = parts.next().ok_or_else(|| {
+                    MeshSieveError::MeshIoParse(format!("missing {block_name} value"))
+                })?;
+                values.push(value_str.to_string());
+            }
+            entries.push((point, values));
+        }
+        let end = lines
+            .next()
+            .ok_or_else(|| MeshSieveError::MeshIoParse(format!("missing End{block_name}")))?;
+        if end.trim() != format!("$End{block_name}") {
+            return Err(MeshSieveError::MeshIoParse(format!(
+                "missing $End{block_name}"
+            )));
+        }
+
+        Ok((name, scalar_type, num_components, entries))
+    }
+
+    fn build_tagged_section(
+        scalar_type: ScalarType,
+        entries: Vec<(PointId, Vec<String>)>,
+        num_components: usize,
+        block_name: &str,
+    ) -> Result<TaggedSection, MeshSieveError> {
+        match scalar_type {
+            ScalarType::F64 => {
+                let parsed = entries
+                    .into_iter()
+                    .map(|(p, vals)| {
+                        let parsed = vals
+                            .into_iter()
+                            .map(|v| {
+                                f64::from_str(&v).map_err(|_| {
+                                    MeshSieveError::MeshIoParse(format!(
+                                        "invalid {block_name} value: {v}"
+                                    ))
+                                })
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        Ok((p, parsed))
+                    })
+                    .collect::<Result<Vec<_>, MeshSieveError>>()?;
+                Ok(TaggedSection::F64(Self::section_from_entries(
+                    parsed,
+                    num_components,
+                )?))
+            }
+            ScalarType::F32 => {
+                let parsed = entries
+                    .into_iter()
+                    .map(|(p, vals)| {
+                        let parsed = vals
+                            .into_iter()
+                            .map(|v| {
+                                f32::from_str(&v).map_err(|_| {
+                                    MeshSieveError::MeshIoParse(format!(
+                                        "invalid {block_name} value: {v}"
+                                    ))
+                                })
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        Ok((p, parsed))
+                    })
+                    .collect::<Result<Vec<_>, MeshSieveError>>()?;
+                Ok(TaggedSection::F32(Self::section_from_entries(
+                    parsed,
+                    num_components,
+                )?))
+            }
+            ScalarType::I32 => {
+                let parsed = entries
+                    .into_iter()
+                    .map(|(p, vals)| {
+                        let parsed = vals
+                            .into_iter()
+                            .map(|v| {
+                                i32::from_str(&v).map_err(|_| {
+                                    MeshSieveError::MeshIoParse(format!(
+                                        "invalid {block_name} value: {v}"
+                                    ))
+                                })
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        Ok((p, parsed))
+                    })
+                    .collect::<Result<Vec<_>, MeshSieveError>>()?;
+                Ok(TaggedSection::I32(Self::section_from_entries(
+                    parsed,
+                    num_components,
+                )?))
+            }
+            ScalarType::I64 => {
+                let parsed = entries
+                    .into_iter()
+                    .map(|(p, vals)| {
+                        let parsed = vals
+                            .into_iter()
+                            .map(|v| {
+                                i64::from_str(&v).map_err(|_| {
+                                    MeshSieveError::MeshIoParse(format!(
+                                        "invalid {block_name} value: {v}"
+                                    ))
+                                })
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        Ok((p, parsed))
+                    })
+                    .collect::<Result<Vec<_>, MeshSieveError>>()?;
+                Ok(TaggedSection::I64(Self::section_from_entries(
+                    parsed,
+                    num_components,
+                )?))
+            }
+            ScalarType::U32 => {
+                let parsed = entries
+                    .into_iter()
+                    .map(|(p, vals)| {
+                        let parsed = vals
+                            .into_iter()
+                            .map(|v| {
+                                u32::from_str(&v).map_err(|_| {
+                                    MeshSieveError::MeshIoParse(format!(
+                                        "invalid {block_name} value: {v}"
+                                    ))
+                                })
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        Ok((p, parsed))
+                    })
+                    .collect::<Result<Vec<_>, MeshSieveError>>()?;
+                Ok(TaggedSection::U32(Self::section_from_entries(
+                    parsed,
+                    num_components,
+                )?))
+            }
+            ScalarType::U64 => {
+                let parsed = entries
+                    .into_iter()
+                    .map(|(p, vals)| {
+                        let parsed = vals
+                            .into_iter()
+                            .map(|v| {
+                                u64::from_str(&v).map_err(|_| {
+                                    MeshSieveError::MeshIoParse(format!(
+                                        "invalid {block_name} value: {v}"
+                                    ))
+                                })
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        Ok((p, parsed))
+                    })
+                    .collect::<Result<Vec<_>, MeshSieveError>>()?;
+                Ok(TaggedSection::U64(Self::section_from_entries(
+                    parsed,
+                    num_components,
+                )?))
+            }
+        }
+    }
+
     /// Read mesh data with explicit import options.
     pub fn read_with_options<R: Read>(
         &self,
@@ -142,6 +409,7 @@ impl GmshReader {
         let mut version: Option<String> = None;
         let mut nodes: Vec<(PointId, [f64; 3])> = Vec::new();
         let mut elements: Vec<ElementRecord> = Vec::new();
+        let mut mixed_sections = MixedSectionStore::default();
 
         while let Some(line) = lines.next() {
             match line.trim() {
@@ -273,6 +541,28 @@ impl GmshReader {
                         return Err(MeshSieveError::MeshIoParse("missing $EndElements".into()));
                     }
                 }
+                "$NodeData" => {
+                    let (name, scalar_type, num_components, entries) =
+                        Self::parse_data_block(&mut lines, "NodeData")?;
+                    let tagged = Self::build_tagged_section(
+                        scalar_type,
+                        entries,
+                        num_components,
+                        "NodeData",
+                    )?;
+                    mixed_sections.insert_tagged(name, tagged);
+                }
+                "$ElementData" => {
+                    let (name, scalar_type, num_components, entries) =
+                        Self::parse_data_block(&mut lines, "ElementData")?;
+                    let tagged = Self::build_tagged_section(
+                        scalar_type,
+                        entries,
+                        num_components,
+                        "ElementData",
+                    )?;
+                    mixed_sections.insert_tagged(name, tagged);
+                }
                 _ => {
                     // ignore other sections
                 }
@@ -354,6 +644,7 @@ impl GmshReader {
             sieve,
             coordinates: Some(coords),
             sections: BTreeMap::new(),
+            mixed_sections,
             labels: has_labels.then_some(labels),
             cell_types: (!elements.is_empty()).then_some(cell_types),
         })
@@ -415,6 +706,49 @@ impl GmshReader {
 pub struct GmshWriter;
 
 impl GmshWriter {
+    fn section_is_subset(tagged: &TaggedSection, atlas: &Atlas) -> bool {
+        tagged.atlas().points().all(|point| atlas.contains(point))
+    }
+
+    fn write_data_block<W, T>(
+        mut writer: W,
+        block_name: &str,
+        name: &str,
+        scalar_type: ScalarType,
+        section: &Section<T, VecStorage<T>>,
+    ) -> Result<(), MeshSieveError>
+    where
+        W: Write,
+        T: std::fmt::Display,
+    {
+        if section.atlas().points().next().is_none() {
+            return Ok(());
+        }
+        let mut iter = section.iter();
+        let first = iter
+            .next()
+            .ok_or_else(|| MeshSieveError::MeshIoParse("missing section data".into()))?;
+        let component_count = first.1.len();
+        let entry_count = section.atlas().points().count();
+
+        writeln!(writer, "${block_name}")?;
+        writeln!(writer, "2")?;
+        writeln!(writer, "\"{name}\"")?;
+        writeln!(writer, "\"mesh_sieve:type={}\"", scalar_type.as_str())?;
+        writeln!(writer, "1")?;
+        writeln!(writer, "0.0")?;
+        writeln!(writer, "3")?;
+        writeln!(writer, "0")?;
+        writeln!(writer, "{component_count}")?;
+        writeln!(writer, "{entry_count}")?;
+        writeln!(writer, "{}{}", first.0.get(), format_slice(first.1))?;
+        for (point, values) in iter {
+            writeln!(writer, "{}{}", point.get(), format_slice(values))?;
+        }
+        writeln!(writer, "$End{block_name}")?;
+        Ok(())
+    }
+
     fn gmsh_element_type(cell_type: CellType, node_count: usize) -> Option<u32> {
         match (cell_type, node_count) {
             (CellType::Vertex, 1) => Some(15),
@@ -485,6 +819,15 @@ impl GmshWriter {
             })
             .collect()
     }
+}
+
+fn format_slice<T: std::fmt::Display>(values: &[T]) -> String {
+    let mut out = String::new();
+    for value in values {
+        out.push(' ');
+        out.push_str(&value.to_string());
+    }
+    out
 }
 
 impl SieveSectionReader for GmshReader {
@@ -579,6 +922,101 @@ impl SieveSectionWriter for GmshWriter {
             writeln!(writer)?;
         }
         writeln!(writer, "$EndElements")?;
+
+        if !mesh.mixed_sections.is_empty() {
+            let coord_atlas = coords.section().atlas();
+            let cell_atlas = cell_types.atlas();
+            for (name, tagged) in mesh.mixed_sections.iter() {
+                let write_node_data = Self::section_is_subset(tagged, coord_atlas)
+                    || !Self::section_is_subset(tagged, cell_atlas);
+                match tagged {
+                    TaggedSection::F64(section) => {
+                        let block_name = if write_node_data {
+                            "NodeData"
+                        } else {
+                            "ElementData"
+                        };
+                        Self::write_data_block(
+                            &mut writer,
+                            block_name,
+                            name,
+                            ScalarType::F64,
+                            section,
+                        )?;
+                    }
+                    TaggedSection::F32(section) => {
+                        let block_name = if write_node_data {
+                            "NodeData"
+                        } else {
+                            "ElementData"
+                        };
+                        Self::write_data_block(
+                            &mut writer,
+                            block_name,
+                            name,
+                            ScalarType::F32,
+                            section,
+                        )?;
+                    }
+                    TaggedSection::I32(section) => {
+                        let block_name = if write_node_data {
+                            "NodeData"
+                        } else {
+                            "ElementData"
+                        };
+                        Self::write_data_block(
+                            &mut writer,
+                            block_name,
+                            name,
+                            ScalarType::I32,
+                            section,
+                        )?;
+                    }
+                    TaggedSection::I64(section) => {
+                        let block_name = if write_node_data {
+                            "NodeData"
+                        } else {
+                            "ElementData"
+                        };
+                        Self::write_data_block(
+                            &mut writer,
+                            block_name,
+                            name,
+                            ScalarType::I64,
+                            section,
+                        )?;
+                    }
+                    TaggedSection::U32(section) => {
+                        let block_name = if write_node_data {
+                            "NodeData"
+                        } else {
+                            "ElementData"
+                        };
+                        Self::write_data_block(
+                            &mut writer,
+                            block_name,
+                            name,
+                            ScalarType::U32,
+                            section,
+                        )?;
+                    }
+                    TaggedSection::U64(section) => {
+                        let block_name = if write_node_data {
+                            "NodeData"
+                        } else {
+                            "ElementData"
+                        };
+                        Self::write_data_block(
+                            &mut writer,
+                            block_name,
+                            name,
+                            ScalarType::U64,
+                            section,
+                        )?;
+                    }
+                }
+            }
+        }
 
         Ok(())
     }
