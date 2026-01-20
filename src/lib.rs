@@ -87,6 +87,7 @@ pub mod prelude {
         ConstrainedSection, ConstraintSet, DofConstraint, apply_constraints_to_section,
     };
     pub use crate::data::coordinates::Coordinates;
+    pub use crate::data::global_map::LocalToGlobalMap;
     #[cfg(feature = "map-adapter")]
     pub use crate::data::section::Map;
     pub use crate::data::section::Section;
