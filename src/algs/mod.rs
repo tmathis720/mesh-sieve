@@ -14,6 +14,7 @@ pub mod metis_partition;
 pub mod partition;
 pub mod rcm;
 pub mod reduction;
+pub mod renumber;
 pub mod submesh;
 pub mod traversal;
 pub mod traversal_core;
@@ -31,4 +32,7 @@ pub use completion::{
     complete_section_with_tags_and_ownership,
 };
 pub use lattice::adjacent;
+pub use renumber::{
+    StratifiedOrdering, renumber_points, renumber_points_stratified, stratified_permutation,
+};
 pub use submesh::{SubmeshMaps, extract_by_label};

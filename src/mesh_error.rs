@@ -17,6 +17,9 @@ pub enum MeshSieveError {
     /// Generic mesh error (for internal use, e.g. error propagation)
     #[error("mesh error: {0}")]
     MeshError(Box<MeshSieveError>),
+    /// Renumbering permutation was invalid.
+    #[error("Invalid renumbering permutation: {0}")]
+    InvalidPermutation(String),
     /// GPU buffer mapping failed.
     #[error("GPU buffer mapping failed")]
     GpuMappingFailed,
