@@ -5,6 +5,7 @@ pub mod atlas;
 pub mod bundle;
 pub mod constrained_section;
 pub mod coordinates;
+pub mod discretization;
 pub mod global_map;
 pub mod mixed_section;
 pub mod section;
@@ -22,6 +23,7 @@ pub use crate::debug_invariants::DebugInvariants;
 pub use constrained_section::{
     ConstrainedSection, ConstraintSet, DofConstraint, apply_constraints_to_section,
 };
+pub use discretization::{Discretization, DofLayout, FieldDiscretization, RegionKey};
 pub use global_map::LocalToGlobalMap;
 pub use mixed_section::{MixedScalar, MixedSectionStore, ScalarType, TaggedSection};
 pub use section::Section;

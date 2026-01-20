@@ -3,6 +3,7 @@
 use crate::algs::communicator::Communicator;
 use crate::data::atlas::Atlas;
 use crate::data::coordinates::{Coordinates, HighOrderCoordinates};
+use crate::data::discretization::Discretization;
 use crate::data::global_map::LocalToGlobalMap;
 use crate::data::mixed_section::{MixedSectionStore, TaggedSection};
 use crate::data::section::Section;
@@ -186,6 +187,8 @@ where
     pub labels: Option<LabelSet>,
     /// Optional cell-type section for local points.
     pub cell_types: Option<Section<CellType, CtSt>>,
+    /// Optional discretization metadata keyed by regions.
+    pub discretization: Option<Discretization>,
 }
 
 impl<V, St, CtSt> DistributedMeshData<V, St, CtSt>
@@ -427,6 +430,7 @@ where
         mixed_sections,
         labels,
         cell_types,
+        discretization: mesh_data.discretization.clone(),
     })
 }
 

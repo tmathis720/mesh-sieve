@@ -9,6 +9,7 @@ pub mod gmsh;
 pub mod hdf5;
 
 use crate::data::coordinates::Coordinates;
+use crate::data::discretization::Discretization;
 use crate::data::mixed_section::MixedSectionStore;
 use crate::data::section::Section;
 use crate::data::storage::Storage;
@@ -38,6 +39,8 @@ where
     pub labels: Option<LabelSet>,
     /// Optional cell type section over mesh points.
     pub cell_types: Option<Section<CellType, CtSt>>,
+    /// Optional discretization metadata keyed by regions.
+    pub discretization: Option<Discretization>,
 }
 
 impl<S, V, St, CtSt> MeshData<S, V, St, CtSt>
@@ -54,6 +57,7 @@ where
             mixed_sections: MixedSectionStore::default(),
             labels: None,
             cell_types: None,
+            discretization: None,
         }
     }
 }

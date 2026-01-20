@@ -137,6 +137,7 @@ where
         mixed_sections,
         labels,
         cell_types,
+        discretization: mesh.discretization.clone(),
     })
 }
 

@@ -300,6 +300,7 @@ where
         mixed_sections: crate::data::mixed_section::MixedSectionStore::default(),
         labels: labels_out,
         cell_types: Some(cell_types_out),
+        discretization: mesh.discretization.clone(),
     })
 }
 
@@ -626,6 +627,7 @@ mod tests {
             mixed_sections: crate::data::mixed_section::MixedSectionStore::default(),
             labels: Some(labels),
             cell_types: Some(cell_types),
+            discretization: None,
         };
 
         let mesh =

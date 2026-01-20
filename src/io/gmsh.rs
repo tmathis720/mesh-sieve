@@ -694,6 +694,7 @@ impl GmshReader {
             mixed_sections,
             labels: has_labels.then_some(labels),
             cell_types: (!elements.is_empty()).then_some(cell_types),
+            discretization: None,
         })
     }
 

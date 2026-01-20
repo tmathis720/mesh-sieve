@@ -231,7 +231,37 @@ use mesh_sieve::overlap::delta::ValueDelta as OverlapDelta;
 
 ---
 
-### 5.5 Constrained fields (`ConstrainedSection`)
+### 5.5 Discretization metadata (field layouts by region)
+
+Use `Discretization` to describe per-field DOF layouts keyed by region selectors
+(labels or cell types). This lets each field carry its own layout definition
+without forcing a single global DOF scheme.
+
+```rust
+use mesh_sieve::data::discretization::{Discretization, DofLayout, FieldDiscretization};
+use mesh_sieve::topology::cell_type::CellType;
+
+let mut discretization = Discretization::new();
+
+// Velocity: 3 DOFs on fluid-labeled points, higher-order on triangles.
+let mut velocity = FieldDiscretization::new();
+velocity.set_label_layout("fluid", 1, DofLayout::new(3));
+velocity.set_cell_type_layout(CellType::Triangle, DofLayout::new(6));
+discretization.insert_field("velocity", velocity);
+
+// Pressure: 1 DOF everywhere in the fluid region.
+let mut pressure = FieldDiscretization::new();
+pressure.set_label_layout("fluid", 1, DofLayout::new(1));
+pressure.set_cell_type_layout(CellType::Triangle, DofLayout::new(1));
+discretization.insert_field("pressure", pressure);
+
+// Attach to a mesh container.
+// mesh_data.discretization = Some(discretization);
+```
+
+---
+
+### 5.6 Constrained fields (`ConstrainedSection`)
 
 `ConstrainedSection` wraps a `Section` with per-point DOF constraints (indices + values).
 Use it to enforce Dirichlet-style values after refinement/assembly.
