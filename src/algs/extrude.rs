@@ -19,6 +19,7 @@
 //! use mesh_sieve::data::storage::VecStorage;
 //! use mesh_sieve::topology::cell_type::CellType;
 //! use mesh_sieve::topology::point::PointId;
+//! use mesh_sieve::topology::Sieve;
 //! use mesh_sieve::topology::sieve::{InMemorySieve, MutableSieve};
 //!
 //! let mut surface = InMemorySieve::<PointId, ()>::default();

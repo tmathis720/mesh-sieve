@@ -76,7 +76,7 @@ pub fn interpolate_edges_faces<S, CtSt>(
 where
     S: MutableSieve<Point = PointId>,
     S::Payload: Default,
-    CtSt: Storage<CellType>,
+    CtSt: Storage<CellType> + Clone,
 {
     let mut max_id = 0u64;
     for p in sieve.points() {
@@ -336,7 +336,7 @@ fn edge_point<S, CtSt>(
 where
     S: MutableSieve<Point = PointId>,
     S::Payload: Default,
-    CtSt: Storage<CellType>,
+    CtSt: Storage<CellType> + Clone,
 {
     let key = if a < b { (a, b) } else { (b, a) };
     if let Some(p) = edges.get(&key) {
@@ -363,7 +363,7 @@ fn face_point<S, CtSt>(
 where
     S: MutableSieve<Point = PointId>,
     S::Payload: Default,
-    CtSt: Storage<CellType>,
+    CtSt: Storage<CellType> + Clone,
 {
     let mut key = vertices.to_vec();
     key.sort();
