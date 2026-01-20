@@ -6,6 +6,7 @@
 pub mod communicator;
 pub mod completion;
 pub mod adjacency_graph;
+pub mod boundary;
 pub mod distribute;
 pub mod dual_graph;
 pub mod extrude;
@@ -33,6 +34,10 @@ pub use completion::{
     complete_section_with_tags_and_ownership,
 };
 pub use lattice::adjacent;
+pub use boundary::{
+    BoundaryClassification, BoundaryLabelValues, DEFAULT_BOUNDARY_LABEL, DEFAULT_INTERIOR_LABEL,
+    classify_boundary_points, label_boundary_points, label_boundary_points_with,
+};
 pub use renumber::{
     StratifiedOrdering, renumber_points, renumber_points_stratified, stratified_permutation,
 };
