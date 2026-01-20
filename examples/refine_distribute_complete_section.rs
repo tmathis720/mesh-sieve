@@ -41,15 +41,12 @@ fn build_refined_mesh_data() -> Result<
     }
 
     let mut cell_atlas = Atlas::default();
-    for p in [c0, c1, v1, v2, v3, v4] {
+    for p in [c0, c1] {
         cell_atlas.try_insert(p, 1)?;
     }
     let mut cell_types = Section::<CellType, VecStorage<CellType>>::new(cell_atlas);
     cell_types.try_set(c0, &[CellType::Triangle])?;
     cell_types.try_set(c1, &[CellType::Triangle])?;
-    for v in [v1, v2, v3, v4] {
-        cell_types.try_set(v, &[CellType::Vertex])?;
-    }
 
     let mut ownership = PointOwnership::default();
     for p in coarse.points() {

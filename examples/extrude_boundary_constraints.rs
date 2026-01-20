@@ -43,7 +43,8 @@ fn main() -> Result<(), MeshSieveError> {
     coords.section_mut().try_set(vertices[2], &[1.0, 1.0])?;
     coords.section_mut().try_set(vertices[3], &[0.0, 1.0])?;
 
-    let extruded = extrude_surface_layers(&surface, &cell_types, &coords, &[0.0, 1.0, 2.0])?;
+    let layer_offsets = [0.0, 1.0, 2.0];
+    let extruded = extrude_surface_layers(&surface, &cell_types, &coords, &layer_offsets)?;
 
     let vertex_points: Vec<_> = extruded
         .sieve
@@ -53,8 +54,12 @@ fn main() -> Result<(), MeshSieveError> {
     assert!(!vertex_points.is_empty());
 
     let classification = classify_boundary_points(&extruded.sieve, vertex_points.iter().copied())?;
-    assert_eq!(classification.interior.len(), 0);
-    assert_eq!(classification.boundary.len(), vertex_points.len());
+    let expected_interior = vertices.len() * layer_offsets.len().saturating_sub(2);
+    assert_eq!(classification.interior.len(), expected_interior);
+    assert_eq!(
+        classification.boundary.len() + classification.interior.len(),
+        vertex_points.len()
+    );
     assert!(classification.boundary.len() >= 3);
 
     let mut field_atlas = Atlas::default();
