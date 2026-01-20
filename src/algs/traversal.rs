@@ -39,6 +39,53 @@ pub enum Strategy {
     BFS,
 }
 
+/// Cache for repeated closure/star traversals keyed by seed sets.
+#[derive(Debug, Default)]
+pub struct TraversalCache<P> {
+    closure: HashMap<Vec<P>, Vec<P>>,
+    star: HashMap<Vec<P>, Vec<P>>,
+}
+
+impl<P> TraversalCache<P>
+where
+    P: Copy + Eq + std::hash::Hash + Ord,
+{
+    pub fn new() -> Self {
+        Self {
+            closure: HashMap::new(),
+            star: HashMap::new(),
+        }
+    }
+
+    /// Clears cached closure/star results.
+    pub fn clear(&mut self) {
+        self.closure.clear();
+        self.star.clear();
+    }
+
+    /// Invalidate both the sieve caches and traversal cache.
+    pub fn invalidate_with<S: InvalidateCache>(&mut self, sieve: &mut S) {
+        sieve.invalidate_cache();
+        self.clear();
+    }
+
+    fn cache_closure(&mut self, key: Vec<P>, value: Vec<P>) -> Vec<P> {
+        self.closure.insert(key, value.clone());
+        value
+    }
+
+    fn cache_star(&mut self, key: Vec<P>, value: Vec<P>) -> Vec<P> {
+        self.star.insert(key, value.clone());
+        value
+    }
+}
+
+impl<P> InvalidateCache for TraversalCache<P> {
+    fn invalidate_cache(&mut self) {
+        self.clear();
+    }
+}
+
 struct SieveNeigh<'a, S: Sieve> {
     sieve: &'a S,
 }
@@ -64,8 +111,14 @@ fn map_dir(d: Dir) -> CoreDir {
     }
 }
 
+fn normalize_seeds<P: Ord>(mut seeds: Vec<P>) -> Vec<P> {
+    seeds.sort_unstable();
+    seeds.dedup();
+    seeds
+}
+
 /// Builder for unordered traversals over a [`Sieve`].
-///
+/// 
 /// - **Determinism:** returns the visited set sorted ascending.
 /// - **Complexity:** O(V + E) time and O(V) memory.
 pub struct TraversalBuilder<'a, S: Sieve> {
@@ -346,6 +399,36 @@ where
     closure(sieve, seeds)
 }
 
+/// Cached variant of [`closure`].
+///
+/// Provide `cache = None` to bypass caching and compute directly.
+pub fn closure_cached<I, S>(
+    sieve: &S,
+    seeds: I,
+    mut cache: Option<&mut TraversalCache<Point>>,
+) -> Vec<Point>
+where
+    S: Sieve<Point = Point>,
+    I: IntoIterator<Item = Point>,
+{
+    let seeds_vec: Vec<Point> = seeds.into_iter().collect();
+    match cache.as_mut() {
+        Some(cache) => {
+            let key = normalize_seeds(seeds_vec);
+            if let Some(hit) = cache.closure.get(&key) {
+                return hit.clone();
+            }
+            let result = TraversalBuilder::new(sieve)
+                .dir(Dir::Down)
+                .dfs()
+                .seeds(key.iter().copied())
+                .run();
+            cache.cache_closure(key, result)
+        }
+        None => closure(sieve, seeds_vec),
+    }
+}
+
 /// Complete transitive star following `support` arrows.
 ///
 /// - **Preconditions:** `seeds` exist in `sieve`.
@@ -361,6 +444,36 @@ where
         .dfs()
         .seeds(seeds)
         .run()
+}
+
+/// Cached variant of [`star`].
+///
+/// Provide `cache = None` to bypass caching and compute directly.
+pub fn star_cached<I, S>(
+    sieve: &S,
+    seeds: I,
+    mut cache: Option<&mut TraversalCache<Point>>,
+) -> Vec<Point>
+where
+    S: Sieve<Point = Point>,
+    I: IntoIterator<Item = Point>,
+{
+    let seeds_vec: Vec<Point> = seeds.into_iter().collect();
+    match cache.as_mut() {
+        Some(cache) => {
+            let key = normalize_seeds(seeds_vec);
+            if let Some(hit) = cache.star.get(&key) {
+                return hit.clone();
+            }
+            let result = TraversalBuilder::new(sieve)
+                .dir(Dir::Up)
+                .dfs()
+                .seeds(key.iter().copied())
+                .run();
+            cache.cache_star(key, result)
+        }
+        None => star(sieve, seeds_vec),
+    }
 }
 
 /// Link of `p`.
