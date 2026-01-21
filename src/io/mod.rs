@@ -8,6 +8,7 @@ pub mod cgns;
 pub mod exodus;
 pub mod gmsh;
 pub mod hdf5;
+pub mod partitioned;
 
 use crate::data::coordinates::Coordinates;
 use crate::data::discretization::Discretization;
@@ -22,6 +23,11 @@ use std::collections::BTreeMap;
 use std::io::{Read, Write};
 
 pub use bundle::MeshBundle;
+pub use partitioned::{
+    GatherPolicy, NeighborLinks, OverlapLink, OverlapMetadata, PartitionedMeshData,
+    PartitionedMeshMetadata, PartitionedMeshWriteOutcome, read_partitioned_mesh,
+    write_local_piece_with_metadata, write_partitioned_mesh,
+};
 
 /// Combined sieve and section data returned by I/O readers.
 #[derive(Debug)]
