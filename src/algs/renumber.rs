@@ -1,6 +1,7 @@
 //! Renumbering utilities for topology, sections, and labels.
 
 use crate::data::atlas::Atlas;
+use crate::data::coordinate_dm::CoordinateDM;
 use crate::data::coordinates::{Coordinates, HighOrderCoordinates};
 use crate::data::mixed_section::{MixedSectionStore, TaggedSection};
 use crate::data::section::Section;
@@ -155,6 +156,51 @@ where
 {
     let permutation = stratified_permutation(&mesh.sieve, ordering)?;
     renumber_points(mesh, &permutation)
+}
+
+/// Renumber coordinates and metadata using a provided permutation.
+///
+/// The permutation is interpreted as the new order of existing points. The
+/// first entry maps to `PointId(1)`, the next to `PointId(2)`, etc. The
+/// coordinate section and labels are remapped consistently without touching
+/// non-geometry sections.
+pub fn renumber_coordinate_dm<S, V, St, CtSt>(
+    mesh: &MeshData<S, V, St, CtSt>,
+    coordinate_dm: &CoordinateDM<V, St>,
+    permutation: &[PointId],
+) -> Result<CoordinateDM<V, St>, MeshSieveError>
+where
+    S: Sieve<Point = PointId>,
+    V: Clone + Default,
+    St: Storage<V> + Clone,
+    CtSt: Storage<CellType>,
+{
+    let (old_to_new, new_to_old) = build_renumber_map(mesh, permutation)?;
+    remap_coordinate_dm(coordinate_dm, &old_to_new, &new_to_old)
+}
+
+fn remap_coordinate_dm<V, St>(
+    coordinate_dm: &CoordinateDM<V, St>,
+    old_to_new: &HashMap<PointId, PointId>,
+    new_to_old: &[PointId],
+) -> Result<CoordinateDM<V, St>, MeshSieveError>
+where
+    V: Clone + Default,
+    St: Storage<V> + Clone,
+{
+    let coordinates = remap_coordinates(&coordinate_dm.coordinates, old_to_new, new_to_old)?;
+    let labels = match &coordinate_dm.labels {
+        Some(labels) => {
+            let out = remap_labels(labels, old_to_new)?;
+            (!out.is_empty()).then_some(out)
+        }
+        None => None,
+    };
+    Ok(CoordinateDM {
+        coordinates,
+        labels,
+        discretization: coordinate_dm.discretization.clone(),
+    })
 }
 
 fn build_renumber_map<S, V, St, CtSt>(

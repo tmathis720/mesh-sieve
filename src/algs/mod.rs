@@ -39,6 +39,7 @@ pub use boundary::{
     classify_boundary_points, label_boundary_points, label_boundary_points_with,
 };
 pub use renumber::{
-    StratifiedOrdering, renumber_points, renumber_points_stratified, stratified_permutation,
+    StratifiedOrdering, renumber_coordinate_dm, renumber_points, renumber_points_stratified,
+    stratified_permutation,
 };
 pub use submesh::{SubmeshMaps, extract_by_label};

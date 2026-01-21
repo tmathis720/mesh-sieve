@@ -83,12 +83,14 @@ pub mod prelude {
     };
     pub use crate::algs::rcm::distributed_rcm;
     pub use crate::algs::renumber::{
-        StratifiedOrdering, renumber_points, renumber_points_stratified, stratified_permutation,
+        StratifiedOrdering, renumber_coordinate_dm, renumber_points,
+        renumber_points_stratified, stratified_permutation,
     };
     pub use crate::data::atlas::Atlas;
     pub use crate::data::constrained_section::{
         ConstrainedSection, ConstraintSet, DofConstraint, apply_constraints_to_section,
     };
+    pub use crate::data::coordinate_dm::CoordinateDM;
     pub use crate::data::coordinates::Coordinates;
     pub use crate::data::discretization::{
         Discretization, DofLayout, FieldDiscretization, RegionKey,

@@ -4,6 +4,7 @@
 pub mod atlas;
 pub mod bundle;
 pub mod constrained_section;
+pub mod coordinate_dm;
 pub mod coordinates;
 pub mod discretization;
 pub mod global_map;
@@ -24,6 +25,7 @@ pub use crate::debug_invariants::DebugInvariants;
 pub use constrained_section::{
     ConstrainedSection, ConstraintSet, DofConstraint, apply_constraints_to_section,
 };
+pub use coordinate_dm::CoordinateDM;
 pub use discretization::{Discretization, DofLayout, FieldDiscretization, RegionKey};
 pub use global_map::LocalToGlobalMap;
 pub use mixed_section::{MixedScalar, MixedSectionStore, ScalarType, TaggedSection};
@@ -44,6 +46,9 @@ pub use coordinates::HighOrderCoordinates;
 
 /// Alias for the common Vec-backed coordinates bundle.
 pub type CpuCoordinates<V> = coordinates::Coordinates<V, VecStorage<V>>;
+
+/// Alias for the common Vec-backed coordinate data manager.
+pub type CpuCoordinateDM<V> = coordinate_dm::CoordinateDM<V, VecStorage<V>>;
 
 /// Section alias for storing `CellType` data over points.
 pub type CellTypeSection<S> = section::Section<crate::topology::cell_type::CellType, S>;
