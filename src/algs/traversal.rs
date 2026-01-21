@@ -39,6 +39,15 @@ pub enum Strategy {
     BFS,
 }
 
+/// Deterministic ordering options for traversal outputs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TraversalOrder {
+    /// Sort by point ID (ascending).
+    Sorted,
+    /// Sort by strata chart order (height-major, then point ID).
+    Chart,
+}
+
 /// Cache for repeated closure/star traversals keyed by seed sets.
 #[derive(Debug, Default)]
 pub struct TraversalCache<P> {
@@ -400,6 +409,64 @@ where
     I: IntoIterator<Item = Point>,
 {
     closure(sieve, seeds)
+}
+
+/// Closure filtered by depth strata (distance to sinks).
+///
+/// - **Depth semantics:** depth 0 are sinks (e.g., vertices). Increasing depth
+///   moves upward in the topology.
+/// - **Ordering:** select [`TraversalOrder::Sorted`] or [`TraversalOrder::Chart`].
+pub fn closure_to_depth<I, S>(
+    sieve: &S,
+    seeds: I,
+    max_depth: u32,
+    order: TraversalOrder,
+) -> Result<Vec<Point>, MeshSieveError>
+where
+    S: Sieve<Point = Point>,
+    I: IntoIterator<Item = Point>,
+{
+    let seeds_vec: Vec<Point> = seeds.into_iter().collect();
+    let strata = compute_strata(sieve)?;
+    let mut out = TraversalBuilder::new(sieve)
+        .dir(Dir::Down)
+        .dfs()
+        .seeds(seeds_vec)
+        .run();
+    out.retain(|p| strata.depth.get(p).copied().is_some_and(|d| d <= max_depth));
+    if matches!(order, TraversalOrder::Chart) {
+        out.sort_by_key(|p| strata.chart_index.get(p).copied().unwrap_or(usize::MAX));
+    }
+    Ok(out)
+}
+
+/// Closure filtered by height strata (distance from sources).
+///
+/// - **Height semantics:** height 0 are sources (e.g., top cells). Increasing height
+///   moves downward in the topology.
+/// - **Ordering:** select [`TraversalOrder::Sorted`] or [`TraversalOrder::Chart`].
+pub fn closure_to_height<I, S>(
+    sieve: &S,
+    seeds: I,
+    max_height: u32,
+    order: TraversalOrder,
+) -> Result<Vec<Point>, MeshSieveError>
+where
+    S: Sieve<Point = Point>,
+    I: IntoIterator<Item = Point>,
+{
+    let seeds_vec: Vec<Point> = seeds.into_iter().collect();
+    let strata = compute_strata(sieve)?;
+    let mut out = TraversalBuilder::new(sieve)
+        .dir(Dir::Down)
+        .dfs()
+        .seeds(seeds_vec)
+        .run();
+    out.retain(|p| strata.height.get(p).copied().is_some_and(|h| h <= max_height));
+    if matches!(order, TraversalOrder::Chart) {
+        out.sort_by_key(|p| strata.chart_index.get(p).copied().unwrap_or(usize::MAX));
+    }
+    Ok(out)
 }
 
 /// Cached variant of [`closure`].
