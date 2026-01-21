@@ -83,8 +83,8 @@ pub mod prelude {
     };
     pub use crate::algs::rcm::distributed_rcm;
     pub use crate::algs::renumber::{
-        StratifiedOrdering, renumber_coordinate_dm, renumber_points,
-        renumber_points_stratified, stratified_permutation,
+        StratifiedOrdering, renumber_coordinate_dm, renumber_points, renumber_points_stratified,
+        stratified_permutation,
     };
     pub use crate::data::atlas::Atlas;
     pub use crate::data::constrained_section::{
@@ -101,6 +101,7 @@ pub mod prelude {
     pub use crate::data::section::Map;
     pub use crate::data::section::Section;
     pub use crate::debug_invariants::DebugInvariants;
+    pub use crate::io::MeshBundle;
     pub use crate::overlap::delta::{AddDelta, CopyDelta, ValueDelta};
     pub use crate::overlap::overlap::Overlap;
     pub use crate::topology::bounds::{PayloadLike, PointLike};
