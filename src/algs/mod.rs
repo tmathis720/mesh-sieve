@@ -10,6 +10,7 @@ pub mod boundary;
 pub mod distribute;
 pub mod dual_graph;
 pub mod extrude;
+pub mod field_transfer;
 pub mod interpolate;
 pub mod lattice;
 pub mod metis_partition;
@@ -32,6 +33,10 @@ pub use crate::algs::distribute::{
 pub use completion::{
     complete_section, complete_section_with_ownership, complete_section_with_tags,
     complete_section_with_tags_and_ownership,
+};
+pub use field_transfer::{
+    transfer_section_by_nearest_cell_centroid, transfer_section_by_nearest_point,
+    transfer_section_by_refinement_map, transfer_section_by_shared_labels,
 };
 pub use lattice::adjacent;
 pub use boundary::{
