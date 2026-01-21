@@ -80,6 +80,7 @@ pub mod prelude {
     pub use crate::algs::distribute::MetisPartitioner;
     pub use crate::algs::distribute::{
         CustomPartitioner, DistributionConfig, ProvidedPartition, distribute_with_overlap,
+        distribute_with_overlap_periodic,
     };
     pub use crate::algs::rcm::distributed_rcm;
     pub use crate::algs::renumber::{

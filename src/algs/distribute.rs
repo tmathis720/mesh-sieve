@@ -14,6 +14,7 @@ use crate::overlap::overlap::{Overlap, OvlId};
 use crate::topology::cell_type::CellType;
 use crate::topology::labels::LabelSet;
 use crate::topology::ownership::PointOwnership;
+use crate::topology::periodic::PointEquivalence;
 use crate::topology::point::PointId;
 use crate::topology::sieve::{InMemorySieve, Sieve};
 use std::collections::{BTreeMap, BTreeSet};
@@ -341,6 +342,30 @@ where
     C: Communicator + Sync,
     P: CellPartitioner<M>,
 {
+    distribute_with_overlap_periodic(mesh_data, cells, partitioner, config, comm, None)
+}
+
+/// High-level distribution with overlap expansion and periodic equivalence support.
+///
+/// When `periodic` is supplied, overlap construction and ghost expansion treat
+/// periodic point equivalences as adjacency, and resolved overlap links map to
+/// the periodic counterpart on neighboring ranks.
+pub fn distribute_with_overlap_periodic<M, V, St, CtSt, C, P>(
+    mesh_data: &MeshData<M, V, St, CtSt>,
+    cells: &[PointId],
+    partitioner: &P,
+    config: DistributionConfig,
+    comm: &C,
+    periodic: Option<&PointEquivalence>,
+) -> Result<DistributedMeshData<V, St, CtSt>, MeshSieveError>
+where
+    M: Sieve<Point = PointId, Payload = ()>,
+    V: Clone + Default + Send + PartialEq + 'static,
+    St: Storage<V> + Clone,
+    CtSt: Storage<CellType> + Clone,
+    C: Communicator + Sync,
+    P: CellPartitioner<M>,
+{
     let my_rank = comm.rank();
     let n_ranks = comm.size().max(1);
     let cell_parts = partitioner.partition_cells(&mesh_data.sieve, cells, n_ranks)?;
@@ -356,14 +381,27 @@ where
     let max_id = points.iter().map(|p| p.get()).max().unwrap_or(0) as usize;
     let point_owners = assign_point_owners(mesh_data, cells, &cell_parts, max_id)?;
 
-    let adjacency = build_adjacency(&mesh_data.sieve, max_id);
+    let periodic_classes = periodic
+        .map(|eq| build_periodic_classes(&points, eq))
+        .unwrap_or_default();
+    let adjacency = build_adjacency(&mesh_data.sieve, max_id, &periodic_classes);
     let local_sets = build_local_sets(&points, &point_owners, &adjacency, n_ranks, config);
     let point_ranks = build_point_ranks(&local_sets, max_id);
     let local_set = local_sets
         .get(my_rank)
         .ok_or(MeshSieveError::PartitionIndexOutOfBounds(my_rank))?;
 
-    let overlap = build_overlap_for_rank(my_rank, local_set, &point_ranks)?;
+    let periodic_remote_map = build_periodic_remote_map(
+        &periodic_classes,
+        &point_owners,
+        point_owners.len(),
+    );
+    let overlap = build_overlap_for_rank(
+        my_rank,
+        local_set,
+        &point_ranks,
+        Some(&periodic_remote_map),
+    )?;
     let ownership =
         PointOwnership::from_local_set(local_set.iter().copied(), &point_owners, my_rank)?;
 
@@ -466,7 +504,11 @@ where
     Ok(owners)
 }
 
-fn build_adjacency<M>(mesh: &M, max_id: usize) -> Vec<BTreeSet<PointId>>
+fn build_adjacency<M>(
+    mesh: &M,
+    max_id: usize,
+    periodic_classes: &BTreeMap<PointId, Vec<PointId>>,
+) -> Vec<BTreeSet<PointId>>
 where
     M: Sieve<Point = PointId, Payload = ()>,
 {
@@ -483,7 +525,84 @@ where
             }
         }
     }
+    apply_periodic_adjacency(&mut adjacency, periodic_classes, max_id);
     adjacency
+}
+
+fn build_periodic_classes(
+    points: &[PointId],
+    periodic: &PointEquivalence,
+) -> BTreeMap<PointId, Vec<PointId>> {
+    let mut eq = periodic.clone();
+    eq.classes(points.iter().copied())
+}
+
+fn apply_periodic_adjacency(
+    adjacency: &mut [BTreeSet<PointId>],
+    periodic_classes: &BTreeMap<PointId, Vec<PointId>>,
+    max_id: usize,
+) {
+    for class in periodic_classes.values() {
+        if class.len() < 2 {
+            continue;
+        }
+        for i in 0..class.len() {
+            for j in (i + 1)..class.len() {
+                let a = class[i];
+                let b = class[j];
+                let a_idx = (a.get().saturating_sub(1)) as usize;
+                let b_idx = (b.get().saturating_sub(1)) as usize;
+                if a_idx < max_id {
+                    adjacency[a_idx].insert(b);
+                }
+                if b_idx < max_id {
+                    adjacency[b_idx].insert(a);
+                }
+            }
+        }
+    }
+}
+
+fn build_periodic_remote_map(
+    periodic_classes: &BTreeMap<PointId, Vec<PointId>>,
+    owners: &[usize],
+    max_id: usize,
+) -> BTreeMap<(PointId, usize), PointId> {
+    let mut remote_map = BTreeMap::new();
+    for class in periodic_classes.values() {
+        if class.len() < 2 {
+            continue;
+        }
+        let mut rank_to_point: BTreeMap<usize, PointId> = BTreeMap::new();
+        for &p in class {
+            let idx = (p.get().saturating_sub(1)) as usize;
+            if idx >= max_id {
+                continue;
+            }
+            let owner = owners.get(idx).copied().unwrap_or(0);
+            rank_to_point
+                .entry(owner)
+                .and_modify(|existing| {
+                    if p < *existing {
+                        *existing = p;
+                    }
+                })
+                .or_insert(p);
+        }
+        for &p in class {
+            let idx = (p.get().saturating_sub(1)) as usize;
+            if idx >= max_id {
+                continue;
+            }
+            let owner = owners.get(idx).copied().unwrap_or(0);
+            for (&rank, &remote_point) in &rank_to_point {
+                if rank != owner {
+                    remote_map.insert((p, rank), remote_point);
+                }
+            }
+        }
+    }
+    remote_map
 }
 
 fn build_local_sets(
@@ -584,6 +703,7 @@ fn build_overlap_for_rank(
     rank: usize,
     local_set: &BTreeSet<PointId>,
     point_ranks: &[Vec<usize>],
+    periodic_remote_map: Option<&BTreeMap<(PointId, usize), PointId>>,
 ) -> Result<Overlap, MeshSieveError> {
     let mut edges = Vec::new();
     for &p in local_set {
@@ -600,7 +720,12 @@ fn build_overlap_for_rank(
     edges.dedup();
     let mut overlap = Overlap::default();
     overlap.try_add_links_structural_bulk(edges.iter().copied())?;
-    overlap.resolve_remote_points(edges.into_iter().map(|(p, r)| (p, r, p)))?;
+    overlap.resolve_remote_points(edges.into_iter().map(|(p, r)| {
+        let remote = periodic_remote_map
+            .and_then(|map| map.get(&(p, r)).copied())
+            .unwrap_or(p);
+        (p, r, remote)
+    }))?;
     Ok(overlap)
 }
 
