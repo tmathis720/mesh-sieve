@@ -1,9 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use mesh_sieve::algs::renumber::{
-    StratifiedOrdering, renumber_points, stratified_permutation,
+    StratifiedOrdering, renumber_coordinate_dm, renumber_points, stratified_permutation,
 };
 use mesh_sieve::data::atlas::Atlas;
+use mesh_sieve::data::coordinate_dm::CoordinateDM;
+use mesh_sieve::data::coordinates::Coordinates;
 use mesh_sieve::data::section::Section;
 use mesh_sieve::data::storage::VecStorage;
 use mesh_sieve::io::MeshData;
@@ -54,6 +56,32 @@ fn build_mesh(
         mixed_sections: Default::default(),
         labels: Some(labels),
         cell_types: None,
+        discretization: None,
+    }
+}
+
+fn build_coordinate_dm(
+) -> CoordinateDM<f64, VecStorage<f64>> {
+    let vertices = [pid(1), pid(2), pid(3), pid(4)];
+
+    let mut atlas = Atlas::default();
+    for vertex in vertices {
+        atlas.try_insert(vertex, 2).unwrap();
+    }
+
+    let mut coords = Coordinates::try_new(2, atlas).unwrap();
+    coords.try_restrict_mut(vertices[0]).unwrap().copy_from_slice(&[0.0, 0.0]);
+    coords.try_restrict_mut(vertices[1]).unwrap().copy_from_slice(&[1.0, 0.0]);
+    coords.try_restrict_mut(vertices[2]).unwrap().copy_from_slice(&[1.0, 1.0]);
+    coords.try_restrict_mut(vertices[3]).unwrap().copy_from_slice(&[0.0, 1.0]);
+
+    let mut labels = LabelSet::new();
+    labels.set_label(vertices[0], "corner", 1);
+    labels.set_label(vertices[3], "corner", 1);
+
+    CoordinateDM {
+        coordinates: coords,
+        labels: Some(labels),
         discretization: None,
     }
 }
@@ -118,4 +146,38 @@ fn stratified_permutation_orders_vertices_first() {
         .unwrap();
 
     assert!(max_vertex_idx < min_cell_idx);
+}
+
+#[test]
+fn renumber_coordinate_dm_preserves_coordinates() {
+    let mesh = build_mesh();
+    let coordinate_dm = build_coordinate_dm();
+    let permutation = vec![pid(11), pid(3), pid(1), pid(10), pid(2), pid(4)];
+
+    let renumbered = renumber_coordinate_dm(&mesh, &coordinate_dm, &permutation).unwrap();
+
+    let mut mapping = HashMap::new();
+    for (idx, &old) in permutation.iter().enumerate() {
+        mapping.insert(old, pid((idx + 1) as u64));
+    }
+
+    for &old in &[pid(1), pid(2), pid(3), pid(4)] {
+        let new = mapping[&old];
+        let old_slice = coordinate_dm
+            .coordinates
+            .try_restrict(old)
+            .unwrap();
+        let new_slice = renumbered
+            .coordinates
+            .try_restrict(new)
+            .unwrap();
+        assert_eq!(old_slice, new_slice);
+    }
+
+    let old_labels = coordinate_dm.labels.as_ref().unwrap();
+    let new_labels = renumbered.labels.as_ref().unwrap();
+    for (name, point, value) in old_labels.iter() {
+        let new_point = mapping[&point];
+        assert_eq!(new_labels.get_label(new_point, name), Some(value));
+    }
 }
