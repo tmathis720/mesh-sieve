@@ -7,9 +7,12 @@
 * **Mesh Topology**: generic **Sieve** graphs for incidence and traversal (cone/support/closure/star), plus lattice ops (meet/join) and strata (height/depth).
 * **Field Data**: **Atlas** (layout) + **Section** (values) with **fallible** accessors and strong invariants. Fast scatter paths for contiguous layouts.
 * **Storage Abstraction**: `Section<V, S>` where `S: SliceStorage<V>` (built-in `VecStorage`; optional `WgpuStorage` with compute kernels).
+* **Multi-field Data**: `MultiSection` for stacked field offsets, `MixedSectionStore` for heterogeneous scalar types, and `ConstrainedSection` for DOF pinning.
+* **Geometry & Discretization**: `Coordinates` (optional high-order coordinates) plus `Discretization` metadata keyed by labels/cell types.
 * **Parallel Communication**: pluggable **Communicator** backends (serial `NoComm`, in-process `RayonComm`, feature-gated `MpiComm`).
 * **Overlap**: bipartite local↔rank structure with strict mirror validation; helpers to expand along mesh closure and prune detached ranks.
 * **Partitioning**: optional METIS helpers and in-tree algorithms.
+* **I/O Containers**: `MeshData` for sections/labels/mixed scalars and `MeshBundle` for multi-mesh workflows with sync utilities.
 * **Testing & CI**: property tests, deterministic iterators, and feature-gated deep invariant checks.
 * **Performance**: point-only adapters (no payload cloning), degree-local updates, preallocation hints, streaming algorithms, and inline hot paths.
 
@@ -102,7 +105,7 @@ let s = sec.try_restrict(p)?; // &[f64]
 ### Geometry + Cell Types
 
 Coordinates are stored as a `Section` with a fixed dimension per point, wrapped by
-`data::coordinates::Coordinates`. Cell types can be attached to topological points
+`data::coordinates::Coordinates` (with optional `HighOrderCoordinates`). Cell types can be attached to topological points
 using either a `Section<CellType, _>` (for strongly typed metadata) or a `LabelSet`
 if you prefer integer tags.
 
@@ -110,7 +113,7 @@ See [docs/geometry-quality.md](docs/geometry-quality.md) for expected coordinate
 layouts and examples of geometry quality checks.
 
 ```rust
-use mesh_sieve::data::{coordinates::Coordinates, section::Section, storage::VecStorage};
+use mesh_sieve::data::{coordinates::{Coordinates, HighOrderCoordinates}, section::Section, storage::VecStorage};
 use mesh_sieve::topology::cell_type::CellType;
 use mesh_sieve::topology::point::PointId;
 use mesh_sieve::data::atlas::Atlas;
@@ -121,6 +124,12 @@ atlas.try_insert(p, 3)?; // xyz
 
 let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(3, atlas)?;
 coords.try_restrict_mut(p)?.copy_from_slice(&[0.0, 1.0, 2.0]);
+
+// Optional higher-order coordinates (e.g., per-cell geometry DOFs).
+let mut ho_atlas = Atlas::default();
+ho_atlas.try_insert(p, 9)?; // 3 control points in 3D
+let high_order = HighOrderCoordinates::<f64, VecStorage<f64>>::try_new(3, ho_atlas)?;
+coords.set_high_order(high_order)?;
 
 // Cell types as a section over points.
 let mut cell_atlas = Atlas::default();
@@ -133,7 +142,8 @@ cell_types.try_set(p, &[CellType::Triangle])?;
 
 The Gmsh reader populates optional mesh metadata. Element tags become labels
 (`gmsh:physical`, `gmsh:elementary`, and `gmsh:tagN`), and each element receives
-an entry in the `cell_types` section.
+an entry in the `cell_types` section. The `MeshData` container also stores named
+sections, mixed-precision sections, and optional discretization metadata.
 
 ```rust
 use mesh_sieve::io::{gmsh::GmshReader, SieveSectionReader};
@@ -156,6 +166,34 @@ if let Some(cell) = mesh.sieve.base_points().next() {
     }
   }
 }
+```
+
+### Multi-field layouts + constraints
+
+Use `MultiSection` to stack multiple fields into a single DOF layout and
+`ConstrainedSection` (or per-field constraints in `MultiSection`) to pin
+values after refine/assemble steps.
+
+```rust
+use mesh_sieve::data::multi_section::{FieldSection, MultiSection};
+use mesh_sieve::data::atlas::Atlas;
+use mesh_sieve::data::storage::VecStorage;
+use mesh_sieve::data::section::Section;
+use mesh_sieve::topology::point::PointId;
+
+let mut atlas = Atlas::default();
+let p = PointId::new(7)?;
+atlas.try_insert(p, 3)?; // velocity dofs
+let vel = Section::<f64, VecStorage<f64>>::new(atlas.clone());
+let pres = Section::<f64, VecStorage<f64>>::new(atlas);
+
+let mut velocity = FieldSection::new("velocity", vel);
+velocity.insert_constraint(p, 2, 0.0)?;
+let fields = vec![velocity, FieldSection::new("pressure", pres)];
+let mut multi = MultiSection::new(fields)?;
+let (offset, dof) = multi.field_span(p, 0)?;
+
+multi.apply_constraints()?;
 ```
 
 ### Refine/Assemble (Bundle)
@@ -208,15 +246,17 @@ More examples:
 * `mpi_complete.rs`, `mpi_complete_stack.rs`: section/stack completion
 * `mesh_distribute_two_ranks.rs`: distributing a mesh
 * `mpi_complete_multiple_neighbors.rs`: multi-neighbor exchange
+* `partitioned_bundle.rs`: partitioned mesh bundle I/O
 
 ## Project Structure
 
 ```
 src/
   topology/        # Sieve & traversal, strata, lattice
-  data/            # Atlas, Section, storage backends (Vec/WGPU), deltas, helpers
+  data/            # Atlas/Section, constraints, multi-sections, discretization, storage (Vec/WGPU)
   overlap/         # Overlap graph, value deltas, perf types
   algs/            # communicators, completion, distribute, partition utilities
+  io/              # mesh readers/writers, mixed sections, partitioned bundles
   partitioning/    # METIS integration + in-tree algorithms
   ...
 ```
@@ -240,6 +280,9 @@ src/
   * `WgpuStorage` (feature `wgpu`) for `V: bytemuck::Pod + Zeroable`
 * `ScatterPlan { atlas_version, spans }` is a **stable contract**; plans are refused if versions diverge.
 * **Fast-path scatter**: if spans are contiguous and buffer lengths match, we do a single `clone_from_slice`.
+* **Multi-field layouts**: `MultiSection` provides PETSc-style field offsets and combined DOF counts.
+* **Constraints**: `ConstrainedSection` and `ConstraintSet` apply DOF pinning after refine/assemble.
+* **Mixed precision**: `MixedSectionStore` holds named sections with heterogeneous scalar types.
 
 **Overlap**
 

@@ -12,12 +12,21 @@
 * **Atlas & Section** (layout + values)
 * **Bundles** (topology + data workflow)
 * **Overlap** (bipartite local↔rank structure)
+* **MultiSection & constraints** (stacked fields + DOF pinning)
+* **Mixed sections** (heterogeneous scalar types)
+* **Discretization** (region-keyed DOF metadata)
+* **CoordinateDM** (coordinate storage + labels + discretization)
+* **MeshData/MeshBundle** (I/O containers)
 
 ### What changed (high-level)
 
 * **Infallible → fallible**: Panicking shims are removed (or deprecated pending the next major); use `Result` methods.
 * **Stricter invariants**: `strict-invariants` (alias: `check-invariants`) runs deep checks in debug/CI, including **in/out mirror validation** for overlaps and pre-checks before slicing in data.
 * **Storage abstraction**: `Section` is generic over **storage backends** (CPU vector by default; optional **wgpu** buffer).
+* **Multi-field layouts**: `MultiSection` and `FieldSection` stack field DOFs and keep PETSc-style offsets.
+* **Mixed scalar sections**: named `MixedSectionStore` for heterogeneous data.
+* **Coordinate metadata**: `Discretization` + `CoordinateDM` for region-aware layouts.
+* **Geometry wrappers**: `Coordinates` and `HighOrderCoordinates` for fixed-dimension and curved geometry data.
 * **Determinism & speed**: Streaming patterns (no per-point heap churn), fast-paths for contiguous scatter, and careful inlining.
 * **Clearer errors**: No fake PointIds; more precise variants.
 
@@ -231,7 +240,32 @@ use mesh_sieve::overlap::delta::ValueDelta as OverlapDelta;
 
 ---
 
-### 5.5 Discretization metadata (field layouts by region)
+### 5.5 Geometry helpers (`Coordinates`, `HighOrderCoordinates`)
+
+`Coordinates` wraps a `Section` with a fixed spatial dimension per point.
+Optional `HighOrderCoordinates` can be attached for per-entity geometry DOFs
+(for example, curved elements).
+
+```rust
+use mesh_sieve::data::coordinates::{Coordinates, HighOrderCoordinates};
+use mesh_sieve::data::atlas::Atlas;
+use mesh_sieve::data::storage::VecStorage;
+use mesh_sieve::topology::point::PointId;
+
+let mut atlas = Atlas::default();
+let p = PointId::new(1)?;
+atlas.try_insert(p, 3)?;
+let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(3, atlas)?;
+
+let mut ho_atlas = Atlas::default();
+ho_atlas.try_insert(p, 9)?; // multiple of dimension
+let high_order = HighOrderCoordinates::<f64, VecStorage<f64>>::try_new(3, ho_atlas)?;
+coords.set_high_order(high_order)?;
+```
+
+---
+
+### 5.6 Discretization metadata (field layouts by region)
 
 Use `Discretization` to describe per-field DOF layouts keyed by region selectors
 (labels or cell types). This lets each field carry its own layout definition
@@ -261,7 +295,7 @@ discretization.insert_field("pressure", pressure);
 
 ---
 
-### 5.6 Constrained fields (`ConstrainedSection`)
+### 5.7 Constrained fields (`ConstrainedSection`)
 
 `ConstrainedSection` wraps a `Section` with per-point DOF constraints (indices + values).
 Use it to enforce Dirichlet-style values after refinement/assembly.
@@ -292,6 +326,76 @@ constrained.apply_constraints()?;
 For mesh workflows that refine or assemble, apply constraints afterwards with
 `Bundle::refine_with_constraints` and `Bundle::assemble_with_constraints` to keep
 boundary conditions enforced.
+
+---
+
+### 5.8 Multi-field layouts (`MultiSection`)
+
+`MultiSection` stacks multiple `FieldSection`s into a single combined atlas,
+mirroring PETSc-style field offsets. Each field can carry its own constraints,
+and `MultiSection::apply_constraints()` applies them all.
+
+```rust
+use mesh_sieve::data::multi_section::{FieldSection, MultiSection};
+use mesh_sieve::data::section::Section;
+use mesh_sieve::data::storage::VecStorage;
+use mesh_sieve::data::atlas::Atlas;
+use mesh_sieve::topology::point::PointId;
+
+let mut atlas = Atlas::default();
+let p = PointId::new(7)?;
+atlas.try_insert(p, 3)?;
+
+let vel = Section::<f64, VecStorage<f64>>::new(atlas.clone());
+let pres = Section::<f64, VecStorage<f64>>::new(atlas);
+
+let mut velocity = FieldSection::new("velocity", vel);
+velocity.insert_constraint(p, 2, 0.0)?;
+
+let fields = vec![velocity, FieldSection::new("pressure", pres)];
+let mut multi = MultiSection::new(fields)?;
+
+let (offset, dof) = multi.field_span(p, 0)?;
+multi.apply_constraints()?;
+```
+
+---
+
+### 5.9 Mixed scalar sections (`MixedSectionStore`)
+
+Use `MixedSectionStore` to keep named sections with different scalar types.
+This is especially useful in I/O contexts where meshes carry mixed-precision
+data alongside f64/f32 coordinates.
+
+```rust
+use mesh_sieve::data::mixed_section::MixedSectionStore;
+use mesh_sieve::data::section::Section;
+use mesh_sieve::data::storage::VecStorage;
+use mesh_sieve::data::atlas::Atlas;
+
+let atlas = Atlas::default();
+let mut store = MixedSectionStore::new();
+store.insert("temperature", Section::<f64, VecStorage<f64>>::new(atlas.clone()));
+store.insert("material_id", Section::<i32, VecStorage<i32>>::new(atlas));
+```
+
+---
+
+### 5.10 Coordinate data management (`CoordinateDM`)
+
+`CoordinateDM` packages `Coordinates` with optional labels and discretization
+metadata so you can move coordinate data independently from mesh topology.
+
+```rust
+use mesh_sieve::data::coordinate_dm::CoordinateDM;
+use mesh_sieve::data::coordinates::Coordinates;
+use mesh_sieve::data::atlas::Atlas;
+use mesh_sieve::data::storage::VecStorage;
+
+let atlas = Atlas::default();
+let coords = Coordinates::<f64, VecStorage<f64>>::try_new(3, atlas)?;
+let dm = CoordinateDM::new(coords);
+```
 
 ---
 
@@ -340,7 +444,33 @@ let mut b: Bundle<f64> = Bundle {
 
 ---
 
-## 8. Optional adapter: `Map` & infallible helpers (feature `map-adapter`)
+## 8. Mesh containers & I/O
+
+`MeshData` is the primary container returned by mesh readers. It holds the
+topology plus coordinates, named sections, mixed-type sections, labels, cell
+types, and optional discretization metadata.
+
+```rust
+use mesh_sieve::io::MeshData;
+use mesh_sieve::data::section::Section;
+use mesh_sieve::data::storage::VecStorage;
+use mesh_sieve::topology::cell_type::CellType;
+use mesh_sieve::topology::sieve::InMemorySieve;
+use mesh_sieve::topology::point::PointId;
+
+let sieve = InMemorySieve::<PointId, ()>::default();
+let mut mesh: MeshData<_, f64, VecStorage<f64>, VecStorage<CellType>> = MeshData::new(sieve);
+mesh.sections.insert("temperature".to_string(), Section::new(Default::default()));
+```
+
+For multi-mesh workflows (e.g., subdomains, partitions, or time slices), use
+`MeshBundle`, which can synchronize labels or coordinate values across meshes.
+Partitioned mesh I/O also supports bundled `.bundle.json` outputs for
+gathered serialization.
+
+---
+
+## 9. Optional adapter: `Map` & infallible helpers (feature `map-adapter`)
 
 * The old `Map<V>` trait and helpers like `restrict_closure` / `restrict_star` are **gated**:
 
@@ -356,7 +486,7 @@ let mut b: Bundle<f64> = Bundle {
 
 ---
 
-## 9. Error Model (clear & precise)
+## 10. Error Model (clear & precise)
 
 All public ops return `Result<_, MeshSieveError>`. Notable variants:
 
@@ -368,6 +498,7 @@ All public ops return `Result<_, MeshSieveError>`. Notable variants:
   * `SliceLengthMismatch { point, expected, found }`
   * `AtlasPlanStale { expected, found }`
   * `AtlasPointLengthChanged { point, old_len, new_len }` *(new; used by `with_atlas_mut` strict rule)*
+  * `ConstraintIndexOutOfBounds { point, index, len }` (DOF constraints)
 * **Overlap**
 
   * `OverlapNonBipartite { src, dst }`
@@ -383,7 +514,7 @@ All public ops return `Result<_, MeshSieveError>`. Notable variants:
 
 ---
 
-## 10. Performance Notes
+## 11. Performance Notes
 
 * `#[inline]` on hot getters: `Atlas::get`, `Section::try_restrict`, `try_restrict_mut`, overlap query adapters.
 * **Reserve** before bulk inserts: `reserve_cone`, `reserve_support`; in data rebuilds, compute `total_len_new` and reserve once.
@@ -393,7 +524,7 @@ All public ops return `Result<_, MeshSieveError>`. Notable variants:
 
 ---
 
-## 11. Testing & CI (recommendations)
+## 12. Testing & CI (recommendations)
 
 * **Property tests** for Atlas/Section coherence (random insert/remove/shuffle + invariant checks + scatter/gather round-trip).
 * **Mutation tests**: `with_atlas_mut` must **error** if lengths change; verify `with_atlas_mut_resize` honors `ResizePolicy`.
@@ -409,7 +540,7 @@ All public ops return `Result<_, MeshSieveError>`. Notable variants:
 
 ---
 
-## 12. Migration Guide (breaking but localized)
+## 13. Migration Guide (breaking but localized)
 
 ### Panicking APIs → fallible
 
@@ -437,7 +568,7 @@ All public ops return `Result<_, MeshSieveError>`. Notable variants:
 
 ---
 
-## 13. Quick Reference
+## 14. Quick Reference
 
 | Component         | Selected Methods                                                                                     |
 | ----------------- | ---------------------------------------------------------------------------------------------------- |
@@ -446,14 +577,20 @@ All public ops return `Result<_, MeshSieveError>`. Notable variants:
 | `Overlap`         | `add_link_structural_one`, `add_links_structural_bulk`, `resolve_remote_point(s)`, `neighbor_ranks`  |
 | `Atlas`           | `try_insert`, `get`, `remove_point`, `points`, `version`, `atlas_map`, invariants                    |
 | `Section<V,S>`    | `new`, `try_restrict(_), try_restrict_mut(_), try_set(_)`, `with_atlas_mut`, `with_atlas_mut_resize` |
+| `Coordinates`     | `try_new`, `try_restrict(_mut)`, `set_high_order`, `high_order(_mut)`                                |
+| `Discretization`  | `insert_field`, `field`, `field_mut`, `iter`                                                         |
+| `MultiSection`    | `field_span`, `field_offset`, `apply_constraints`                                                    |
+| `MixedSectionStore` | `insert`, `get`, `get_mut`, `iter`                                                                 |
+| `CoordinateDM`    | `new`                                                                                                 |
 | `SliceDelta<V>`   | `apply(src,dst)` (e.g., `Polarity::{Forward,Reverse}`)                                               |
 | `ValueDelta<V>`   | `restrict(&V)->Part`, `fuse(&mut V, Part)` (e.g., `CopyDelta`, `AddDelta`, `ZeroDelta`)              |
 | `Bundle<V,D>`     | `refine(bases)`, `assemble_with(bases,&Reducer)`                                                     |
+| `MeshData`/`MeshBundle` | `new`, `sync_labels`, `sync_coordinates`                                                      |
 | Completion (algs) | `complete_sieve`, `complete_section`, `complete_stack`, `closure_completed`                          |
 
 ---
 
-## 14. Examples
+## 15. Examples
 
 ### Section with default CPU storage
 
