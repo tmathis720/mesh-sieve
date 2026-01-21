@@ -1,5 +1,8 @@
 use crate::topology::orientation::*;
-use crate::topology::sieve::oriented::Orientation;
+use crate::topology::sieve::oriented::{
+    Orientation, repair_adjacent_face_orientations, validate_adjacent_face_orientations,
+};
+use crate::topology::sieve::{InMemoryOrientedSieve, OrientedSieve};
 
 // Group laws for BitFlip
 #[test]
@@ -83,4 +86,22 @@ fn accumulate_path_works() {
     let steps = [BitFlip(true), BitFlip(true), BitFlip(false)];
     let tot: BitFlip = accumulate_path(steps);
     assert_eq!(tot, BitFlip(false)); // true ^ true ^ false = false
+}
+
+#[test]
+fn face_orientation_validation_and_repair() {
+    let mut sieve = InMemoryOrientedSieve::<u32, (), D3>::default();
+    let (cell_a, cell_b, face) = (1, 2, 10);
+
+    sieve.add_arrow_o(cell_a, face, (), D3 { rot: 1, flip: false });
+    sieve.add_arrow_o(cell_b, face, (), D3 { rot: 1, flip: false });
+
+    let mismatches = validate_adjacent_face_orientations(&mut sieve).unwrap();
+    assert_eq!(mismatches.len(), 1);
+
+    let flips = repair_adjacent_face_orientations(&mut sieve).unwrap();
+    assert_eq!(flips, 1);
+
+    let mismatches_after = validate_adjacent_face_orientations(&mut sieve).unwrap();
+    assert!(mismatches_after.is_empty());
 }

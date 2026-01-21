@@ -28,6 +28,7 @@
 //! point-sorted vector for deterministic behavior.
 
 use super::sieve_trait::Sieve;
+use crate::mesh_error::MeshSieveError;
 
 /// A finite group capturing per-arrow orientations/permutations.
 /// Implementations **must** satisfy for all `a`, `b`, `c`:
@@ -163,4 +164,102 @@ pub trait OrientedSieve: Sieve {
         out.sort_unstable_by_key(|(pt, _)| *pt);
         out
     }
+}
+
+/// Inconsistent orientation between two adjacent cells across a shared face.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FaceOrientationMismatch<P, O> {
+    pub face: P,
+    pub cell_a: P,
+    pub cell_b: P,
+    pub orient_a: O,
+    pub orient_b: O,
+}
+
+/// Validate that adjacent cells agree on face orientations.
+///
+/// Faces are inferred as height-1 points (cells are height-0).
+/// Returns a list of mismatches for each inconsistent cell pair.
+pub fn validate_adjacent_face_orientations<S>(
+    sieve: &mut S,
+) -> Result<Vec<FaceOrientationMismatch<S::Point, S::Orient>>, MeshSieveError>
+where
+    S: OrientedSieve,
+    S::Point: Ord,
+    S::Orient: Orientation + PartialEq,
+{
+    let faces: Vec<_> = sieve.height_stratum(1)?.collect();
+    let mut mismatches = Vec::new();
+
+    for face in faces {
+        let supports: Vec<_> = sieve.support_o(face).collect();
+        if supports.len() < 2 {
+            continue;
+        }
+        for i in 0..supports.len() {
+            for j in (i + 1)..supports.len() {
+                let (cell_a, orient_a) = supports[i];
+                let (cell_b, orient_b) = supports[j];
+                if orient_b != S::Orient::inverse(orient_a) {
+                    mismatches.push(FaceOrientationMismatch {
+                        face,
+                        cell_a,
+                        cell_b,
+                        orient_a,
+                        orient_b,
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(mismatches)
+}
+
+/// Attempt to repair inconsistent face orientations by flipping them.
+///
+/// For each shared face, the first supporting cell is treated as the
+/// reference and all other cell orientations are flipped to its inverse.
+/// Returns the number of flips applied.
+pub fn repair_adjacent_face_orientations<S>(sieve: &mut S) -> Result<usize, MeshSieveError>
+where
+    S: OrientedSieve,
+    S::Point: Ord,
+    S::Orient: Orientation + PartialEq,
+{
+    let faces: Vec<_> = sieve.height_stratum(1)?.collect();
+    let mut flips = 0;
+
+    for face in faces {
+        let supports: Vec<_> = sieve.support_o(face).collect();
+        if supports.len() < 2 {
+            continue;
+        }
+        let (_, ref_orient) = supports[0];
+        let expected = S::Orient::inverse(ref_orient);
+
+        for (cell, orient) in supports.into_iter().skip(1) {
+            if orient == expected {
+                continue;
+            }
+            let payload = {
+                let mut found = None;
+                for (dst, pay) in sieve.cone(cell) {
+                    if dst == face {
+                        found = Some(pay);
+                        break;
+                    }
+                }
+                found.ok_or_else(|| {
+                    MeshSieveError::MissingPointInCone(format!(
+                        "missing arrow ({cell:?} -> {face:?}) while repairing"
+                    ))
+                })?
+            };
+            sieve.add_arrow_o(cell, face, payload, expected);
+            flips += 1;
+        }
+    }
+
+    Ok(flips)
 }
