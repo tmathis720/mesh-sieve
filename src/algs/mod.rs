@@ -22,6 +22,7 @@ pub mod submesh;
 pub mod traversal;
 pub mod traversal_core;
 pub mod traversal_ref;
+pub mod transform;
 pub mod wire;
 
 #[cfg(feature = "metis-support")]
@@ -38,6 +39,7 @@ pub use field_transfer::{
     transfer_section_by_nearest_cell_centroid, transfer_section_by_nearest_point,
     transfer_section_by_refinement_map, transfer_section_by_shared_labels,
 };
+pub use transform::{CoordinateTransform, TransformHooks, transform_mesh};
 pub use lattice::adjacent;
 pub use boundary::{
     BoundaryClassification, BoundaryLabelValues, DEFAULT_BOUNDARY_LABEL, DEFAULT_INTERIOR_LABEL,
