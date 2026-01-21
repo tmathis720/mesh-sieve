@@ -1,6 +1,7 @@
 //! Partitioned mesh I/O helpers with communicator-aware coordination.
 
 use crate::algs::communicator::Communicator;
+use crate::algs::communicator::Wait;
 use crate::io::{MeshData, SieveSectionReader, SieveSectionWriter};
 use crate::mesh_error::MeshSieveError;
 use crate::overlap::overlap::Overlap;

@@ -82,5 +82,5 @@ fn closure_mappers() {
     sec.for_each_in_order(|_, sl| {
         sum += sl.iter().sum::<i32>();
     });
-    assert_eq!(sum, expected.iter().sum());
+    assert_eq!(sum, expected.iter().sum::<i32>());
 }

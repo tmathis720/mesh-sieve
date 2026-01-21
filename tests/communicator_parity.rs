@@ -44,8 +44,8 @@ fn rayon_comm_roundtrip_and_tag_isolation() {
 
     let ra = rxa.wait().expect("rxa");
     let rb = rxb.wait().expect("rxb");
-    assert_eq!(&ra[..], cast_slice(&wa));
-    assert_eq!(&rb[..], cast_slice(&wb));
+    assert_eq!(&ra[..], cast_slice::<WireU64, u8>(&wa));
+    assert_eq!(&rb[..], cast_slice::<WireU64, u8>(&wb));
 }
 
 #[cfg(feature = "mpi-support")]

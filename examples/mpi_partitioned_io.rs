@@ -1,20 +1,27 @@
 // cargo mpirun -n 2 --features mpi-support --example mpi_partitioned_io
 // Demonstrates partitioned mesh I/O with overlap metadata using MPI.
 #[cfg(feature = "mpi-support")]
+use mesh_sieve::data::atlas::Atlas;
+#[cfg(feature = "mpi-support")]
+use mesh_sieve::data::coordinates::Coordinates;
+#[cfg(feature = "mpi-support")]
+use mesh_sieve::data::section::Section;
+#[cfg(feature = "mpi-support")]
+use mesh_sieve::data::storage::VecStorage;
+#[cfg(feature = "mpi-support")]
+use mesh_sieve::topology::cell_type::CellType;
+#[cfg(feature = "mpi-support")]
+use mesh_sieve::topology::point::PointId;
+#[cfg(feature = "mpi-support")]
+use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
+#[cfg(feature = "mpi-support")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use mesh_sieve::algs::communicator::{Communicator, MpiComm};
     use mesh_sieve::algs::distribute::{DistributionConfig, ProvidedPartition, distribute_with_overlap};
-    use mesh_sieve::data::atlas::Atlas;
-    use mesh_sieve::data::coordinates::Coordinates;
-    use mesh_sieve::data::section::Section;
-    use mesh_sieve::data::storage::VecStorage;
     use mesh_sieve::io::gmsh::{GmshReader, GmshWriter};
     use mesh_sieve::io::{
         GatherPolicy, MeshData, read_partitioned_mesh, write_partitioned_mesh,
     };
-    use mesh_sieve::topology::cell_type::CellType;
-    use mesh_sieve::topology::point::PointId;
-    use mesh_sieve::topology::sieve::{InMemorySieve, MutableSieve};
     use std::fs;
     use std::path::PathBuf;
 
@@ -117,12 +124,12 @@ fn build_global_mesh(
     let v3 = PointId::new(3)?;
     let v4 = PointId::new(4)?;
 
-    MutableSieve::add_arrow(&mut sieve, cell0, v1, ());
-    MutableSieve::add_arrow(&mut sieve, cell0, v2, ());
-    MutableSieve::add_arrow(&mut sieve, cell0, v3, ());
-    MutableSieve::add_arrow(&mut sieve, cell1, v2, ());
-    MutableSieve::add_arrow(&mut sieve, cell1, v3, ());
-    MutableSieve::add_arrow(&mut sieve, cell1, v4, ());
+    sieve.add_arrow(cell0, v1, ());
+    sieve.add_arrow(cell0, v2, ());
+    sieve.add_arrow(cell0, v3, ());
+    sieve.add_arrow(cell1, v2, ());
+    sieve.add_arrow(cell1, v3, ());
+    sieve.add_arrow(cell1, v4, ());
 
     let mut coord_atlas = Atlas::default();
     for vertex in [v1, v2, v3, v4] {
