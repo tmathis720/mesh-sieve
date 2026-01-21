@@ -1,6 +1,8 @@
-use mesh_sieve::data::{Atlas, Coordinates, VecStorage};
+use mesh_sieve::data::{Coordinates, VecStorage};
 use mesh_sieve::io::{MeshBundle, MeshData};
 use mesh_sieve::mesh_error::MeshSieveError;
+use mesh_sieve::prelude::Atlas;
+use mesh_sieve::topology::cell_type::CellType;
 use mesh_sieve::topology::labels::LabelSet;
 use mesh_sieve::topology::point::PointId;
 use mesh_sieve::topology::sieve::{InMemorySieve, MutableSieve, Sieve};
@@ -51,11 +53,11 @@ fn main() -> Result<(), MeshSieveError> {
     let mut labels = LabelSet::new();
     labels.set_label(shared, "boundary", 7);
 
-    let mut mesh_a = MeshData::new(sieve_a);
+    let mut mesh_a = MeshData::<_, f64, VecStorage<f64>, VecStorage<CellType>>::new(sieve_a);
     mesh_a.coordinates = Some(coords_a);
     mesh_a.labels = Some(labels);
 
-    let mut mesh_b = MeshData::new(sieve_b);
+    let mut mesh_b = MeshData::<_, f64, VecStorage<f64>, VecStorage<CellType>>::new(sieve_b);
     mesh_b.coordinates = Some(coords_b);
 
     let mut bundle = MeshBundle::new(vec![mesh_a, mesh_b]);

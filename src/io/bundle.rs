@@ -150,7 +150,8 @@ where
             let Some(coords) = &mut mesh.coordinates else {
                 continue;
             };
-            for point in coords.section().atlas().points() {
+            let points: Vec<_> = coords.section().atlas().points().collect();
+            for point in points {
                 if let Some(val) = values.get(&point) {
                     coords.section_mut().try_set(point, val)?;
                 }
