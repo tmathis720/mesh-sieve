@@ -29,7 +29,7 @@ pub mod wire;
 pub use crate::algs::distribute::MetisPartitioner;
 pub use crate::algs::distribute::{
     CellPartitioner, CustomPartitioner, DistributedMeshData, DistributionConfig, ProvidedPartition,
-    distribute_mesh, distribute_with_overlap,
+    distribute_mesh, distribute_with_overlap, distribute_with_overlap_periodic,
 };
 pub use completion::{
     complete_section, complete_section_with_ownership, complete_section_with_tags,
