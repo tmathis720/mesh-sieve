@@ -3,6 +3,7 @@
 //! This module provides trait-based readers and writers for loading and
 //! saving `Sieve` topologies together with associated `Section` data.
 
+pub mod bundle;
 pub mod cgns;
 pub mod exodus;
 pub mod gmsh;
@@ -19,6 +20,8 @@ use crate::topology::labels::LabelSet;
 use crate::topology::sieve::Sieve;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
+
+pub use bundle::MeshBundle;
 
 /// Combined sieve and section data returned by I/O readers.
 #[derive(Debug)]
