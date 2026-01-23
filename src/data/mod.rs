@@ -26,7 +26,7 @@ pub use crate::debug_invariants::DebugInvariants;
 pub use constrained_section::{
     ConstrainedSection, ConstraintSet, DofConstraint, apply_constraints_to_section,
 };
-pub use coordinate_dm::CoordinateDM;
+pub use coordinate_dm::{CoordinateDM, CoordinateNumbering};
 pub use discretization::{Discretization, DofLayout, FieldDiscretization, RegionKey};
 pub use global_map::LocalToGlobalMap;
 pub use hanging_node_constraints::{
