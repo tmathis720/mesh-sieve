@@ -1,7 +1,7 @@
 //! Renumbering utilities for topology, sections, and labels.
 
 use crate::data::atlas::Atlas;
-use crate::data::coordinate_dm::CoordinateDM;
+use crate::data::coordinate_dm::{CoordinateDM, CoordinateNumbering};
 use crate::data::coordinates::{Coordinates, HighOrderCoordinates};
 use crate::data::mixed_section::{MixedSectionStore, TaggedSection};
 use crate::data::section::Section;
@@ -189,6 +189,7 @@ where
     St: Storage<V> + Clone,
 {
     let coordinates = remap_coordinates(&coordinate_dm.coordinates, old_to_new, new_to_old)?;
+    let numbering = CoordinateNumbering::from_points(coordinates.section().atlas().points());
     let labels = match &coordinate_dm.labels {
         Some(labels) => {
             let out = remap_labels(labels, old_to_new)?;
@@ -200,6 +201,7 @@ where
         coordinates,
         labels,
         discretization: coordinate_dm.discretization.clone(),
+        numbering,
     })
 }
 

@@ -79,10 +79,15 @@ fn build_coordinate_dm(
     labels.set_label(vertices[0], "corner", 1);
     labels.set_label(vertices[3], "corner", 1);
 
+    let numbering = mesh_sieve::data::coordinate_dm::CoordinateNumbering::from_points(
+        coords.section().atlas().points(),
+    );
+
     CoordinateDM {
         coordinates: coords,
         labels: Some(labels),
         discretization: None,
+        numbering,
     }
 }
 

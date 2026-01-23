@@ -92,7 +92,7 @@ pub mod prelude {
     pub use crate::data::constrained_section::{
         ConstrainedSection, ConstraintSet, DofConstraint, apply_constraints_to_section,
     };
-    pub use crate::data::coordinate_dm::CoordinateDM;
+    pub use crate::data::coordinate_dm::{CoordinateDM, CoordinateNumbering};
     pub use crate::data::coordinates::Coordinates;
     pub use crate::data::discretization::{
         Discretization, DofLayout, FieldDiscretization, RegionKey,
