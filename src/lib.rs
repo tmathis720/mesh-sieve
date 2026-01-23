@@ -72,6 +72,9 @@ pub mod prelude {
     pub use crate::algs::communicator::MpiComm;
     #[cfg(feature = "rayon")]
     pub use crate::algs::communicator::RayonComm;
+    pub use crate::algs::assembly::{
+        AssemblyCommTags, assemble_section_with_ownership, assemble_section_with_tags_and_ownership,
+    };
     pub use crate::algs::completion::{
         complete_section, complete_section_with_ownership,
         complete_section_with_tags_and_ownership, complete_sieve, complete_stack,

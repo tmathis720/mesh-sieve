@@ -4,6 +4,7 @@
 //! partitioning, traversal, and lattice utilities.
 
 pub mod adjacency_graph;
+pub mod assembly;
 pub mod boundary;
 pub mod communicator;
 pub mod completion;
@@ -39,6 +40,9 @@ pub use boundary::{
 pub use completion::{
     complete_section, complete_section_with_ownership, complete_section_with_tags,
     complete_section_with_tags_and_ownership,
+};
+pub use assembly::{
+    AssemblyCommTags, assemble_section_with_ownership, assemble_section_with_tags_and_ownership,
 };
 pub use field_transfer::{
     transfer_section_by_nearest_cell_centroid, transfer_section_by_nearest_point,
