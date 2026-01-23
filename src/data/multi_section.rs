@@ -6,7 +6,7 @@ use crate::data::section::Section;
 use crate::data::storage::Storage;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::point::PointId;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 /// A named field section with field-specific constraints.
 #[derive(Clone, Debug)]
@@ -184,11 +184,10 @@ where
                 )),
             })?
             .section();
-        let (_, len) = section
-            .atlas()
-            .get(p)
-            .ok_or(MeshSieveError::PointNotInAtlas(p))?;
-        Ok(len)
+        if self.atlas.get(p).is_none() {
+            return Err(MeshSieveError::PointNotInAtlas(p));
+        }
+        Ok(section.atlas().get(p).map(|(_, len)| len).unwrap_or(0))
     }
 
     /// Field offset for point `p` in the combined layout.
@@ -208,6 +207,38 @@ where
         Ok((self.field_offset(p, field)?, self.field_dof(p, field)?))
     }
 
+    /// DOF count for a field at point `p`, by field name.
+    pub fn field_dof_by_name(&self, p: PointId, name: &str) -> Result<usize, MeshSieveError> {
+        let field = self
+            .fields
+            .iter()
+            .position(|field| field.name == name)
+            .ok_or(MeshSieveError::SectionAccess {
+                point: p,
+                source: Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "field name not found",
+                )),
+            })?;
+        self.field_dof(p, field)
+    }
+
+    /// Field offset for point `p`, by field name.
+    pub fn field_offset_by_name(&self, p: PointId, name: &str) -> Result<usize, MeshSieveError> {
+        let field = self
+            .fields
+            .iter()
+            .position(|field| field.name == name)
+            .ok_or(MeshSieveError::SectionAccess {
+                point: p,
+                source: Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "field name not found",
+                )),
+            })?;
+        self.field_offset(p, field)
+    }
+
     /// Apply constraints for all fields.
     pub fn apply_constraints(&mut self) -> Result<(), MeshSieveError>
     where
@@ -223,25 +254,23 @@ where
         if fields.is_empty() {
             return Ok(Atlas::default());
         }
-        let base = fields[0].section().atlas();
-        for field in fields.iter().skip(1) {
+        let mut atlas = Atlas::default();
+        let mut points = Vec::new();
+        let mut seen = HashSet::new();
+        for field in fields {
             for point in field.section().atlas().points() {
-                if !base.contains(point) {
-                    return Err(MeshSieveError::PointNotInAtlas(point));
+                if seen.insert(point) {
+                    points.push(point);
                 }
             }
         }
 
-        let mut atlas = Atlas::default();
-        for point in base.points() {
+        for point in points {
             let mut total = 0usize;
             for field in fields {
-                let (_, len) = field
-                    .section()
-                    .atlas()
-                    .get(point)
-                    .ok_or(MeshSieveError::PointNotInAtlas(point))?;
-                total = total.saturating_add(len);
+                if let Some((_, len)) = field.section().atlas().get(point) {
+                    total = total.saturating_add(len);
+                }
             }
             atlas.try_insert(point, total)?;
         }
@@ -284,5 +313,44 @@ mod tests {
         assert_eq!(multi.field_offset(p2, 0).unwrap(), 3);
         assert_eq!(multi.field_offset(p2, 1).unwrap(), 4);
         assert_eq!(multi.field_dof(p2, 1).unwrap(), 3);
+    }
+
+    #[test]
+    fn mixed_fields_have_independent_dofs() {
+        let p1 = PointId::new(1).unwrap();
+        let p2 = PointId::new(2).unwrap();
+        let p3 = PointId::new(3).unwrap();
+
+        let mut velocity_atlas = Atlas::default();
+        velocity_atlas.try_insert(p1, 3).unwrap();
+        velocity_atlas.try_insert(p2, 2).unwrap();
+        let velocity = Section::<f64, VecStorage<f64>>::new(velocity_atlas);
+
+        let mut pressure_atlas = Atlas::default();
+        pressure_atlas.try_insert(p2, 1).unwrap();
+        pressure_atlas.try_insert(p3, 1).unwrap();
+        let pressure = Section::<f64, VecStorage<f64>>::new(pressure_atlas);
+
+        let fields = vec![
+            FieldSection::new("velocity", velocity),
+            FieldSection::new("pressure", pressure),
+        ];
+        let multi = MultiSection::new(fields).unwrap();
+
+        assert_eq!(multi.offset(p1).unwrap(), 0);
+        assert_eq!(multi.offset(p2).unwrap(), 3);
+        assert_eq!(multi.offset(p3).unwrap(), 6);
+
+        assert_eq!(multi.field_dof(p1, 0).unwrap(), 3);
+        assert_eq!(multi.field_dof(p1, 1).unwrap(), 0);
+        assert_eq!(multi.field_offset(p1, 1).unwrap(), 3);
+
+        assert_eq!(multi.field_dof(p2, 0).unwrap(), 2);
+        assert_eq!(multi.field_dof(p2, 1).unwrap(), 1);
+        assert_eq!(multi.field_offset(p2, 1).unwrap(), 5);
+
+        assert_eq!(multi.field_dof(p3, 0).unwrap(), 0);
+        assert_eq!(multi.field_dof_by_name(p3, "pressure").unwrap(), 1);
+        assert_eq!(multi.field_offset_by_name(p3, "pressure").unwrap(), 6);
     }
 }
