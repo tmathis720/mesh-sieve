@@ -98,6 +98,10 @@ pub mod prelude {
         Discretization, DofLayout, FieldDiscretization, RegionKey,
     };
     pub use crate::data::global_map::LocalToGlobalMap;
+    pub use crate::data::hanging_node_constraints::{
+        HangingDofConstraint, HangingNodeConstraints, LinearConstraintTerm,
+        apply_hanging_constraints_to_section,
+    };
     pub use crate::data::multi_section::{FieldSection, MultiSection};
     #[cfg(feature = "map-adapter")]
     pub use crate::data::section::Map;
