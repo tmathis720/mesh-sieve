@@ -10,6 +10,7 @@ use crate::mesh_error::MeshSieveError;
 use crate::topology::cell_type::CellType;
 use crate::topology::labels::LabelSet;
 use crate::topology::point::PointId;
+use crate::topology::sieve::sieve_trait::Sieve;
 use crate::topology::sieve::{InMemorySieve, MutableSieve};
 use std::collections::BTreeMap;
 
