@@ -8,6 +8,7 @@ pub mod coordinate_dm;
 pub mod coordinates;
 pub mod discretization;
 pub mod global_map;
+pub mod hanging_node_constraints;
 pub mod mixed_section;
 pub mod multi_section;
 pub mod section;
@@ -28,6 +29,10 @@ pub use constrained_section::{
 pub use coordinate_dm::CoordinateDM;
 pub use discretization::{Discretization, DofLayout, FieldDiscretization, RegionKey};
 pub use global_map::LocalToGlobalMap;
+pub use hanging_node_constraints::{
+    HangingDofConstraint, HangingNodeConstraints, LinearConstraintTerm,
+    apply_hanging_constraints_to_section,
+};
 pub use mixed_section::{MixedScalar, MixedSectionStore, ScalarType, TaggedSection};
 pub use multi_section::{FieldSection, MultiSection};
 pub use section::Section;

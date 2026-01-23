@@ -1,5 +1,8 @@
 //! ConstrainedSection: field data with per-point constrained DOF values.
 
+use crate::data::hanging_node_constraints::{
+    HangingNodeConstraints, apply_hanging_constraints_to_section,
+};
 use crate::data::section::{FallibleMap, Section};
 use crate::data::storage::Storage;
 use crate::mesh_error::MeshSieveError;
@@ -37,6 +40,7 @@ pub trait ConstraintSet<V> {
 pub struct ConstrainedSection<V, S: Storage<V>> {
     section: Section<V, S>,
     constraints: BTreeMap<PointId, Vec<DofConstraint<V>>>,
+    hanging_constraints: HangingNodeConstraints<V>,
 }
 
 impl<V, S> ConstrainedSection<V, S>
@@ -48,6 +52,7 @@ where
         Self {
             section,
             constraints: BTreeMap::new(),
+            hanging_constraints: HangingNodeConstraints::default(),
         }
     }
 
@@ -74,6 +79,16 @@ where
     /// Mutable access to the constraint map.
     pub fn constraints_mut(&mut self) -> &mut BTreeMap<PointId, Vec<DofConstraint<V>>> {
         &mut self.constraints
+    }
+
+    /// Borrow hanging node constraints.
+    pub fn hanging_constraints(&self) -> &HangingNodeConstraints<V> {
+        &self.hanging_constraints
+    }
+
+    /// Mutable access to hanging node constraints.
+    pub fn hanging_constraints_mut(&mut self) -> &mut HangingNodeConstraints<V> {
+        &mut self.hanging_constraints
     }
 
     /// Insert or update a single constraint for a point.
@@ -131,6 +146,23 @@ where
         V: Clone,
     {
         apply_constraints_to_section(&mut self.section, &self.constraints)
+    }
+
+    /// Apply hanging node constraints to the underlying section.
+    pub fn apply_hanging_constraints(&mut self) -> Result<(), MeshSieveError>
+    where
+        V: Clone + Default + core::ops::AddAssign + core::ops::Mul<Output = V>,
+    {
+        apply_hanging_constraints_to_section(&mut self.section, &self.hanging_constraints)
+    }
+
+    /// Apply hanging node constraints, then fixed DOF constraints.
+    pub fn apply_all_constraints(&mut self) -> Result<(), MeshSieveError>
+    where
+        V: Clone + Default + core::ops::AddAssign + core::ops::Mul<Output = V>,
+    {
+        self.apply_hanging_constraints()?;
+        self.apply_constraints()
     }
 }
 
