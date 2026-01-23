@@ -54,6 +54,7 @@ pub mod algs;
 pub mod data;
 pub mod debug_invariants;
 pub mod geometry;
+pub mod forest;
 pub mod io;
 pub mod mesh_error;
 pub mod overlap;
