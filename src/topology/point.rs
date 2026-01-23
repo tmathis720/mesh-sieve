@@ -16,7 +16,7 @@ use crate::mesh_error::MeshSieveError;
 use std::{convert::TryFrom, fmt, num::NonZeroU64};
 
 #[cfg(all(feature = "mpi-support", feature = "mpi-derive"))]
-use mpi::datatype::Equivalence;
+use mpi::traits::Equivalence;
 ///
 /// # PETSc SF semantics
 /// In the context of parallel mesh distribution (see Knepley & Karpeev 2009),

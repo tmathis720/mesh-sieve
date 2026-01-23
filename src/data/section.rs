@@ -58,7 +58,7 @@ pub enum ResizePolicy<V> {
 
 impl<V, S> Section<V, S>
 where
-    S: Storage<V>,
+    S: Storage<V>, 
 {
     /// Read-only view of the data slice for a given point `p`.
     ///
@@ -747,7 +747,7 @@ where
 #[cfg(feature = "map-adapter")]
 mod sealed {
     pub trait Sealed {}
-    impl<V, S> Sealed for super::Section<V, S> {}
+    impl<V, S: crate::data::storage::Storage<V>> Sealed for super::Section<V, S> {}
     impl<'a, V> Sealed for crate::data::refine::helpers::ReadOnlyMap<'a, V> {}
 }
 
