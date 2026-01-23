@@ -49,6 +49,48 @@ impl LabelSet {
         })
     }
 
+    /// Returns the number of points with label `name == value`.
+    pub fn stratum_size(&self, name: &str, value: i32) -> usize {
+        self.labels
+            .get(name)
+            .map_or(0, |map| map.values().filter(|&&label_value| label_value == value).count())
+    }
+
+    /// Returns all points with label `name == value` in deterministic order.
+    pub fn stratum_points(&self, name: &str, value: i32) -> Vec<PointId> {
+        let mut points: Vec<_> = self.points_with_label(name, value).collect();
+        points.sort_unstable();
+        points
+    }
+
+    /// Returns all distinct values stored for label `name`, sorted ascending.
+    pub fn values(&self, name: &str) -> Vec<i32> {
+        let mut values: Vec<i32> = self
+            .labels
+            .get(name)
+            .map_or_else(Vec::new, |map| map.values().copied().collect());
+        values.sort_unstable();
+        values.dedup();
+        values
+    }
+
+    /// Removes all points with label `name == value`.
+    ///
+    /// Returns the number of removed points.
+    pub fn clear_label_value(&mut self, name: &str, value: i32) -> usize {
+        let Some(map) = self.labels.get_mut(name) else {
+            return 0;
+        };
+
+        let before = map.len();
+        map.retain(|_, label_value| *label_value != value);
+        let removed = before - map.len();
+        if map.is_empty() {
+            self.labels.remove(name);
+        }
+        removed
+    }
+
     /// Returns a new label set containing only labels on the provided points.
     pub fn filtered_to_points<I>(&self, points: I) -> Self
     where
