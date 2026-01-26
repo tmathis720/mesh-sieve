@@ -1,7 +1,9 @@
 //! Build adjacency graphs for mesh strata.
 //!
-//! Provides utilities for cell-to-cell adjacency (via shared faces/edges) and
-//! vertex-to-vertex adjacency (via shared support entities such as edges).
+//! Provides utilities for cell-to-cell adjacency (via shared vertices/edges/faces)
+//! and vertex-to-vertex adjacency (via shared support entities such as edges).
+//! The cell adjacency helpers expose both directed neighbor lists and undirected
+//! edge lists, with optional stratum-based selection.
 //!
 //! Determinism:
 //! - You can choose the ordering of input points; neighbor lists are always
@@ -42,6 +44,58 @@ pub enum AdjacencyOrdering {
     Input,
     /// Sort points ascending by `PointId`.
     Sorted,
+}
+
+/// Boundary entity kind used for cell-to-cell adjacency.
+#[derive(Clone, Copy, Debug)]
+pub enum CellAdjacencyBy {
+    /// Shared faces (depth-1 boundary).
+    Faces,
+    /// Shared edges (depth-2 boundary in 3D, depth-1 in 2D).
+    Edges,
+    /// Shared vertices (depth-`cell_dimension` boundary).
+    Vertices,
+    /// Explicit depth choice.
+    BoundaryDepth(Option<u32>),
+}
+
+impl CellAdjacencyBy {
+    /// Convert to a downward boundary depth for the given cell dimension.
+    pub fn max_down_depth(self, cell_dimension: u32) -> Option<u32> {
+        match self {
+            CellAdjacencyBy::Faces => Some(1),
+            CellAdjacencyBy::Edges => Some(std::cmp::max(1, cell_dimension.saturating_sub(1))),
+            CellAdjacencyBy::Vertices => Some(std::cmp::max(1, cell_dimension)),
+            CellAdjacencyBy::BoundaryDepth(depth) => depth,
+        }
+    }
+}
+
+/// Select a height or depth stratum when building cell adjacency.
+#[derive(Clone, Copy, Debug)]
+pub enum CellAdjacencyStratum {
+    /// Points at a specific height.
+    Height(u32),
+    /// Points at a specific depth.
+    Depth(u32),
+}
+
+/// Directed cell-to-cell adjacency lists.
+#[derive(Debug, Clone)]
+pub struct CellAdjacencyLists {
+    /// Cell ordering used for the lists.
+    pub order: Vec<PointId>,
+    /// Neighbor list per cell in `order`.
+    pub neighbors: Vec<Vec<PointId>>,
+}
+
+/// Undirected cell-to-cell adjacency edges.
+#[derive(Debug, Clone)]
+pub struct CellAdjacencyEdges {
+    /// Cell ordering used for the edge list.
+    pub order: Vec<PointId>,
+    /// Unique undirected edges `(min, max)` sorted ascending.
+    pub edges: Vec<(PointId, PointId)>,
 }
 
 /// Options for building cell-to-cell adjacency graphs.
@@ -120,6 +174,101 @@ where
     )
 }
 
+/// Build directed cell-to-cell adjacency lists for a provided cell list.
+pub fn build_cell_adjacency_lists<S>(
+    sieve: &S,
+    cells: impl IntoIterator<Item = PointId>,
+    cell_dimension: u32,
+    by: CellAdjacencyBy,
+    ordering: AdjacencyOrdering,
+) -> CellAdjacencyLists
+where
+    S: Sieve<Point = PointId>,
+{
+    let cells = order_points(cells, ordering);
+    let max_down_depth = by.max_down_depth(cell_dimension);
+    let neigh = build_shared_boundary_lists(
+        &cells,
+        |p| downward_boundary_points(sieve, p, max_down_depth),
+    );
+    CellAdjacencyLists {
+        order: cells,
+        neighbors: neigh,
+    }
+}
+
+/// Build directed cell-to-cell adjacency lists over a stratum.
+pub fn build_cell_adjacency_lists_in_stratum<S>(
+    sieve: &S,
+    stratum: CellAdjacencyStratum,
+    cell_dimension: u32,
+    by: CellAdjacencyBy,
+    ordering: AdjacencyOrdering,
+) -> Result<CellAdjacencyLists, MeshSieveError>
+where
+    S: Sieve<Point = PointId>,
+{
+    let cells = cells_from_stratum(sieve, stratum)?;
+    Ok(build_cell_adjacency_lists(
+        sieve,
+        cells,
+        cell_dimension,
+        by,
+        ordering,
+    ))
+}
+
+/// Build an undirected edge list for a provided cell list.
+pub fn build_cell_adjacency_edges<S>(
+    sieve: &S,
+    cells: impl IntoIterator<Item = PointId>,
+    cell_dimension: u32,
+    by: CellAdjacencyBy,
+    ordering: AdjacencyOrdering,
+) -> CellAdjacencyEdges
+where
+    S: Sieve<Point = PointId>,
+{
+    let lists = build_cell_adjacency_lists(sieve, cells, cell_dimension, by, ordering);
+    let mut edges = HashSet::new();
+    for (idx, neigh) in lists.neighbors.iter().enumerate() {
+        let src = lists.order[idx];
+        for &dst in neigh {
+            let (a, b) = if src < dst { (src, dst) } else { (dst, src) };
+            if a != b {
+                edges.insert((a, b));
+            }
+        }
+    }
+    let mut edges: Vec<_> = edges.into_iter().collect();
+    edges.sort_unstable();
+    CellAdjacencyEdges {
+        order: lists.order,
+        edges,
+    }
+}
+
+/// Build an undirected edge list over a stratum.
+pub fn build_cell_adjacency_edges_in_stratum<S>(
+    sieve: &S,
+    stratum: CellAdjacencyStratum,
+    cell_dimension: u32,
+    by: CellAdjacencyBy,
+    ordering: AdjacencyOrdering,
+) -> Result<CellAdjacencyEdges, MeshSieveError>
+where
+    S: Sieve<Point = PointId>,
+{
+    let cells = cells_from_stratum(sieve, stratum)?;
+    Ok(build_cell_adjacency_edges(
+        sieve,
+        cells,
+        cell_dimension,
+        by,
+        ordering,
+    ))
+}
+
 /// Build a vertex-to-vertex adjacency graph over all depth-0 vertices in the sieve.
 pub fn build_vertex_adjacency_graph<S>(
     sieve: &S,
@@ -174,6 +323,25 @@ where
         }
     }
     out
+}
+
+fn cells_from_stratum<S>(
+    sieve: &S,
+    stratum: CellAdjacencyStratum,
+) -> Result<Vec<PointId>, MeshSieveError>
+where
+    S: Sieve<Point = PointId>,
+{
+    let strata = compute_strata(sieve)?;
+    let cells = match stratum {
+        CellAdjacencyStratum::Height(k) => strata.strata.get(k as usize).cloned().unwrap_or_default(),
+        CellAdjacencyStratum::Depth(k) => strata
+            .depth
+            .iter()
+            .filter_map(|(&p, &d)| (d == k).then_some(p))
+            .collect(),
+    };
+    Ok(cells)
 }
 
 fn downward_boundary_points<S>(
@@ -321,4 +489,43 @@ fn build_shared_boundary_graph(
         adjncy,
         order: points.to_vec(),
     }
+}
+
+fn build_shared_boundary_lists(
+    points: &[PointId],
+    boundary: impl Fn(PointId) -> Vec<PointId>,
+) -> Vec<Vec<PointId>> {
+    let n = points.len();
+    let mut incident: HashMap<PointId, Vec<usize>> = HashMap::new();
+    incident.reserve(n * 4);
+    for (i, &p) in points.iter().enumerate() {
+        for b in boundary(p) {
+            incident.entry(b).or_default().push(i);
+        }
+    }
+
+    let mut neigh: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for (_b, mut cells_on_b) in incident {
+        if cells_on_b.len() < 2 {
+            continue;
+        }
+        cells_on_b.sort_unstable();
+        cells_on_b.dedup();
+        for i in 0..cells_on_b.len() {
+            let ci = cells_on_b[i];
+            for &cj in &cells_on_b[(i + 1)..] {
+                neigh[ci].push(cj);
+                neigh[cj].push(ci);
+            }
+        }
+    }
+
+    let mut out: Vec<Vec<PointId>> = vec![Vec::new(); n];
+    for (i, list) in neigh.into_iter().enumerate() {
+        let mut list = list;
+        list.sort_unstable();
+        list.dedup();
+        out[i] = list.into_iter().filter_map(|idx| points.get(idx).copied()).collect();
+    }
+    out
 }
