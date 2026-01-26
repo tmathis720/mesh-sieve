@@ -57,6 +57,7 @@ pub mod geometry;
 pub mod forest;
 pub mod io;
 pub mod mesh_error;
+pub mod mesh_graph;
 pub mod overlap;
 #[cfg(feature = "mpi-support")]
 pub mod partitioning;
