@@ -139,6 +139,7 @@ pub struct TraversalBuilder<'a, S: Sieve> {
     dir: Dir,
     strat: Strategy,
     max_depth: Option<u32>,
+    deterministic: bool,
     /// If returns true on a discovered point, traversal stops early.
     early_stop: Option<&'a dyn Fn(S::Point) -> bool>,
 }
@@ -154,6 +155,7 @@ where
             dir: Dir::Down,
             strat: Strategy::DFS,
             max_depth: None,
+            deterministic: true,
             early_stop: None,
         }
     }
@@ -177,6 +179,10 @@ where
         self.max_depth = d;
         self
     }
+    pub fn deterministic(mut self, deterministic: bool) -> Self {
+        self.deterministic = deterministic;
+        self
+    }
     pub fn early_stop(mut self, f: &'a dyn Fn(S::Point) -> bool) -> Self {
         self.early_stop = Some(f);
         self
@@ -198,7 +204,7 @@ where
             dir: map_dir(self.dir),
             strat: CoreStrategy::DFS,
             max_depth: self.max_depth,
-            deterministic: true,
+            deterministic: self.deterministic,
             early_stop: self.early_stop,
         };
         core::traverse(&SieveNeigh { sieve: self.sieve }, self.seeds, opts)
@@ -209,7 +215,7 @@ where
             dir: map_dir(self.dir),
             strat: CoreStrategy::BFS,
             max_depth: self.max_depth,
-            deterministic: true,
+            deterministic: self.deterministic,
             early_stop: self.early_stop,
         };
         core::traverse(&SieveNeigh { sieve: self.sieve }, self.seeds, opts)
@@ -415,12 +421,12 @@ where
 ///
 /// - **Depth semantics:** depth 0 are sinks (e.g., vertices). Increasing depth
 ///   moves upward in the topology.
-/// - **Ordering:** select [`TraversalOrder::Sorted`] or [`TraversalOrder::Chart`].
+/// - **Ordering:** pass `Some([TraversalOrder::Sorted])` or `Some([TraversalOrder::Chart])`.
 pub fn closure_to_depth<I, S>(
     sieve: &S,
     seeds: I,
     max_depth: u32,
-    order: TraversalOrder,
+    order: Option<TraversalOrder>,
 ) -> Result<Vec<Point>, MeshSieveError>
 where
     S: Sieve<Point = Point>,
@@ -428,13 +434,15 @@ where
 {
     let seeds_vec: Vec<Point> = seeds.into_iter().collect();
     let strata = compute_strata(sieve)?;
+    let deterministic = matches!(order, Some(TraversalOrder::Sorted));
     let mut out = TraversalBuilder::new(sieve)
         .dir(Dir::Down)
         .dfs()
         .seeds(seeds_vec)
+        .deterministic(deterministic)
         .run();
     out.retain(|p| strata.depth.get(p).copied().is_some_and(|d| d <= max_depth));
-    if matches!(order, TraversalOrder::Chart) {
+    if matches!(order, Some(TraversalOrder::Chart)) {
         out.sort_by_key(|p| strata.chart_index.get(p).copied().unwrap_or(usize::MAX));
     }
     Ok(out)
@@ -444,12 +452,12 @@ where
 ///
 /// - **Height semantics:** height 0 are sources (e.g., top cells). Increasing height
 ///   moves downward in the topology.
-/// - **Ordering:** select [`TraversalOrder::Sorted`] or [`TraversalOrder::Chart`].
+/// - **Ordering:** pass `Some([TraversalOrder::Sorted])` or `Some([TraversalOrder::Chart])`.
 pub fn closure_to_height<I, S>(
     sieve: &S,
     seeds: I,
     max_height: u32,
-    order: TraversalOrder,
+    order: Option<TraversalOrder>,
 ) -> Result<Vec<Point>, MeshSieveError>
 where
     S: Sieve<Point = Point>,
@@ -457,13 +465,93 @@ where
 {
     let seeds_vec: Vec<Point> = seeds.into_iter().collect();
     let strata = compute_strata(sieve)?;
+    let deterministic = matches!(order, Some(TraversalOrder::Sorted));
     let mut out = TraversalBuilder::new(sieve)
         .dir(Dir::Down)
         .dfs()
         .seeds(seeds_vec)
+        .deterministic(deterministic)
         .run();
     out.retain(|p| strata.height.get(p).copied().is_some_and(|h| h <= max_height));
-    if matches!(order, TraversalOrder::Chart) {
+    if matches!(order, Some(TraversalOrder::Chart)) {
+        out.sort_by_key(|p| strata.chart_index.get(p).copied().unwrap_or(usize::MAX));
+    }
+    Ok(out)
+}
+
+/// Distributed closure filtered by depth strata (distance to sinks).
+///
+/// - **Depth semantics:** depth 0 are sinks (e.g., vertices). Increasing depth
+///   moves upward in the topology.
+/// - **Ordering:** pass `Some([TraversalOrder::Sorted])` or `Some([TraversalOrder::Chart])`.
+pub fn closure_completed_to_depth<S, C, I>(
+    sieve: &mut S,
+    seeds: I,
+    overlap: &Overlap,
+    comm: &C,
+    my_rank: usize,
+    policy: CompletionPolicy,
+    max_depth: u32,
+    order: Option<TraversalOrder>,
+) -> Result<Vec<Point>, MeshSieveError>
+where
+    S: Sieve<Point = Point> + InvalidateCache,
+    S::Payload: Default + Clone,
+    I: IntoIterator<Item = Point>,
+    C: crate::algs::communicator::Communicator + Sync,
+{
+    let deterministic = matches!(order, Some(TraversalOrder::Sorted));
+    let mut out = closure_completed_with(
+        sieve,
+        seeds,
+        overlap,
+        comm,
+        my_rank,
+        policy,
+        deterministic,
+    );
+    let strata = compute_strata(sieve)?;
+    out.retain(|p| strata.depth.get(p).copied().is_some_and(|d| d <= max_depth));
+    if matches!(order, Some(TraversalOrder::Chart)) {
+        out.sort_by_key(|p| strata.chart_index.get(p).copied().unwrap_or(usize::MAX));
+    }
+    Ok(out)
+}
+
+/// Distributed closure filtered by height strata (distance from sources).
+///
+/// - **Height semantics:** height 0 are sources (e.g., top cells). Increasing height
+///   moves downward in the topology.
+/// - **Ordering:** pass `Some([TraversalOrder::Sorted])` or `Some([TraversalOrder::Chart])`.
+pub fn closure_completed_to_height<S, C, I>(
+    sieve: &mut S,
+    seeds: I,
+    overlap: &Overlap,
+    comm: &C,
+    my_rank: usize,
+    policy: CompletionPolicy,
+    max_height: u32,
+    order: Option<TraversalOrder>,
+) -> Result<Vec<Point>, MeshSieveError>
+where
+    S: Sieve<Point = Point> + InvalidateCache,
+    S::Payload: Default + Clone,
+    I: IntoIterator<Item = Point>,
+    C: crate::algs::communicator::Communicator + Sync,
+{
+    let deterministic = matches!(order, Some(TraversalOrder::Sorted));
+    let mut out = closure_completed_with(
+        sieve,
+        seeds,
+        overlap,
+        comm,
+        my_rank,
+        policy,
+        deterministic,
+    );
+    let strata = compute_strata(sieve)?;
+    out.retain(|p| strata.height.get(p).copied().is_some_and(|h| h <= max_height));
+    if matches!(order, Some(TraversalOrder::Chart)) {
         out.sort_by_key(|p| strata.chart_index.get(p).copied().unwrap_or(usize::MAX));
     }
     Ok(out)
@@ -668,6 +756,33 @@ where
     I: IntoIterator<Item = Point>,
     C: crate::algs::communicator::Communicator + Sync,
 {
+    closure_completed_with(
+        sieve,
+        seeds,
+        overlap,
+        comm,
+        my_rank,
+        policy,
+        true,
+    )
+}
+
+/// Completed transitive closure on a partitioned mesh with ordering control.
+pub fn closure_completed_with<S, C, I>(
+    sieve: &mut S,
+    seeds: I,
+    overlap: &Overlap,
+    comm: &C,
+    my_rank: usize,
+    policy: CompletionPolicy,
+    deterministic: bool,
+) -> Vec<Point>
+where
+    S: Sieve<Point = Point> + InvalidateCache,
+    S::Payload: Default + Clone,
+    I: IntoIterator<Item = Point>,
+    C: crate::algs::communicator::Communicator + Sync,
+{
     use crate::algs::completion::closure_fetch::{ReqKind, fetch_adjacency};
 
     const TAG: u16 = 0xA100;
@@ -753,7 +868,12 @@ where
         fuse(sieve, &adj);
     }
 
-    closure_local(sieve, seen)
+    TraversalBuilder::new(sieve)
+        .dir(Dir::Down)
+        .dfs()
+        .seeds(seen)
+        .deterministic(deterministic)
+        .run()
 }
 
 // --- ordered traversals using strata chart ---
