@@ -6,6 +6,7 @@ use mesh_sieve::mesh_graph::{
     vertex_adjacency_graph_with_vertices,
 };
 use mesh_sieve::topology::point::PointId;
+use mesh_sieve::topology::Sieve;
 use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
 
 fn v(id: u64) -> PointId {
