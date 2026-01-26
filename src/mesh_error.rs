@@ -239,6 +239,32 @@ pub enum MeshSieveError {
     /// Parse error while reading mesh formats.
     #[error("Mesh I/O parse error: {0}")]
     MeshIoParse(String),
+    /// Duplicate arrow detected in topology.
+    #[error("Topology error: duplicate arrow {src:?} -> {dst:?}")]
+    DuplicateArrow {
+        src: crate::topology::point::PointId,
+        dst: crate::topology::point::PointId,
+    },
+    /// Cell cone size did not match the expected number of vertices.
+    #[error(
+        "Topology error: cell {cell:?} of type {cell_type:?} expects cone size {expected}, found {found}"
+    )]
+    ConeSizeMismatch {
+        cell: crate::topology::point::PointId,
+        cell_type: crate::topology::cell_type::CellType,
+        expected: usize,
+        found: usize,
+    },
+    /// Closure vertex count did not match the expected number of vertices.
+    #[error(
+        "Topology error: cell {cell:?} of type {cell_type:?} expects {expected} vertices in closure, found {found}"
+    )]
+    ClosureVertexCountMismatch {
+        cell: crate::topology::point::PointId,
+        cell_type: crate::topology::cell_type::CellType,
+        expected: usize,
+        found: usize,
+    },
     #[error("Overlap: payload.rank {found} != Part({expected})")]
     OverlapRankMismatch { expected: usize, found: usize },
     /// Periodic mapping for a slave point conflicted with existing entry.
@@ -303,6 +329,38 @@ impl PartialEq for MeshSieveError {
             | (PartitionPointOverflow, PartitionPointOverflow)
             | (GpuMappingFailed, GpuMappingFailed) => true,
             (InvalidGeometry(a), InvalidGeometry(b)) => a == b,
+            (
+                DuplicateArrow { src: s1, dst: d1 },
+                DuplicateArrow { src: s2, dst: d2 },
+            ) => s1 == s2 && d1 == d2,
+            (
+                ConeSizeMismatch {
+                    cell: c1,
+                    cell_type: t1,
+                    expected: e1,
+                    found: f1,
+                },
+                ConeSizeMismatch {
+                    cell: c2,
+                    cell_type: t2,
+                    expected: e2,
+                    found: f2,
+                },
+            ) => c1 == c2 && t1 == t2 && e1 == e2 && f1 == f2,
+            (
+                ClosureVertexCountMismatch {
+                    cell: c1,
+                    cell_type: t1,
+                    expected: e1,
+                    found: f1,
+                },
+                ClosureVertexCountMismatch {
+                    cell: c2,
+                    cell_type: t2,
+                    expected: e2,
+                    found: f2,
+                },
+            ) => c1 == c2 && t1 == t2 && e1 == e2 && f1 == f2,
             (UnsupportedStackOperation(a), UnsupportedStackOperation(b)) => a == b,
             (MissingPointInCone(a), MissingPointInCone(b)) => a == b,
             (UnknownPoint(a), UnknownPoint(b)) => a == b,

@@ -27,6 +27,7 @@ use crate::topology::cell_type::CellType;
 use crate::topology::labels::LabelSet;
 use crate::topology::point::PointId;
 use crate::topology::sieve::{InMemorySieve, MutableSieve, Sieve};
+use crate::topology::validation::{TopologyValidationOptions, validate_sieve_topology};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{Read, Write};
 use std::str::FromStr;
@@ -48,6 +49,8 @@ struct ElementRecord {
 pub struct GmshReadOptions {
     /// When enabled, validate cell geometry and reject inverted or degenerate elements.
     pub check_geometry: bool,
+    /// When enabled, validate topology (cone sizes, duplicate arrows, closure consistency).
+    pub validate_topology: bool,
 }
 
 impl GmshReader {
@@ -604,12 +607,25 @@ impl GmshReader {
         }
 
         let mut sieve = InMemorySieve::default();
+        let mut seen_arrows = if options.validate_topology {
+            Some(HashSet::new())
+        } else {
+            None
+        };
         for node in &vertex_nodes {
             MutableSieve::add_point(&mut sieve, *node);
         }
         for element in &elements {
             MutableSieve::add_point(&mut sieve, element.id);
             for node in &element.conn {
+                if let Some(ref mut seen) = seen_arrows {
+                    if !seen.insert((element.id, *node)) {
+                        return Err(MeshSieveError::DuplicateArrow {
+                            src: element.id,
+                            dst: *node,
+                        });
+                    }
+                }
                 Sieve::add_arrow(&mut sieve, element.id, *node, ());
             }
         }
@@ -676,6 +692,10 @@ impl GmshReader {
         let mut cell_types = Section::<CellType, VecStorage<CellType>>::new(cell_atlas);
         for element in &elements {
             cell_types.try_set(element.id, &[element.cell_type])?;
+        }
+
+        if options.validate_topology {
+            validate_sieve_topology(&sieve, &cell_types, TopologyValidationOptions::all())?;
         }
 
         let mut labels = LabelSet::new();

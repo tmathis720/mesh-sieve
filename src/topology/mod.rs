@@ -30,6 +30,7 @@ pub mod refine;
 pub mod sieve;
 pub mod stack;
 pub mod utils;
+pub mod validation;
 
 pub use cache::InvalidateCache;
 pub use cell_type::CellType;
@@ -37,6 +38,7 @@ pub use labels::LabelSet;
 pub use orientation::*;
 pub use ownership::{OwnershipEntry, PointOwnership};
 pub use sieve::*;
+pub use validation::{TopologyValidationOptions, validate_sieve_topology};
 
 #[cfg(test)]
 mod tests;

@@ -9,7 +9,9 @@ use crate::topology::cell_type::CellType;
 use crate::topology::labels::LabelSet;
 use crate::topology::point::PointId;
 use crate::topology::sieve::{InMemorySieve, MutableSieve, Sieve};
+use crate::topology::validation::{TopologyValidationOptions, validate_sieve_topology};
 use crate::data::atlas::Atlas;
+use std::collections::HashSet;
 use std::io::{Read, Write};
 
 /// Simple Exodus ASCII reader.
@@ -19,6 +21,13 @@ pub struct ExodusReader;
 /// Simple Exodus ASCII writer.
 #[derive(Debug, Default, Clone)]
 pub struct ExodusWriter;
+
+/// Optional settings for Exodus import.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ExodusReadOptions {
+    /// When enabled, validate topology (cone sizes, duplicate arrows, closure consistency).
+    pub validate_topology: bool,
+}
 
 fn cell_type_to_token(cell_type: CellType) -> String {
     match cell_type {
@@ -75,8 +84,20 @@ impl SieveSectionReader for ExodusReader {
 
     fn read<R: Read>(
         &self,
-        mut reader: R,
+        reader: R,
     ) -> Result<MeshData<Self::Sieve, Self::Value, Self::Storage, Self::CellStorage>, MeshSieveError>
+    {
+        self.read_with_options(reader, ExodusReadOptions::default())
+    }
+}
+
+impl ExodusReader {
+    /// Read mesh data with explicit import options.
+    pub fn read_with_options<R: Read>(
+        &self,
+        mut reader: R,
+        options: ExodusReadOptions,
+    ) -> Result<MeshData<InMemorySieve<PointId, ()>, f64, VecStorage<f64>, VecStorage<CellType>>, MeshSieveError>
     {
         let mut contents = String::new();
         reader.read_to_string(&mut contents)?;
@@ -172,6 +193,11 @@ impl SieveSectionReader for ExodusReader {
             .map_err(|_| MeshSieveError::MeshIoParse("invalid element count".into()))?;
 
         let mut sieve = InMemorySieve::default();
+        let mut seen_arrows = if options.validate_topology {
+            Some(HashSet::new())
+        } else {
+            None
+        };
         for node in &nodes {
             MutableSieve::add_point(&mut sieve, *node);
         }
@@ -217,6 +243,11 @@ impl SieveSectionReader for ExodusReader {
 
             MutableSieve::add_point(&mut sieve, point);
             for node in conn {
+                if let Some(ref mut seen) = seen_arrows {
+                    if !seen.insert((point, node)) {
+                        return Err(MeshSieveError::DuplicateArrow { src: point, dst: node });
+                    }
+                }
                 Sieve::add_arrow(&mut sieve, point, node, ());
             }
             cell_types.try_add_point(point, 1)?;
@@ -256,6 +287,10 @@ impl SieveSectionReader for ExodusReader {
                     has_labels = true;
                 }
             }
+        }
+
+        if options.validate_topology {
+            validate_sieve_topology(&sieve, &cell_types, TopologyValidationOptions::all())?;
         }
 
         let mut coords = Coordinates::try_new(coord_dim, atlas)?;
