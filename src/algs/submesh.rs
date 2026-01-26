@@ -1,5 +1,6 @@
 //! Submesh extraction utilities.
 
+use crate::algs::traversal::{Dir, TraversalBuilder};
 use crate::data::atlas::Atlas;
 use crate::data::coordinates::{Coordinates, HighOrderCoordinates};
 use crate::data::mixed_section::{MixedSectionStore, TaggedSection};
@@ -10,6 +11,7 @@ use crate::mesh_error::MeshSieveError;
 use crate::topology::cell_type::CellType;
 use crate::topology::labels::LabelSet;
 use crate::topology::point::PointId;
+use crate::topology::sieve::strata::{StratumAxis, compute_strata};
 use crate::topology::sieve::{InMemorySieve, MutableSieve, Sieve};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -18,6 +20,23 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 pub struct SubmeshMaps {
     pub parent_to_sub: HashMap<PointId, PointId>,
     pub sub_to_parent: Vec<PointId>,
+}
+
+/// Selection policy for submesh extraction.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum SubmeshSelection {
+    /// Full transitive closure from the labeled points.
+    FullClosure,
+    /// Limit the closure to a traversal depth from the labeled points.
+    ClosureDepth(u32),
+    /// Filter to a target stratum, then include its full downward closure.
+    TargetStratum { axis: StratumAxis, index: u32 },
+}
+
+impl Default for SubmeshSelection {
+    fn default() -> Self {
+        Self::FullClosure
+    }
 }
 
 /// Extract a submesh from labeled points and their closure.
@@ -29,6 +48,7 @@ pub fn extract_by_label<S, V, St, CtSt>(
     labels: &LabelSet,
     label_name: &str,
     label_value: i32,
+    selection: SubmeshSelection,
 ) -> Result<
     (
         MeshData<InMemorySieve<PointId, S::Payload>, V, St, CtSt>,
@@ -44,8 +64,9 @@ where
     CtSt: Storage<CellType> + Clone,
 {
     let seeds: Vec<PointId> = labels.points_with_label(label_name, label_value).collect();
+    let selected = select_points(&mesh.sieve, seeds, selection)?;
     let mut points: HashSet<PointId> = HashSet::new();
-    for p in mesh.sieve.closure_iter(seeds) {
+    for p in selected {
         points.insert(p);
     }
 
@@ -122,6 +143,34 @@ where
             sub_to_parent,
         },
     ))
+}
+
+fn select_points<S: Sieve<Point = PointId>>(
+    sieve: &S,
+    seeds: Vec<PointId>,
+    selection: SubmeshSelection,
+) -> Result<Vec<PointId>, MeshSieveError> {
+    Ok(match selection {
+        SubmeshSelection::FullClosure => sieve.closure_iter(seeds).collect(),
+        SubmeshSelection::ClosureDepth(depth) => TraversalBuilder::new(sieve)
+            .seeds(seeds)
+            .dir(Dir::Down)
+            .max_depth(Some(depth))
+            .run(),
+        SubmeshSelection::TargetStratum { axis, index } => {
+            let closure: Vec<PointId> = sieve.closure_iter(seeds).collect();
+            let strata = compute_strata(sieve)?;
+            let stratum_map = match axis {
+                StratumAxis::Height => &strata.height,
+                StratumAxis::Depth => &strata.depth,
+            };
+            let target: Vec<PointId> = closure
+                .into_iter()
+                .filter(|p| stratum_map.get(p).copied() == Some(index))
+                .collect();
+            sieve.closure_iter(target).collect()
+        }
+    })
 }
 
 fn transfer_section<V, S>(
