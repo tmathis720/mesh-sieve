@@ -141,6 +141,18 @@ where
         if !Self::copy_requires_alignment() {
             return self.copy_via_staging(src_off, dst_off, len);
         }
+        let (src_b, size_b) = Self::to_bytes(src_off, len);
+        if size_b == 0 {
+            return Ok(());
+        }
+        let temp = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("WgpuStorage::reverse_temp"),
+            size: size_b,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let shader = self
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -172,7 +184,7 @@ where
         let params = Params {
             elem_words,
             elem_count: len as u32,
-            src_off_words: (src_off * Self::elem_size() / 4) as u32,
+            src_off_words: 0,
             dst_off_words: (dst_off * Self::elem_size() / 4) as u32,
         };
         let ubuf = self
@@ -189,7 +201,7 @@ where
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.buffer.as_entire_binding(),
+                    resource: temp.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -206,6 +218,7 @@ where
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("WgpuStorage::reverse_via_compute"),
             });
+        enc.copy_buffer_to_buffer(&self.buffer, src_b, &temp, 0, size_b);
         {
             let mut cpass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("reverse_copy_pass"),

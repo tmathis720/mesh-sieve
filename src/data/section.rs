@@ -748,7 +748,10 @@ where
 mod sealed {
     pub trait Sealed {}
     impl<V, S: crate::data::storage::Storage<V>> Sealed for super::Section<V, S> {}
-    impl<'a, V> Sealed for crate::data::refine::helpers::ReadOnlyMap<'a, V> {}
+    impl<'a, V, S: crate::data::storage::Storage<V>>
+        Sealed for crate::data::refine::helpers::ReadOnlyMap<'a, V, S>
+    {
+    }
 }
 
 /// Infallible adapter for read/write access; intended for legacy code.

@@ -14,9 +14,6 @@
 
 use crate::mesh_error::MeshSieveError;
 use std::{convert::TryFrom, fmt, num::NonZeroU64};
-
-#[cfg(all(feature = "mpi-support", feature = "mpi-derive"))]
-use mpi::traits::Equivalence;
 ///
 /// # PETSc SF semantics
 /// In the context of parallel mesh distribution (see Knepley & Karpeev 2009),
@@ -28,10 +25,6 @@ use mpi::traits::Equivalence;
 /// exactly like a `u64`.
 #[derive(
     Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
-)]
-#[cfg_attr(
-    all(feature = "mpi-support", feature = "mpi-derive"),
-    derive(Equivalence)
 )]
 #[repr(transparent)]
 pub struct PointId(NonZeroU64);
@@ -170,7 +163,7 @@ impl fmt::Display for PointId {
 ///
 /// We declare that `PointId` has the same MPI datatype as `u64`, ensuring
 /// zero-cost, layout-safe interop.
-#[cfg(all(feature = "mpi-support", not(feature = "mpi-derive")))]
+#[cfg(feature = "mpi-support")]
 unsafe impl mpi::datatype::Equivalence for PointId {
     type Out = <u64 as mpi::datatype::Equivalence>::Out;
 
