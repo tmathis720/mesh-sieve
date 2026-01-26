@@ -1,12 +1,14 @@
-use mesh_sieve::algs::submesh::extract_by_label;
-use mesh_sieve::io::gmsh::GmshReader;
+use mesh_sieve::algs::submesh::{SubmeshSelection, extract_by_label};
 use mesh_sieve::io::SieveSectionReader;
+use mesh_sieve::io::gmsh::GmshReader;
 use mesh_sieve::topology::cell_type::CellType;
 use mesh_sieve::topology::point::PointId;
 use mesh_sieve::topology::sieve::Sieve;
 use std::io::Cursor;
 
-fn read_gmsh(contents: &str) -> mesh_sieve::io::MeshData<
+fn read_gmsh(
+    contents: &str,
+) -> mesh_sieve::io::MeshData<
     mesh_sieve::topology::sieve::InMemorySieve<PointId, ()>,
     f64,
     mesh_sieve::data::storage::VecStorage<f64>,
@@ -40,7 +42,14 @@ fn extract_boundary_submesh_single_label() {
     let mesh = read_gmsh(gmsh_triangle_mesh());
     let labels = mesh.labels.as_ref().unwrap();
 
-    let (submesh, maps) = extract_by_label(&mesh, labels, "gmsh:physical", 10).unwrap();
+    let (submesh, maps) = extract_by_label(
+        &mesh,
+        labels,
+        "gmsh:physical",
+        10,
+        SubmeshSelection::FullClosure,
+    )
+    .unwrap();
     let points: Vec<_> = submesh.sieve.points().collect();
     assert_eq!(points.len(), 3);
 
@@ -50,10 +59,7 @@ fn extract_boundary_submesh_single_label() {
     assert_eq!(cone.len(), 2);
 
     let labels_out = submesh.labels.as_ref().unwrap();
-    assert_eq!(
-        labels_out.get_label(sub_line, "gmsh:physical"),
-        Some(10)
-    );
+    assert_eq!(labels_out.get_label(sub_line, "gmsh:physical"), Some(10));
 
     let coords = submesh.coordinates.as_ref().unwrap();
     for parent_node in [1u64, 2u64] {
@@ -74,7 +80,14 @@ fn extract_boundary_submesh_multiple_lines() {
     let mesh = read_gmsh(gmsh_triangle_mesh());
     let labels = mesh.labels.as_ref().unwrap();
 
-    let (submesh, maps) = extract_by_label(&mesh, labels, "gmsh:physical", 20).unwrap();
+    let (submesh, maps) = extract_by_label(
+        &mesh,
+        labels,
+        "gmsh:physical",
+        20,
+        SubmeshSelection::FullClosure,
+    )
+    .unwrap();
     let points: Vec<_> = submesh.sieve.points().collect();
     assert_eq!(points.len(), 5);
 
@@ -83,6 +96,38 @@ fn extract_boundary_submesh_multiple_lines() {
         let sub_line = maps.parent_to_sub[&parent_line];
         let cone: Vec<_> = submesh.sieve.cone_points(sub_line).collect();
         assert_eq!(cone.len(), 2);
+        assert_eq!(
+            submesh
+                .labels
+                .as_ref()
+                .unwrap()
+                .get_label(sub_line, "gmsh:physical"),
+            Some(20)
+        );
+    }
+}
+
+#[test]
+fn extract_boundary_faces_depth_limited() {
+    let mesh = read_gmsh(gmsh_triangle_mesh());
+    let labels = mesh.labels.as_ref().unwrap();
+
+    let (submesh, maps) = extract_by_label(
+        &mesh,
+        labels,
+        "gmsh:physical",
+        20,
+        SubmeshSelection::ClosureDepth(0),
+    )
+    .unwrap();
+    let points: Vec<_> = submesh.sieve.points().collect();
+    assert_eq!(points.len(), 2);
+
+    for parent_line in [11u64, 12u64] {
+        let parent_line = PointId::new(parent_line).unwrap();
+        let sub_line = maps.parent_to_sub[&parent_line];
+        let cone: Vec<_> = submesh.sieve.cone_points(sub_line).collect();
+        assert!(cone.is_empty());
         assert_eq!(
             submesh
                 .labels
