@@ -4,6 +4,18 @@ use crate::topology::bounds::PointLike;
 use crate::topology::sieve::Sieve;
 use std::collections::{HashMap, VecDeque};
 
+/// Returns the topological dimension of a sieve, derived from its strata.
+///
+/// This is computed as the diameter (maximum height) of the DAG defined by the
+/// sieve's arrows. For a fully stratified mesh, this corresponds to the usual
+/// topological dimension (0D vertices, 1D edges, 2D faces, 3D cells).
+pub fn dimension<S>(s: &mut S) -> Result<u32, MeshSieveError>
+where
+    S: Sieve,
+{
+    s.diameter()
+}
+
 /// Generic DAG check for any `S: Sieve`.
 ///
 /// Uses Kahn's algorithm. Returns:
