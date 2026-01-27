@@ -242,7 +242,7 @@ use mesh_sieve::overlap::delta::ValueDelta as OverlapDelta;
 
 ### 5.5 Geometry helpers (`Coordinates`, `HighOrderCoordinates`)
 
-`Coordinates` wraps a `Section` with a fixed spatial dimension per point.
+`Coordinates` wraps a `Section` with fixed topological and embedding dimensions per point.
 Optional `HighOrderCoordinates` can be attached for per-entity geometry DOFs
 (for example, curved elements).
 
@@ -255,12 +255,21 @@ use mesh_sieve::topology::point::PointId;
 let mut atlas = Atlas::default();
 let p = PointId::new(1)?;
 atlas.try_insert(p, 3)?;
-let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(3, atlas)?;
+let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(3, 3, atlas)?;
 
 let mut ho_atlas = Atlas::default();
 ho_atlas.try_insert(p, 9)?; // multiple of dimension
 let high_order = HighOrderCoordinates::<f64, VecStorage<f64>>::try_new(3, ho_atlas)?;
 coords.set_high_order(high_order)?;
+
+// 2D surface embedded in 3D coordinates.
+let mut surface_atlas = Atlas::default();
+surface_atlas.try_insert(p, 3)?;
+let mut surface_coords =
+    Coordinates::<f64, VecStorage<f64>>::try_new(2, 3, surface_atlas)?;
+surface_coords
+    .try_restrict_mut(p)?
+    .copy_from_slice(&[0.0, 0.5, 1.0]);
 ```
 
 ---
@@ -393,7 +402,7 @@ use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::storage::VecStorage;
 
 let atlas = Atlas::default();
-let coords = Coordinates::<f64, VecStorage<f64>>::try_new(3, atlas)?;
+let coords = Coordinates::<f64, VecStorage<f64>>::try_new(3, 3, atlas)?;
 let dm = CoordinateDM::new(coords);
 ```
 

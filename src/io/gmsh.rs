@@ -681,7 +681,7 @@ impl GmshReader {
         for node in &vertex_nodes {
             atlas.try_insert(*node, coord_dimension)?;
         }
-        let mut coords = Coordinates::try_new(coord_dimension, atlas)?;
+        let mut coords = Coordinates::try_new(mesh_dimension, coord_dimension, atlas)?;
         for node in &vertex_nodes {
             if let Some(xyz) = node_lookup.get(node) {
                 coords

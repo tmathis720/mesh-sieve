@@ -26,7 +26,7 @@ fn build_coordinates(
     for point in points {
         atlas.try_insert(*point, 2)?;
     }
-    let mut coords = Coordinates::try_new(2, atlas)?;
+    let mut coords = Coordinates::try_new(2, 2, atlas)?;
     for &(point, value) in values {
         coords.section_mut().try_set(point, &value)?;
     }

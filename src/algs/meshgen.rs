@@ -90,7 +90,8 @@ fn build_mesh(
     for &p in &vertex_points {
         coord_atlas.try_insert(p, dimension)?;
     }
-    let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(dimension, coord_atlas)?;
+    let mut coords =
+        Coordinates::<f64, VecStorage<f64>>::try_new(dimension, dimension, coord_atlas)?;
     for (p, coord) in vertex_points.iter().zip(vertex_coords.iter()) {
         coords.section_mut().try_set(*p, coord)?;
     }

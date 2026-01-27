@@ -1,10 +1,10 @@
 //! Cell quality utilities based on coordinate sections.
 //!
 //! # Coordinate layout
-//! Coordinate sections store a slice per point with a fixed dimension. Quality
-//! checks accept dimensions **2** or **3** and interpret the slice as `(x, y)`
-//! or `(x, y, z)` respectively. For 2D meshes embedded in 3D, project to the
-//! XY plane before evaluation.
+//! Coordinate sections store a slice per point with a fixed embedding dimension.
+//! Quality checks accept embedding dimensions **2** or **3** and interpret the
+//! slice as `(x, y)` or `(x, y, z)` respectively. For 2D meshes embedded in 3D,
+//! project to the XY plane before evaluation.
 //!
 //! # Supported cell types
 //! The quality routines support the following cell types with the vertex
@@ -37,7 +37,7 @@
 //! atlas.try_insert(v1, 2)?;
 //! atlas.try_insert(v2, 2)?;
 //!
-//! let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(2, atlas)?;
+//! let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(2, 2, atlas)?;
 //! coords.try_restrict_mut(v0)?.copy_from_slice(&[0.0, 0.0]);
 //! coords.try_restrict_mut(v1)?.copy_from_slice(&[1.0, 0.0]);
 //! coords.try_restrict_mut(v2)?.copy_from_slice(&[0.0, 1.0]);

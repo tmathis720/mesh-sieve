@@ -135,7 +135,7 @@ fn build_global_mesh(
     for vertex in [v1, v2, v3, v4] {
         coord_atlas.try_insert(vertex, 2)?;
     }
-    let mut coords = Coordinates::try_new(2, coord_atlas)?;
+    let mut coords = Coordinates::try_new(2, 2, coord_atlas)?;
     coords.section_mut().try_set(v1, &[0.0, 0.0])?;
     coords.section_mut().try_set(v2, &[1.0, 0.0])?;
     coords.section_mut().try_set(v3, &[0.0, 1.0])?;

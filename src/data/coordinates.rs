@@ -1,6 +1,7 @@
 //! Geometry/coordinates storage for mesh points.
 //!
-//! Coordinates are stored in a `Section` with a fixed dimension per point. Optional
+//! Coordinates are stored in a `Section` with fixed topological and embedding
+//! dimensions per point. Optional
 //! higher-order geometry data can be stored per entity (typically per-cell).
 
 use crate::data::atlas::Atlas;
@@ -132,10 +133,11 @@ where
     }
 }
 
-/// Coordinate storage with an attached dimension.
+/// Coordinate storage with an attached topological and embedding dimension.
 #[derive(Clone, Debug)]
 pub struct Coordinates<V, S: Storage<V>> {
-    dimension: usize,
+    topological_dimension: usize,
+    embedding_dimension: usize,
     section: Section<V, S>,
     high_order: Option<HighOrderCoordinates<V, S>>,
 }
@@ -144,10 +146,22 @@ impl<V, S> Coordinates<V, S>
 where
     S: Storage<V>,
 {
-    /// Returns the spatial dimension per point.
+    /// Returns the embedding dimension per point.
     #[inline]
     pub fn dimension(&self) -> usize {
-        self.dimension
+        self.embedding_dimension
+    }
+
+    /// Returns the topological dimension of the mesh.
+    #[inline]
+    pub fn topological_dimension(&self) -> usize {
+        self.topological_dimension
+    }
+
+    /// Returns the embedding dimension per point.
+    #[inline]
+    pub fn embedding_dimension(&self) -> usize {
+        self.embedding_dimension
     }
 
     /// Returns a read-only reference to the underlying section.
@@ -179,10 +193,10 @@ where
         &mut self,
         high_order: HighOrderCoordinates<V, S>,
     ) -> Result<(), MeshSieveError> {
-        if high_order.dimension != self.dimension {
+        if high_order.dimension != self.embedding_dimension {
             return Err(MeshSieveError::InvalidGeometry(format!(
                 "higher-order coordinate dimension {} does not match base dimension {}",
-                high_order.dimension, self.dimension
+                high_order.dimension, self.embedding_dimension
             )));
         }
         self.high_order = Some(high_order);
@@ -221,7 +235,7 @@ where
     where
         St: Storage<f64>,
     {
-        let dim = self.dimension;
+        let dim = self.embedding_dimension;
         let points: Vec<PointId> = self.section.atlas().points().collect();
         for point in points {
             let vel = velocity.try_restrict(point)?;
@@ -253,23 +267,38 @@ where
     V: Clone + Default,
     S: Storage<V> + Clone,
 {
-    /// Construct a new coordinates section with a fixed dimension.
+    /// Construct a new coordinates section with fixed topological and embedding dimensions.
     ///
-    /// The provided `atlas` must store slices of length `dimension` for all points.
-    pub fn try_new(dimension: usize, atlas: Atlas) -> Result<Self, MeshSieveError> {
-        validate_dimension(dimension, &atlas)?;
+    /// The provided `atlas` must store slices of length `embedding_dimension`
+    /// for all points.
+    pub fn try_new(
+        topological_dimension: usize,
+        embedding_dimension: usize,
+        atlas: Atlas,
+    ) -> Result<Self, MeshSieveError> {
+        validate_coordinate_dimensions(topological_dimension, embedding_dimension, &atlas)?;
         Ok(Self {
-            dimension,
+            topological_dimension,
+            embedding_dimension,
             section: Section::new(atlas),
             high_order: None,
         })
     }
 
     /// Wrap an existing section as coordinates, validating slice lengths.
-    pub fn from_section(dimension: usize, section: Section<V, S>) -> Result<Self, MeshSieveError> {
-        validate_dimension(dimension, section.atlas())?;
+    pub fn from_section(
+        topological_dimension: usize,
+        embedding_dimension: usize,
+        section: Section<V, S>,
+    ) -> Result<Self, MeshSieveError> {
+        validate_coordinate_dimensions(
+            topological_dimension,
+            embedding_dimension,
+            section.atlas(),
+        )?;
         Ok(Self {
-            dimension,
+            topological_dimension,
+            embedding_dimension,
             section,
             high_order: None,
         })
@@ -277,8 +306,33 @@ where
 
     /// Adds a new point with the configured coordinate dimension.
     pub fn try_add_point(&mut self, p: PointId) -> Result<(), MeshSieveError> {
-        self.section.try_add_point(p, self.dimension)
+        self.section.try_add_point(p, self.embedding_dimension)
     }
+}
+
+fn validate_coordinate_dimensions(
+    topological_dimension: usize,
+    embedding_dimension: usize,
+    atlas: &Atlas,
+) -> Result<(), MeshSieveError> {
+    if embedding_dimension == 0 {
+        return Err(MeshSieveError::ZeroLengthSlice);
+    }
+    if topological_dimension > embedding_dimension {
+        return Err(MeshSieveError::InvalidGeometry(format!(
+            "topological dimension {topological_dimension} exceeds embedding dimension {embedding_dimension}"
+        )));
+    }
+    for (point, (_offset, len)) in atlas.iter_entries() {
+        if len != embedding_dimension {
+            return Err(MeshSieveError::SliceLengthMismatch {
+                point,
+                expected: embedding_dimension,
+                found: len,
+            });
+        }
+    }
+    Ok(())
 }
 
 fn validate_dimension(dimension: usize, atlas: &Atlas) -> Result<(), MeshSieveError> {
@@ -328,7 +382,8 @@ mod tests {
         atlas.try_insert(p1, 3).unwrap();
         atlas.try_insert(p2, 3).unwrap();
 
-        let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(3, atlas.clone()).unwrap();
+        let mut coords =
+            Coordinates::<f64, VecStorage<f64>>::try_new(3, 3, atlas.clone()).unwrap();
         let mut velocity = MeshVelocity::<f64, VecStorage<f64>>::try_new(3, atlas).unwrap();
 
         coords
