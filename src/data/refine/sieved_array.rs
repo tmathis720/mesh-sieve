@@ -25,6 +25,11 @@ impl<P, V> SievedArray<P, V>
 where
     P: Into<PointId> + Copy + Eq,
 {
+    /// Access the underlying atlas for point-to-slice mapping.
+    pub fn atlas(&self) -> &Atlas {
+        &self.atlas
+    }
+
     /// Get a read-only slice for the given point, or an error if not present.
     pub fn try_get(&self, p: PointId) -> Result<&[V], crate::mesh_error::MeshSieveError> {
         let (off, len) = self

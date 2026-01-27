@@ -51,6 +51,7 @@
 
 // Re-export our major subsystems:
 pub mod algs;
+pub mod adapt;
 pub mod data;
 pub mod debug_invariants;
 pub mod geometry;
