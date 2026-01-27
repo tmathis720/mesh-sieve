@@ -323,6 +323,26 @@ where
     S: Storage<CellType>,
     Cs: Storage<f64>,
 {
+    let mut dimension: Option<u8> = None;
+    for (cell, cell_slice) in cell_types.iter() {
+        if cell_slice.len() != 1 {
+            return Err(MeshSieveError::SliceLengthMismatch {
+                point: cell,
+                expected: 1,
+                found: cell_slice.len(),
+            });
+        }
+        let cell_dim = cell_slice[0].dimension();
+        if let Some(existing) = dimension {
+            if existing != cell_dim {
+                return Err(MeshSieveError::InvalidGeometry(format!(
+                    "refinement requires a uniform cell dimension, found {existing}D and {cell_dim}D"
+                )));
+            }
+        } else {
+            dimension = Some(cell_dim);
+        }
+    }
     if options.check_geometry {
         let coords = coordinates.ok_or_else(|| {
             MeshSieveError::InvalidGeometry("geometry checks requested without coordinates".into())

@@ -14,6 +14,47 @@
 //!   and `gmsh:tagN` for additional tags).
 //! - Coordinates preserve the inferred mesh dimension (1D/2D/3D).
 //! - Element IDs are remapped when they collide with node IDs.
+//!
+//! # Mixed-element meshes
+//! The reader supports mixed-element meshes (for example, triangles and quads in
+//! the same surface mesh). You can inspect `cell_types` to determine per-element
+//! topology, and optionally enable mixed-dimension validation.
+//!
+//! ```rust
+//! # use mesh_sieve::io::gmsh::{GmshReadOptions, GmshReader};
+//! # use mesh_sieve::topology::cell_type::CellType;
+//! # fn demo() -> Result<(), mesh_sieve::mesh_error::MeshSieveError> {
+//! let msh = r#"$MeshFormat
+//! 2.2 0 8
+//! $EndMeshFormat
+//! $Nodes
+//! 5
+//! 1 0 0 0
+//! 2 1 0 0
+//! 3 1 1 0
+//! 4 0 1 0
+//! 5 2 0 0
+//! $EndNodes
+//! $Elements
+//! 2
+//! 10 2 0 1 2 3
+//! 11 3 0 2 3 4 5
+//! $EndElements
+//! "#;
+//! let reader = GmshReader::default();
+//! let mesh = reader.read_with_options(
+//!     msh.as_bytes(),
+//!     GmshReadOptions {
+//!         validate_mixed_dimensions: true,
+//!         ..Default::default()
+//!     },
+//! )?;
+//! let cell_types = mesh.cell_types.as_ref().expect("cell types");
+//! assert_eq!(cell_types.try_restrict(mesh_sieve::topology::point::PointId::new(10)?)?[0], CellType::Triangle);
+//! assert_eq!(cell_types.try_restrict(mesh_sieve::topology::point::PointId::new(11)?)?[0], CellType::Quadrilateral);
+//! # Ok(())
+//! # }
+//! ```
 
 use crate::data::atlas::Atlas;
 use crate::data::coordinates::{Coordinates, HighOrderCoordinates};
@@ -51,6 +92,8 @@ pub struct GmshReadOptions {
     pub check_geometry: bool,
     /// When enabled, validate topology (cone sizes, duplicate arrows, closure consistency).
     pub validate_topology: bool,
+    /// When enabled, reject meshes containing elements with mixed topological dimensions.
+    pub validate_mixed_dimensions: bool,
 }
 
 impl GmshReader {
@@ -587,6 +630,10 @@ impl GmshReader {
         let mesh_dimension = Self::mesh_dimension(&elements, &nodes);
         let coord_dimension = mesh_dimension.max(1).min(3);
 
+        if options.validate_mixed_dimensions {
+            Self::validate_element_dimensions(&elements)?;
+        }
+
         Self::remap_elements_if_needed(
             &mut elements,
             &mut mixed_sections,
@@ -885,6 +932,34 @@ impl GmshReader {
         } else {
             1
         }
+    }
+
+    fn validate_element_dimensions(elements: &[ElementRecord]) -> Result<(), MeshSieveError> {
+        let mut dimension: Option<u8> = None;
+        let mut seen = BTreeMap::<u8, HashSet<CellType>>::new();
+        for element in elements {
+            let dim = element.cell_type.dimension();
+            seen.entry(dim).or_default().insert(element.cell_type);
+            if let Some(existing) = dimension {
+                if existing != dim {
+                    let summary = seen
+                        .iter()
+                        .map(|(d, types)| {
+                            let mut list: Vec<_> = types.iter().map(|t| format!("{t:?}")).collect();
+                            list.sort();
+                            format!("{d}D: [{}]", list.join(", "))
+                        })
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    return Err(MeshSieveError::InvalidGeometry(format!(
+                        "mixed element dimensions detected ({summary})"
+                    )));
+                }
+            } else {
+                dimension = Some(dim);
+            }
+        }
+        Ok(())
     }
 }
 

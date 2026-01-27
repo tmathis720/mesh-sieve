@@ -25,6 +25,7 @@ fn gmsh_duplicate_arrows_rejected_when_validation_enabled() {
             GmshReadOptions {
                 check_geometry: false,
                 validate_topology: true,
+                validate_mixed_dimensions: false,
             },
         )
         .expect_err("expected duplicate arrow validation error");
