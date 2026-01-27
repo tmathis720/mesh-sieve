@@ -99,7 +99,8 @@ pub fn collapse_to_cell_vertices<CtSt>(
 where
     CtSt: Storage<CellType>,
 {
-    let cells = collect_top_cells(cell_types)?;
+    let mesh_dimension = crate::topology::utils::dimension(sieve)?;
+    let cells = collect_top_cells(cell_types, Some(mesh_dimension))?;
     let mut collapsed = InMemorySieve::<PointId, ()>::default();
 
     for (cell, cell_type) in cells {
@@ -842,7 +843,7 @@ where
     S: Storage<CellType>,
     Cs: Storage<f64>,
 {
-    let cell_only = cell_only_section(cell_types)?;
+    let cell_only = cell_only_section(coarse, cell_types)?;
     let mut refined = refine_mesh_with_options(coarse, &cell_only, coordinates, options)?;
     let mut refined_cell_types = build_refined_cell_types(&refined, &cell_only)?;
     interpolate_edges_faces(&mut refined.sieve, &mut refined_cell_types)?;
@@ -996,12 +997,15 @@ fn expected_vertex_count(cell_type: CellType) -> Option<usize> {
 
 fn collect_top_cells<CtSt>(
     cell_types: &Section<CellType, CtSt>,
+    mesh_dimension: Option<u32>,
 ) -> Result<Vec<(PointId, CellType)>, MeshSieveError>
 where
     CtSt: Storage<CellType>,
 {
     let mut cells = Vec::new();
     let mut max_dim: Option<u8> = None;
+    let mesh_dim = mesh_dimension.and_then(|dim| u8::try_from(dim).ok());
+    let mut has_mesh_dim = false;
 
     for (point, cell_slice) in cell_types.iter() {
         if cell_slice.len() != 1 {
@@ -1013,22 +1017,31 @@ where
         }
         let cell_type = cell_slice[0];
         let dim = cell_type.dimension();
+        if mesh_dim.map_or(false, |target| target == dim) {
+            has_mesh_dim = true;
+        }
         max_dim = Some(max_dim.map_or(dim, |current| current.max(dim)));
         cells.push((point, cell_type));
     }
 
-    let max_dim = max_dim.unwrap_or(0);
-    cells.retain(|(_, cell_type)| cell_type.dimension() == max_dim);
+    let target_dim = if has_mesh_dim {
+        mesh_dim.unwrap_or(0)
+    } else {
+        max_dim.unwrap_or(0)
+    };
+    cells.retain(|(_, cell_type)| cell_type.dimension() == target_dim);
     Ok(cells)
 }
 
 fn cell_only_section<CtSt>(
+    sieve: &mut impl Sieve<Point = PointId>,
     cell_types: &Section<CellType, CtSt>,
 ) -> Result<Section<CellType, VecStorage<CellType>>, MeshSieveError>
 where
     CtSt: Storage<CellType>,
 {
-    let cells = collect_top_cells(cell_types)?;
+    let mesh_dimension = crate::topology::utils::dimension(sieve)?;
+    let cells = collect_top_cells(cell_types, Some(mesh_dimension))?;
     let mut atlas = Atlas::default();
     for (cell, _) in &cells {
         atlas
