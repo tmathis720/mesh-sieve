@@ -316,6 +316,13 @@ where
     CtSt: Storage<CellType>,
 {
     let mut vertices = Vec::new();
+    let mut vertex_set = std::collections::HashSet::new();
+    for point in surface.points() {
+        if surface.cone_points(point).next().is_none() {
+            vertices.push(point);
+            vertex_set.insert(point);
+        }
+    }
     let mut cells = Vec::new();
     for (point, cell_slice) in cell_types.iter() {
         if cell_slice.len() != 1 {
@@ -327,7 +334,6 @@ where
         }
         let cell_type = cell_slice[0];
         if cell_type == CellType::Vertex {
-            vertices.push(point);
             continue;
         }
         if matches!(
@@ -347,8 +353,13 @@ where
                     verts.len()
                 )));
             }
+            if let Some(non_vertex) = verts.iter().find(|v| !vertex_set.contains(v)) {
+                return Err(MeshSieveError::InvalidGeometry(format!(
+                    "cell {point:?} references non-vertex point {non_vertex:?}"
+                )));
+            }
             cells.push((point, cell_type, verts));
-        } else if cell_type.dimension() >= 2 {
+        } else if cell_type.dimension() >= 1 {
             return Err(MeshSieveError::InvalidGeometry(format!(
                 "unsupported surface cell type: {cell_type:?}"
             )));
