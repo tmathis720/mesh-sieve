@@ -746,6 +746,9 @@ where
     CtSt: Storage<CellType> + Clone,
 {
     let mut local = InMemorySieve::<PointId, ()>::default();
+    for &point in local_set {
+        local.add_point(point);
+    }
     let points: Vec<PointId> = mesh_data.sieve.points().collect();
     for src in &points {
         if !local_set.contains(src) {
