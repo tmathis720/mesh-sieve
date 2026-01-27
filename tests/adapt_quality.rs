@@ -42,7 +42,7 @@ fn refine_low_quality_cells_by_size_metric() {
     for v in vertices {
         coord_atlas.try_insert(v, 2).unwrap();
     }
-    let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(2, coord_atlas).unwrap();
+    let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(2, 2, coord_atlas).unwrap();
     coords
         .try_restrict_mut(vertices[0])
         .unwrap()

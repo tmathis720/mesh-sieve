@@ -27,7 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut coord_atlas = Atlas::default();
     coord_atlas.try_insert(p1, 2)?;
     coord_atlas.try_insert(p2, 2)?;
-    let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(2, coord_atlas)?;
+    let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(2, 2, coord_atlas)?;
     coords.section_mut().try_set(p1, &[0.0, 0.0])?;
     coords.section_mut().try_set(p2, &[1.0, 0.0])?;
 

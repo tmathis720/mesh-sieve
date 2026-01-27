@@ -30,7 +30,7 @@ fn build_triangle_mesh(
     coord_atlas.try_insert(v1, 2).unwrap();
     coord_atlas.try_insert(v2, 2).unwrap();
 
-    let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(2, coord_atlas).unwrap();
+    let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(2, 2, coord_atlas).unwrap();
     coords.try_restrict_mut(v0).unwrap().copy_from_slice(&[0.0, 0.0]);
     coords.try_restrict_mut(v1).unwrap().copy_from_slice(&[1.0, 0.0]);
     coords.try_restrict_mut(v2).unwrap().copy_from_slice(&[0.0, 1.0]);

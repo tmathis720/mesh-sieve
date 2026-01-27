@@ -1,6 +1,6 @@
 [package]
 name = "mesh-sieve"
-version = "3.1.1"
+version = "3.1.2"
 authors = ["Thomas James Mathis <tmathis720@gmail.com>"]
 edition = "2024"
 description = "Modular, high-performance Rust library for mesh and data management, designed for scientific computing and PDE codes."

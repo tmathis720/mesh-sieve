@@ -37,7 +37,7 @@ fn main() -> Result<(), MeshSieveError> {
     for v in vertices {
         coord_atlas.try_insert(v, 2)?;
     }
-    let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(2, coord_atlas)?;
+    let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(2, 2, coord_atlas)?;
     coords.section_mut().try_set(vertices[0], &[0.0, 0.0])?;
     coords.section_mut().try_set(vertices[1], &[1.0, 0.0])?;
     coords.section_mut().try_set(vertices[2], &[1.0, 1.0])?;
