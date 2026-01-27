@@ -46,11 +46,15 @@ pub type CpuSection<V> = section::Section<V, VecStorage<V>>;
 
 /// Coordinate storage wrapper with an attached dimension.
 pub use coordinates::Coordinates;
+/// Velocity storage wrapper aligned with coordinate dimensions.
+pub use coordinates::MeshVelocity;
 /// Higher-order coordinate storage wrapper.
 pub use coordinates::HighOrderCoordinates;
 
 /// Alias for the common Vec-backed coordinates bundle.
 pub type CpuCoordinates<V> = coordinates::Coordinates<V, VecStorage<V>>;
+/// Alias for the common Vec-backed velocity bundle.
+pub type CpuMeshVelocity<V> = coordinates::MeshVelocity<V, VecStorage<V>>;
 
 /// Alias for the common Vec-backed coordinate data manager.
 pub type CpuCoordinateDM<V> = coordinate_dm::CoordinateDM<V, VecStorage<V>>;

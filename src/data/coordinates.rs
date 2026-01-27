@@ -62,6 +62,76 @@ where
     }
 }
 
+/// Velocity storage aligned with coordinate dimensions.
+#[derive(Clone, Debug)]
+pub struct MeshVelocity<V, S: Storage<V>> {
+    dimension: usize,
+    section: Section<V, S>,
+}
+
+impl<V, S> MeshVelocity<V, S>
+where
+    S: Storage<V>,
+{
+    /// Returns the spatial dimension per velocity tuple.
+    #[inline]
+    pub fn dimension(&self) -> usize {
+        self.dimension
+    }
+
+    /// Returns a read-only reference to the underlying section.
+    #[inline]
+    pub fn section(&self) -> &Section<V, S> {
+        &self.section
+    }
+
+    /// Returns a mutable reference to the underlying section.
+    #[inline]
+    pub fn section_mut(&mut self) -> &mut Section<V, S> {
+        &mut self.section
+    }
+
+    /// Read-only view of the velocity slice for a point `p`.
+    #[inline]
+    pub fn try_restrict(&self, p: PointId) -> Result<&[V], MeshSieveError> {
+        self.section.try_restrict(p)
+    }
+
+    /// Mutable view of the velocity slice for a point `p`.
+    #[inline]
+    pub fn try_restrict_mut(&mut self, p: PointId) -> Result<&mut [V], MeshSieveError> {
+        self.section.try_restrict_mut(p)
+    }
+}
+
+impl<V, S> MeshVelocity<V, S>
+where
+    V: Clone + Default,
+    S: Storage<V> + Clone,
+{
+    /// Construct a new velocity section with a fixed dimension.
+    ///
+    /// The provided `atlas` must store slices of length `dimension` for all points.
+    pub fn try_new(dimension: usize, atlas: Atlas) -> Result<Self, MeshSieveError> {
+        validate_dimension(dimension, &atlas)?;
+        Ok(Self {
+            dimension,
+            section: Section::new(atlas),
+        })
+    }
+
+    /// Wrap an existing section as velocity data, validating slice lengths.
+    pub fn from_section(dimension: usize, section: Section<V, S>) -> Result<Self, MeshSieveError> {
+        validate_dimension(dimension, section.atlas())?;
+        Ok(Self { dimension, section })
+    }
+
+    /// Adds a new point with the configured velocity dimension.
+    pub fn try_add_point(&mut self, p: PointId) -> Result<(), MeshSieveError> {
+        self.section.try_add_point(p, self.dimension)
+    }
+}
+
 /// Coordinate storage with an attached dimension.
 #[derive(Clone, Debug)]
 pub struct Coordinates<V, S: Storage<V>> {
@@ -138,6 +208,46 @@ where
     }
 }
 
+impl<S> Coordinates<f64, S>
+where
+    S: Storage<f64>,
+{
+    /// Advance coordinates using a velocity field and timestep.
+    pub fn advance_with_velocity<St>(
+        &mut self,
+        velocity: &MeshVelocity<f64, St>,
+        dt: f64,
+    ) -> Result<(), MeshSieveError>
+    where
+        St: Storage<f64>,
+    {
+        let dim = self.dimension;
+        let points: Vec<PointId> = self.section.atlas().points().collect();
+        for point in points {
+            let vel = velocity.try_restrict(point)?;
+            if vel.len() != dim {
+                return Err(MeshSieveError::SliceLengthMismatch {
+                    point,
+                    expected: dim,
+                    found: vel.len(),
+                });
+            }
+            let coord = self.try_restrict_mut(point)?;
+            if coord.len() != dim {
+                return Err(MeshSieveError::SliceLengthMismatch {
+                    point,
+                    expected: dim,
+                    found: coord.len(),
+                });
+            }
+            for (coord_value, vel_value) in coord.iter_mut().zip(vel.iter()) {
+                *coord_value += dt * vel_value;
+            }
+        }
+        Ok(())
+    }
+}
+
 impl<V, S> Coordinates<V, S>
 where
     V: Clone + Default,
@@ -201,4 +311,49 @@ fn validate_high_order_dimension(dimension: usize, atlas: &Atlas) -> Result<(), 
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Coordinates, MeshVelocity};
+    use crate::data::atlas::Atlas;
+    use crate::data::storage::VecStorage;
+    use crate::topology::point::PointId;
+
+    #[test]
+    fn advance_coordinates_over_multiple_steps() {
+        let mut atlas = Atlas::default();
+        let p1 = PointId::new(1).unwrap();
+        let p2 = PointId::new(2).unwrap();
+        atlas.try_insert(p1, 3).unwrap();
+        atlas.try_insert(p2, 3).unwrap();
+
+        let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(3, atlas.clone()).unwrap();
+        let mut velocity = MeshVelocity::<f64, VecStorage<f64>>::try_new(3, atlas).unwrap();
+
+        coords
+            .section_mut()
+            .try_set(p1, &[0.0, 0.0, 0.0])
+            .unwrap();
+        coords
+            .section_mut()
+            .try_set(p2, &[1.0, 1.0, 1.0])
+            .unwrap();
+        velocity
+            .section_mut()
+            .try_set(p1, &[1.0, 0.0, -1.0])
+            .unwrap();
+        velocity
+            .section_mut()
+            .try_set(p2, &[0.5, -0.5, 1.0])
+            .unwrap();
+
+        let dt = 0.25;
+        for _ in 0..4 {
+            coords.advance_with_velocity(&velocity, dt).unwrap();
+        }
+
+        assert_eq!(coords.try_restrict(p1).unwrap(), &[1.0, 0.0, -1.0]);
+        assert_eq!(coords.try_restrict(p2).unwrap(), &[1.5, 0.5, 2.0]);
+    }
 }
