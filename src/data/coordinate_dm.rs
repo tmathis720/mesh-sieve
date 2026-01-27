@@ -268,7 +268,11 @@ where
     S: Storage<V> + Clone,
 {
     let section = remap_section(coords.section(), old_to_new, new_to_old)?;
-    let mut out = Coordinates::from_section(coords.dimension(), section)?;
+    let mut out = Coordinates::from_section(
+        coords.topological_dimension(),
+        coords.embedding_dimension(),
+        section,
+    )?;
     if let Some(high_order) = coords.high_order() {
         let ho_section = remap_section(high_order.section(), old_to_new, new_to_old)?;
         let ho = HighOrderCoordinates::from_section(high_order.dimension(), ho_section)?;

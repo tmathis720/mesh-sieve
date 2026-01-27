@@ -69,7 +69,7 @@ fn build_coordinate_dm(
         atlas.try_insert(vertex, 2).unwrap();
     }
 
-    let mut coords = Coordinates::try_new(2, atlas).unwrap();
+    let mut coords = Coordinates::try_new(2, 2, atlas).unwrap();
     coords.try_restrict_mut(vertices[0]).unwrap().copy_from_slice(&[0.0, 0.0]);
     coords.try_restrict_mut(vertices[1]).unwrap().copy_from_slice(&[1.0, 0.0]);
     coords.try_restrict_mut(vertices[2]).unwrap().copy_from_slice(&[1.0, 1.0]);

@@ -7,8 +7,8 @@ refinement flows.
 ## Coordinate layout
 
 Coordinate data is stored in a `data::coordinates::Coordinates` section, which
-wraps a `Section` with a fixed slice length per point. The quality routines
-accept **dimension 2 or 3** and interpret the slices as:
+wraps a `Section` with fixed topological and embedding dimensions per point. The quality routines
+accept **embedding dimension 2 or 3** and interpret the slices as:
 
 - `dim = 2`: `(x, y)`
 - `dim = 3`: `(x, y, z)`
@@ -54,7 +54,7 @@ atlas.try_insert(v0, 2)?;
 atlas.try_insert(v1, 2)?;
 atlas.try_insert(v2, 2)?;
 
-let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(2, atlas)?;
+let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(2, 2, atlas)?;
 coords.try_restrict_mut(v0)?.copy_from_slice(&[0.0, 0.0]);
 coords.try_restrict_mut(v1)?.copy_from_slice(&[1.0, 0.0]);
 coords.try_restrict_mut(v2)?.copy_from_slice(&[0.0, 1.0]);

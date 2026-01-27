@@ -104,7 +104,7 @@ let s = sec.try_restrict(p)?; // &[f64]
 
 ### Geometry + Cell Types
 
-Coordinates are stored as a `Section` with a fixed dimension per point, wrapped by
+Coordinates are stored as a `Section` with fixed topological and embedding dimensions per point, wrapped by
 `data::coordinates::Coordinates` (with optional `HighOrderCoordinates`). Cell types can be attached to topological points
 using either a `Section<CellType, _>` (for strongly typed metadata) or a `LabelSet`
 if you prefer integer tags.
@@ -122,7 +122,7 @@ let mut atlas = Atlas::default();
 let p = PointId::new(1)?;
 atlas.try_insert(p, 3)?; // xyz
 
-let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(3, atlas)?;
+let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(3, 3, atlas)?;
 coords.try_restrict_mut(p)?.copy_from_slice(&[0.0, 1.0, 2.0]);
 
 // Optional higher-order coordinates (e.g., per-cell geometry DOFs).
@@ -130,6 +130,15 @@ let mut ho_atlas = Atlas::default();
 ho_atlas.try_insert(p, 9)?; // 3 control points in 3D
 let high_order = HighOrderCoordinates::<f64, VecStorage<f64>>::try_new(3, ho_atlas)?;
 coords.set_high_order(high_order)?;
+
+// A 2D surface embedded in 3D.
+let mut surface_atlas = Atlas::default();
+surface_atlas.try_insert(p, 3)?; // xyz for a surface vertex
+let mut surface_coords =
+    Coordinates::<f64, VecStorage<f64>>::try_new(2, 3, surface_atlas)?;
+surface_coords
+    .try_restrict_mut(p)?
+    .copy_from_slice(&[0.0, 1.0, 0.5]);
 
 // Cell types as a section over points.
 let mut cell_atlas = Atlas::default();

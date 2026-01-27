@@ -37,7 +37,7 @@ fn build_mesh_data() -> (
     for &pt in &all_points {
         coord_section.try_set(pt, &[pt.get() as f64]).unwrap();
     }
-    let coordinates = Coordinates::from_section(1, coord_section).unwrap();
+    let coordinates = Coordinates::from_section(1, 1, coord_section).unwrap();
 
     let mut temp_section = Section::<f64, VecStorage<f64>>::new(coord_atlas);
     for &pt in &all_points {

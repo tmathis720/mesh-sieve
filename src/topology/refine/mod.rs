@@ -1112,7 +1112,7 @@ fn build_refined_coordinates<Cs>(
 where
     Cs: Storage<f64>,
 {
-    let dimension = coarse_coords.dimension();
+    let dimension = coarse_coords.embedding_dimension();
     let mut atlas = Atlas::default();
     let mut vertices = Vec::new();
     for p in refined.points() {
@@ -1153,7 +1153,11 @@ where
         section.try_set(vertex, &accum)?;
     }
 
-    let mut out = Coordinates::from_section(dimension, section)?;
+    let mut out = Coordinates::from_section(
+        coarse_coords.topological_dimension(),
+        dimension,
+        section,
+    )?;
     if let Some(high_order) = coarse_coords.high_order() {
         let mut ho_entries = Vec::new();
         for (cell, fine_cells) in refinement_map {

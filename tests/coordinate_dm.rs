@@ -19,7 +19,7 @@ fn build_coordinate_dm() -> CoordinateDM<f64, VecStorage<f64>> {
         atlas.try_insert(vertex, 2).unwrap();
     }
 
-    let mut coords = Coordinates::try_new(2, atlas).unwrap();
+    let mut coords = Coordinates::try_new(2, 2, atlas).unwrap();
     coords
         .try_restrict_mut(vertices[0])
         .unwrap()

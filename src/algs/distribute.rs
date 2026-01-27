@@ -422,7 +422,11 @@ where
         Some(coords) => {
             let section =
                 build_local_section(coords.section(), local_set, &point_owners, my_rank, config)?;
-            let mut out = Coordinates::from_section(coords.dimension(), section)?;
+            let mut out = Coordinates::from_section(
+                coords.topological_dimension(),
+                coords.embedding_dimension(),
+                section,
+            )?;
             if let Some(high_order) = coords.high_order() {
                 let ho_section = build_local_section(
                     high_order.section(),

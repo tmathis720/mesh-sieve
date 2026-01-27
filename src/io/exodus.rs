@@ -293,7 +293,7 @@ impl ExodusReader {
             validate_sieve_topology(&sieve, &cell_types, TopologyValidationOptions::all())?;
         }
 
-        let mut coords = Coordinates::try_new(coord_dim, atlas)?;
+        let mut coords = Coordinates::try_new(coord_dim, coord_dim, atlas)?;
         for (point, values) in coords_data {
             coords.section_mut().try_set(point, &values)?;
         }
