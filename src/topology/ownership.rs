@@ -176,6 +176,21 @@ impl PointOwnership {
         self.owned_points().collect()
     }
 
+    /// Return a new ownership map containing only the provided points.
+    pub fn filtered_to_points<I>(&self, points: I) -> Result<Self, MeshSieveError>
+    where
+        I: IntoIterator<Item = PointId>,
+    {
+        let mut filtered = Self::default();
+        for point in points {
+            let entry = self
+                .entry(point)
+                .ok_or(MeshSieveError::MissingOwnership(point))?;
+            filtered.set(point, entry.owner, entry.is_ghost)?;
+        }
+        Ok(filtered)
+    }
+
     /// Build a point-ownership map from a local set and per-point owners.
     pub fn from_local_set<I>(
         local_set: I,

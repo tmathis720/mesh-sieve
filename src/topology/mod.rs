@@ -38,7 +38,10 @@ pub use labels::LabelSet;
 pub use orientation::*;
 pub use ownership::{OwnershipEntry, PointOwnership};
 pub use sieve::*;
-pub use validation::{TopologyValidationOptions, validate_sieve_topology};
+pub use validation::{
+    TopologyValidationOptions, debug_validate_overlap_ownership_topology,
+    validate_overlap_ownership_topology, validate_sieve_topology,
+};
 
 #[cfg(test)]
 mod tests;

@@ -28,6 +28,7 @@ use crate::topology::cell_type::CellType;
 use crate::topology::ownership::PointOwnership;
 use crate::topology::point::PointId;
 use crate::topology::sieve::{InMemorySieve, Sieve};
+use crate::topology::validation::debug_validate_overlap_ownership_topology;
 use std::collections::{HashMap, HashSet};
 
 /// Mapping from coarse cells to refined cells, with orientation hints.
@@ -889,6 +890,9 @@ where
         }
     }
 
+    let refined_ownership = refined_ownership.filtered_to_points(refined.sieve.points())?;
+    debug_validate_overlap_ownership_topology(&refined.sieve, &refined_ownership, None, my_rank)?;
+
     Ok(RefinedMeshWithOwnership {
         sieve: refined.sieve,
         cell_refinement: refined.cell_refinement,
@@ -924,6 +928,9 @@ where
             }
         }
     }
+
+    let refined_ownership = refined_ownership.filtered_to_points(refined.sieve.points())?;
+    debug_validate_overlap_ownership_topology(&refined.sieve, &refined_ownership, None, my_rank)?;
 
     Ok(RefinedMeshWithOwnership {
         sieve: refined.sieve,
