@@ -17,6 +17,7 @@ use crate::topology::ownership::PointOwnership;
 use crate::topology::periodic::PointEquivalence;
 use crate::topology::point::PointId;
 use crate::topology::sieve::{InMemorySieve, Sieve};
+use crate::topology::validation::debug_validate_overlap_ownership_topology;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Distribute a global mesh across ranks, returning the local submesh and overlap graph.
@@ -406,6 +407,12 @@ where
         PointOwnership::from_local_set(local_set.iter().copied(), &point_owners, my_rank)?;
 
     let local_sieve = build_local_sieve(mesh_data, local_set);
+    debug_validate_overlap_ownership_topology(
+        &local_sieve,
+        &ownership,
+        Some(&overlap),
+        my_rank,
+    )?;
     let labels = mesh_data
         .labels
         .as_ref()

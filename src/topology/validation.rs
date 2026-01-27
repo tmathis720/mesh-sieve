@@ -3,10 +3,12 @@
 use crate::data::section::Section;
 use crate::data::storage::Storage;
 use crate::mesh_error::MeshSieveError;
+use crate::overlap::overlap::{Overlap, OvlId};
 use crate::topology::cell_type::CellType;
+use crate::topology::ownership::PointOwnership;
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// Optional validation toggles for sieve topology checks.
 #[derive(Debug, Clone, Copy)]
@@ -90,6 +92,112 @@ where
         }
     }
 
+    Ok(())
+}
+
+/// Validate ownership and overlap consistency with the local topology.
+pub fn validate_overlap_ownership_topology<S>(
+    sieve: &S,
+    ownership: &PointOwnership,
+    overlap: Option<&Overlap>,
+    my_rank: usize,
+) -> Result<(), MeshSieveError>
+where
+    S: Sieve<Point = PointId>,
+{
+    let sieve_points: HashSet<PointId> = sieve.points().collect();
+
+    for point in ownership.local_points() {
+        if !sieve_points.contains(&point) {
+            return Err(MeshSieveError::OwnershipPointMissingTopology { point });
+        }
+    }
+
+    for point in &sieve_points {
+        if ownership.entry(*point).is_none() {
+            return Err(MeshSieveError::TopologyPointMissingOwnership { point: *point });
+        }
+    }
+
+    for point in ownership.local_points() {
+        let entry = ownership
+            .entry(point)
+            .expect("ownership entry should exist");
+        if entry.is_ghost == (entry.owner == my_rank) {
+            return Err(MeshSieveError::OwnershipGhostMismatch {
+                point,
+                owner: entry.owner,
+                my_rank,
+            });
+        }
+    }
+
+    if let Some(overlap) = overlap {
+        let mut link_map: HashMap<PointId, BTreeSet<usize>> = HashMap::new();
+        for src in overlap.base_points() {
+            if let OvlId::Local(point) = src {
+                if !sieve_points.contains(&point) {
+                    return Err(MeshSieveError::OverlapPointMissingTopology { point });
+                }
+                if ownership.entry(point).is_none() {
+                    return Err(MeshSieveError::OverlapPointMissingOwnership { point });
+                }
+                for (dst, rem) in overlap.cone(src) {
+                    if let OvlId::Part(rank) = dst {
+                        debug_assert_eq!(rem.rank, rank);
+                        link_map.entry(point).or_default().insert(rank);
+                    }
+                }
+            }
+        }
+
+        for point in ownership.ghost_points() {
+            let owner = ownership
+                .owner(point)
+                .expect("ghost points should have owner");
+            let links = link_map.get(&point);
+            if !links.is_some_and(|set| set.contains(&owner)) {
+                return Err(MeshSieveError::GhostPointMissingOverlapLink { point, owner });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(any(
+    debug_assertions,
+    feature = "strict-invariants",
+    feature = "check-invariants"
+))]
+/// Debug-only ownership/overlap validation (enabled in strict builds).
+pub fn debug_validate_overlap_ownership_topology<S>(
+    sieve: &S,
+    ownership: &PointOwnership,
+    overlap: Option<&Overlap>,
+    my_rank: usize,
+) -> Result<(), MeshSieveError>
+where
+    S: Sieve<Point = PointId>,
+{
+    validate_overlap_ownership_topology(sieve, ownership, overlap, my_rank)
+}
+
+#[cfg(not(any(
+    debug_assertions,
+    feature = "strict-invariants",
+    feature = "check-invariants"
+)))]
+/// No-op ownership/overlap validation for release builds.
+pub fn debug_validate_overlap_ownership_topology<S>(
+    _sieve: &S,
+    _ownership: &PointOwnership,
+    _overlap: Option<&Overlap>,
+    _my_rank: usize,
+) -> Result<(), MeshSieveError>
+where
+    S: Sieve<Point = PointId>,
+{
     Ok(())
 }
 

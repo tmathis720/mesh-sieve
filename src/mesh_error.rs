@@ -288,6 +288,34 @@ pub enum MeshSieveError {
     #[error("Overlap: empty Part({rank}) node (no incoming edges)")]
     OverlapEmptyPart { rank: usize },
 
+    /// Local topology contains a point without ownership metadata.
+    #[error("Topology point {point:?} missing ownership metadata")]
+    TopologyPointMissingOwnership { point: crate::topology::point::PointId },
+    /// Ownership metadata references a point missing from the local topology.
+    #[error("Ownership entry for point {point:?} missing from local topology")]
+    OwnershipPointMissingTopology { point: crate::topology::point::PointId },
+    /// Ownership ghost flag conflicts with the owning rank.
+    #[error(
+        "Ownership ghost flag mismatch for point {point:?}: owner={owner}, my_rank={my_rank}"
+    )]
+    OwnershipGhostMismatch {
+        point: crate::topology::point::PointId,
+        owner: usize,
+        my_rank: usize,
+    },
+    /// Ghost point is missing a required overlap link to its owning rank.
+    #[error("Ghost point {point:?} owned by rank {owner} missing overlap link")]
+    GhostPointMissingOverlapLink {
+        point: crate::topology::point::PointId,
+        owner: usize,
+    },
+    /// Overlap references a point absent from the local topology.
+    #[error("Overlap link references point {point:?} missing from local topology")]
+    OverlapPointMissingTopology { point: crate::topology::point::PointId },
+    /// Overlap references a point missing ownership metadata.
+    #[error("Overlap link references point {point:?} missing ownership metadata")]
+    OverlapPointMissingOwnership { point: crate::topology::point::PointId },
+
     /// Out edge exists but its mirrored in edge is missing.
     #[error("overlap in/out mirror missing: {src:?} -> {dst:?}")]
     OverlapInOutMirrorMissing {
@@ -565,6 +593,38 @@ impl PartialEq for MeshSieveError {
                 OverlapDuplicateEdge { src: s2, dst: d2 },
             ) => s1 == s2 && d1 == d2,
             (OverlapEmptyPart { rank: r1 }, OverlapEmptyPart { rank: r2 }) => r1 == r2,
+            (
+                TopologyPointMissingOwnership { point: p1 },
+                TopologyPointMissingOwnership { point: p2 },
+            ) => p1 == p2,
+            (
+                OwnershipPointMissingTopology { point: p1 },
+                OwnershipPointMissingTopology { point: p2 },
+            ) => p1 == p2,
+            (
+                OwnershipGhostMismatch {
+                    point: p1,
+                    owner: o1,
+                    my_rank: m1,
+                },
+                OwnershipGhostMismatch {
+                    point: p2,
+                    owner: o2,
+                    my_rank: m2,
+                },
+            ) => p1 == p2 && o1 == o2 && m1 == m2,
+            (
+                GhostPointMissingOverlapLink { point: p1, owner: o1 },
+                GhostPointMissingOverlapLink { point: p2, owner: o2 },
+            ) => p1 == p2 && o1 == o2,
+            (
+                OverlapPointMissingTopology { point: p1 },
+                OverlapPointMissingTopology { point: p2 },
+            ) => p1 == p2,
+            (
+                OverlapPointMissingOwnership { point: p1 },
+                OverlapPointMissingOwnership { point: p2 },
+            ) => p1 == p2,
             (
                 OverlapInOutMirrorMissing { src: s1, dst: d1 },
                 OverlapInOutMirrorMissing { src: s2, dst: d2 },
