@@ -1133,7 +1133,7 @@ dependencies = [
 
 [[package]]
 name = "mesh-sieve"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "ahash",
  "bincode",
