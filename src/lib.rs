@@ -94,6 +94,11 @@ pub mod prelude {
         stratified_permutation,
     };
     pub use crate::data::atlas::Atlas;
+    pub use crate::data::bc::{
+        FieldDofIndices, LabelQuery, apply_dirichlet_to_constrained_section,
+        apply_dirichlet_to_constrained_section_fields, apply_dirichlet_to_section,
+        apply_dirichlet_to_section_fields,
+    };
     pub use crate::data::constrained_section::{
         ConstrainedSection, ConstraintSet, DofConstraint, apply_constraints_to_section,
     };
