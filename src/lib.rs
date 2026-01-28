@@ -50,14 +50,15 @@
 //! All Sieve implementations provide `points()`, `base_points()`, and `cap_points()` iterators for global point set access.
 
 // Re-export our major subsystems:
-pub mod algs;
 pub mod adapt;
+pub mod algs;
 pub mod data;
 pub mod debug_invariants;
-pub mod geometry;
 pub mod forest;
+pub mod geometry;
 pub mod io;
 pub mod mesh_error;
+pub mod mesh_generation;
 pub mod mesh_graph;
 pub mod overlap;
 #[cfg(feature = "mpi-support")]
@@ -69,14 +70,14 @@ pub use debug_invariants::DebugInvariants;
 
 /// A convenient prelude to import the most-used traits & types:
 pub mod prelude {
+    pub use crate::algs::assembly::{
+        AssemblyCommTags, assemble_section_with_ownership, assemble_section_with_tags_and_ownership,
+    };
     pub use crate::algs::communicator::Communicator;
     #[cfg(feature = "mpi-support")]
     pub use crate::algs::communicator::MpiComm;
     #[cfg(feature = "rayon")]
     pub use crate::algs::communicator::RayonComm;
-    pub use crate::algs::assembly::{
-        AssemblyCommTags, assemble_section_with_ownership, assemble_section_with_tags_and_ownership,
-    };
     pub use crate::algs::completion::{
         complete_section, complete_section_with_ownership,
         complete_section_with_tags_and_ownership, complete_sieve, complete_stack,
