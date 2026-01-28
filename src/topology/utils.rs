@@ -1,6 +1,11 @@
 //! Utility helpers for topology, including DAG assertion.
+use crate::data::section::Section;
+use crate::data::storage::Storage;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::bounds::PointLike;
+use crate::topology::cell_type::CellType;
+use crate::topology::point::PointId;
+use crate::topology::sieve::strata::compute_strata;
 use crate::topology::sieve::Sieve;
 use std::collections::{HashMap, VecDeque};
 
@@ -14,6 +19,95 @@ where
     S: Sieve,
 {
     s.diameter()
+}
+
+/// Returns the topological dimension of a point using strata rules.
+///
+/// The dimension is computed as `diameter - height(point)`, so higher-dimensional
+/// points (cells) have larger dimensions and lower-dimensional points (vertices)
+/// have dimension 0.
+pub fn dim_of_point<S>(s: &mut S, point: S::Point) -> Result<u32, MeshSieveError>
+where
+    S: Sieve,
+    S::Point: PointLike,
+{
+    let cache = compute_strata(&*s)?;
+    let height = cache
+        .height
+        .get(&point)
+        .copied()
+        .ok_or_else(|| MeshSieveError::UnknownPoint(format!("{point:?}")))?;
+    Ok(cache.diameter.saturating_sub(height))
+}
+
+/// Returns the topological dimension of a point, using `CellType` when available.
+///
+/// If `cell_types` provides a cell type for the point, that dimension is returned;
+/// otherwise this falls back to [`dim_of_point`] (strata-based inference).
+pub fn dim_of_point_with_cell_types<S, CtSt>(
+    s: &mut S,
+    cell_types: Option<&Section<CellType, CtSt>>,
+    point: PointId,
+) -> Result<u32, MeshSieveError>
+where
+    S: Sieve<Point = PointId>,
+    CtSt: Storage<CellType>,
+{
+    if let Some(cell_types) = cell_types {
+        if let Ok(slice) = cell_types.try_restrict(point) {
+            if let Some(cell_type) = slice.first() {
+                return Ok(u32::from(cell_type.dimension()));
+            }
+        }
+    }
+    dim_of_point(s, point)
+}
+
+/// Collect points of a given topological dimension in deterministic order.
+///
+/// Ordering is strata-based (height-major, then `Ord`) and matches the sieve's
+/// chart ordering. Returns an empty vector if `dim` exceeds the sieve diameter.
+pub fn points_of_dim<S>(s: &mut S, dim: u32) -> Result<Vec<S::Point>, MeshSieveError>
+where
+    S: Sieve,
+    S::Point: PointLike,
+{
+    let cache = compute_strata(&*s)?;
+    if dim > cache.diameter {
+        return Ok(Vec::new());
+    }
+    let height = cache.diameter.saturating_sub(dim);
+    Ok(cache
+        .strata
+        .get(height as usize)
+        .cloned()
+        .unwrap_or_default())
+}
+
+/// Collect points of a given dimension using `CellType` when available.
+///
+/// The ordering is deterministic and follows the strata chart order.
+pub fn points_of_dim_with_cell_types<S, CtSt>(
+    s: &mut S,
+    cell_types: Option<&Section<CellType, CtSt>>,
+    dim: u32,
+) -> Result<Vec<PointId>, MeshSieveError>
+where
+    S: Sieve<Point = PointId>,
+    CtSt: Storage<CellType>,
+{
+    if cell_types.is_none() {
+        return points_of_dim(s, dim);
+    }
+    let cache = compute_strata(&*s)?;
+    let mut out = Vec::new();
+    for &p in &cache.chart_points {
+        let p_dim = dim_of_point_with_cell_types(s, cell_types, p)?;
+        if p_dim == dim {
+            out.push(p);
+        }
+    }
+    Ok(out)
 }
 
 /// Generic DAG check for any `S: Sieve`.
