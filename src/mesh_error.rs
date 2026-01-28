@@ -265,6 +265,15 @@ pub enum MeshSieveError {
         expected: usize,
         found: usize,
     },
+    /// Non-manifold entity detected by counting incident cells.
+    #[error(
+        "Topology error: non-manifold entity {point:?} (dim={dimension}) has {incident_cells} incident cells"
+    )]
+    NonManifoldIncidentCells {
+        point: crate::topology::point::PointId,
+        dimension: u32,
+        incident_cells: usize,
+    },
     #[error("Overlap: payload.rank {found} != Part({expected})")]
     OverlapRankMismatch { expected: usize, found: usize },
     /// Periodic mapping for a slave point conflicted with existing entry.
@@ -290,14 +299,16 @@ pub enum MeshSieveError {
 
     /// Local topology contains a point without ownership metadata.
     #[error("Topology point {point:?} missing ownership metadata")]
-    TopologyPointMissingOwnership { point: crate::topology::point::PointId },
+    TopologyPointMissingOwnership {
+        point: crate::topology::point::PointId,
+    },
     /// Ownership metadata references a point missing from the local topology.
     #[error("Ownership entry for point {point:?} missing from local topology")]
-    OwnershipPointMissingTopology { point: crate::topology::point::PointId },
+    OwnershipPointMissingTopology {
+        point: crate::topology::point::PointId,
+    },
     /// Ownership ghost flag conflicts with the owning rank.
-    #[error(
-        "Ownership ghost flag mismatch for point {point:?}: owner={owner}, my_rank={my_rank}"
-    )]
+    #[error("Ownership ghost flag mismatch for point {point:?}: owner={owner}, my_rank={my_rank}")]
     OwnershipGhostMismatch {
         point: crate::topology::point::PointId,
         owner: usize,
@@ -311,10 +322,14 @@ pub enum MeshSieveError {
     },
     /// Overlap references a point absent from the local topology.
     #[error("Overlap link references point {point:?} missing from local topology")]
-    OverlapPointMissingTopology { point: crate::topology::point::PointId },
+    OverlapPointMissingTopology {
+        point: crate::topology::point::PointId,
+    },
     /// Overlap references a point missing ownership metadata.
     #[error("Overlap link references point {point:?} missing ownership metadata")]
-    OverlapPointMissingOwnership { point: crate::topology::point::PointId },
+    OverlapPointMissingOwnership {
+        point: crate::topology::point::PointId,
+    },
 
     /// Out edge exists but its mirrored in edge is missing.
     #[error("overlap in/out mirror missing: {src:?} -> {dst:?}")]
@@ -357,10 +372,9 @@ impl PartialEq for MeshSieveError {
             | (PartitionPointOverflow, PartitionPointOverflow)
             | (GpuMappingFailed, GpuMappingFailed) => true,
             (InvalidGeometry(a), InvalidGeometry(b)) => a == b,
-            (
-                DuplicateArrow { src: s1, dst: d1 },
-                DuplicateArrow { src: s2, dst: d2 },
-            ) => s1 == s2 && d1 == d2,
+            (DuplicateArrow { src: s1, dst: d1 }, DuplicateArrow { src: s2, dst: d2 }) => {
+                s1 == s2 && d1 == d2
+            }
             (
                 ConeSizeMismatch {
                     cell: c1,
@@ -389,6 +403,18 @@ impl PartialEq for MeshSieveError {
                     found: f2,
                 },
             ) => c1 == c2 && t1 == t2 && e1 == e2 && f1 == f2,
+            (
+                NonManifoldIncidentCells {
+                    point: p1,
+                    dimension: d1,
+                    incident_cells: c1,
+                },
+                NonManifoldIncidentCells {
+                    point: p2,
+                    dimension: d2,
+                    incident_cells: c2,
+                },
+            ) => p1 == p2 && d1 == d2 && c1 == c2,
             (UnsupportedStackOperation(a), UnsupportedStackOperation(b)) => a == b,
             (MissingPointInCone(a), MissingPointInCone(b)) => a == b,
             (UnknownPoint(a), UnknownPoint(b)) => a == b,
@@ -614,8 +640,14 @@ impl PartialEq for MeshSieveError {
                 },
             ) => p1 == p2 && o1 == o2 && m1 == m2,
             (
-                GhostPointMissingOverlapLink { point: p1, owner: o1 },
-                GhostPointMissingOverlapLink { point: p2, owner: o2 },
+                GhostPointMissingOverlapLink {
+                    point: p1,
+                    owner: o1,
+                },
+                GhostPointMissingOverlapLink {
+                    point: p2,
+                    owner: o2,
+                },
             ) => p1 == p2 && o1 == o2,
             (
                 OverlapPointMissingTopology { point: p1 },

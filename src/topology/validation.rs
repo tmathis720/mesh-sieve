@@ -8,6 +8,7 @@ use crate::topology::cell_type::CellType;
 use crate::topology::ownership::PointOwnership;
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
+use crate::topology::sieve::strata::compute_strata;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// Optional validation toggles for sieve topology checks.
@@ -19,6 +20,8 @@ pub struct TopologyValidationOptions {
     pub check_duplicate_arrows: bool,
     /// Ensure closure-derived vertex counts match the expected size for each cell type.
     pub check_closure_consistency: bool,
+    /// How to handle non-manifold edges/faces found by incident cell counting.
+    pub non_manifold: NonManifoldHandling,
 }
 
 impl TopologyValidationOptions {
@@ -28,8 +31,20 @@ impl TopologyValidationOptions {
             check_cone_sizes: true,
             check_duplicate_arrows: true,
             check_closure_consistency: true,
+            non_manifold: NonManifoldHandling::Error,
         }
     }
+}
+
+/// Behavior for non-manifold detection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NonManifoldHandling {
+    /// Skip non-manifold detection.
+    Ignore,
+    /// Log a warning on non-manifold entities.
+    Warn,
+    /// Return an error on non-manifold entities.
+    Error,
 }
 
 /// Validate sieve topology against the provided cell type section.
@@ -91,6 +106,8 @@ where
             }
         }
     }
+
+    validate_non_manifold(sieve, options.non_manifold)?;
 
     Ok(())
 }
@@ -158,6 +175,66 @@ where
             let links = link_map.get(&point);
             if !links.is_some_and(|set| set.contains(&owner)) {
                 return Err(MeshSieveError::GhostPointMissingOverlapLink { point, owner });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Detect non-manifold edges/faces by counting incident cells in the star.
+fn validate_non_manifold<S>(sieve: &S, handling: NonManifoldHandling) -> Result<(), MeshSieveError>
+where
+    S: Sieve<Point = PointId>,
+{
+    if handling == NonManifoldHandling::Ignore {
+        return Ok(());
+    }
+
+    let cache = compute_strata(sieve)?;
+    let top_dim = cache.diameter;
+    if top_dim < 2 {
+        return Ok(());
+    }
+
+    for &point in &cache.chart_points {
+        let height = match cache.height.get(&point) {
+            Some(height) => *height,
+            None => continue,
+        };
+        let dim = top_dim.saturating_sub(height);
+        let check_entity =
+            (top_dim >= 2 && dim == top_dim - 1) || (top_dim >= 3 && dim == top_dim - 2);
+        if !check_entity {
+            continue;
+        }
+
+        let mut incident_cells = HashSet::new();
+        for candidate in sieve.star_iter([point]) {
+            if let Some(candidate_height) = cache.height.get(&candidate) {
+                let candidate_dim = top_dim.saturating_sub(*candidate_height);
+                if candidate_dim == top_dim {
+                    incident_cells.insert(candidate);
+                }
+            }
+        }
+
+        let count = incident_cells.len();
+        if count > 2 {
+            match handling {
+                NonManifoldHandling::Warn => {
+                    log::warn!(
+                        "Non-manifold entity detected: point={point:?} dim={dim} incident_cells={count}"
+                    );
+                }
+                NonManifoldHandling::Error => {
+                    return Err(MeshSieveError::NonManifoldIncidentCells {
+                        point,
+                        dimension: dim,
+                        incident_cells: count,
+                    });
+                }
+                NonManifoldHandling::Ignore => {}
             }
         }
     }
