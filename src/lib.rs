@@ -105,7 +105,7 @@ pub mod prelude {
     pub use crate::data::coordinate_dm::{CoordinateDM, CoordinateNumbering};
     pub use crate::data::coordinates::{Coordinates, MeshVelocity};
     pub use crate::data::discretization::{
-        Discretization, DofLayout, FieldDiscretization, RegionKey,
+        Discretization, DiscretizationMetadata, FieldDiscretization, RegionKey,
     };
     pub use crate::data::global_map::LocalToGlobalMap;
     pub use crate::data::hanging_node_constraints::{

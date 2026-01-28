@@ -1,4 +1,4 @@
-//! Discretization metadata for field layouts keyed by regions.
+//! Discretization metadata for basis and quadrature keyed by regions.
 
 use crate::topology::cell_type::CellType;
 use std::collections::{BTreeMap, HashMap};
@@ -27,24 +27,29 @@ impl RegionKey {
     }
 }
 
-/// DOF layout metadata for a region.
+/// Basis and quadrature metadata for a region.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DofLayout {
-    /// Number of degrees of freedom per point in the region.
-    pub dofs_per_point: usize,
+pub struct DiscretizationMetadata {
+    /// Basis function identifier for the region.
+    pub basis: String,
+    /// Quadrature rule identifier for the region.
+    pub quadrature: String,
 }
 
-impl DofLayout {
-    /// Create a new layout with `dofs_per_point` entries per point.
-    pub fn new(dofs_per_point: usize) -> Self {
-        Self { dofs_per_point }
+impl DiscretizationMetadata {
+    /// Create a new metadata record with the provided basis and quadrature labels.
+    pub fn new(basis: impl Into<String>, quadrature: impl Into<String>) -> Self {
+        Self {
+            basis: basis.into(),
+            quadrature: quadrature.into(),
+        }
     }
 }
 
 /// Per-field discretization metadata keyed by region selectors.
 #[derive(Clone, Debug, Default)]
 pub struct FieldDiscretization {
-    layouts: HashMap<RegionKey, DofLayout>,
+    metadata: HashMap<RegionKey, DiscretizationMetadata>,
 }
 
 impl FieldDiscretization {
@@ -53,38 +58,42 @@ impl FieldDiscretization {
         Self::default()
     }
 
-    /// Associate a DOF layout with a region selector.
-    pub fn set_layout(&mut self, region: RegionKey, layout: DofLayout) -> Option<DofLayout> {
-        self.layouts.insert(region, layout)
+    /// Associate discretization metadata with a region selector.
+    pub fn set_metadata(
+        &mut self,
+        region: RegionKey,
+        metadata: DiscretizationMetadata,
+    ) -> Option<DiscretizationMetadata> {
+        self.metadata.insert(region, metadata)
     }
 
-    /// Convenience wrapper for label-based layouts.
-    pub fn set_label_layout(
+    /// Convenience wrapper for label-based metadata.
+    pub fn set_label_metadata(
         &mut self,
         name: impl Into<String>,
         value: i32,
-        layout: DofLayout,
-    ) -> Option<DofLayout> {
-        self.set_layout(RegionKey::label(name, value), layout)
+        metadata: DiscretizationMetadata,
+    ) -> Option<DiscretizationMetadata> {
+        self.set_metadata(RegionKey::label(name, value), metadata)
     }
 
-    /// Convenience wrapper for cell-type-based layouts.
-    pub fn set_cell_type_layout(
+    /// Convenience wrapper for cell-type-based metadata.
+    pub fn set_cell_type_metadata(
         &mut self,
         cell_type: CellType,
-        layout: DofLayout,
-    ) -> Option<DofLayout> {
-        self.set_layout(RegionKey::cell_type(cell_type), layout)
+        metadata: DiscretizationMetadata,
+    ) -> Option<DiscretizationMetadata> {
+        self.set_metadata(RegionKey::cell_type(cell_type), metadata)
     }
 
-    /// Retrieve the layout for a region selector, if any.
-    pub fn layout_for(&self, region: &RegionKey) -> Option<&DofLayout> {
-        self.layouts.get(region)
+    /// Retrieve the metadata for a region selector, if any.
+    pub fn metadata_for(&self, region: &RegionKey) -> Option<&DiscretizationMetadata> {
+        self.metadata.get(region)
     }
 
-    /// Iterate over region layouts.
-    pub fn iter(&self) -> impl Iterator<Item = (&RegionKey, &DofLayout)> {
-        self.layouts.iter()
+    /// Iterate over region metadata.
+    pub fn iter(&self) -> impl Iterator<Item = (&RegionKey, &DiscretizationMetadata)> {
+        self.metadata.iter()
     }
 }
 
