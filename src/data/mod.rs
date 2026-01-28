@@ -33,7 +33,9 @@ pub use bc::{
     apply_dirichlet_to_section_fields,
 };
 pub use coordinate_dm::{CoordinateDM, CoordinateNumbering};
-pub use discretization::{Discretization, DofLayout, FieldDiscretization, RegionKey};
+pub use discretization::{
+    Discretization, DiscretizationMetadata, FieldDiscretization, RegionKey,
+};
 pub use global_map::LocalToGlobalMap;
 pub use hanging_node_constraints::{
     HangingDofConstraint, HangingNodeConstraints, LinearConstraintTerm,
