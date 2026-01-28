@@ -2,6 +2,7 @@
 #![warn(missing_docs)]
 
 pub mod atlas;
+pub mod bc;
 pub mod bundle;
 pub mod constrained_section;
 pub mod coordinate_dm;
@@ -25,6 +26,11 @@ pub use crate::debug_invariants::DebugInvariants;
 
 pub use constrained_section::{
     ConstrainedSection, ConstraintSet, DofConstraint, apply_constraints_to_section,
+};
+pub use bc::{
+    FieldDofIndices, LabelQuery, apply_dirichlet_to_constrained_section,
+    apply_dirichlet_to_constrained_section_fields, apply_dirichlet_to_section,
+    apply_dirichlet_to_section_fields,
 };
 pub use coordinate_dm::{CoordinateDM, CoordinateNumbering};
 pub use discretization::{Discretization, DofLayout, FieldDiscretization, RegionKey};
