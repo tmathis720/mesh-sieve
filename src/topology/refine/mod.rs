@@ -104,9 +104,15 @@ where
     let mut collapsed = InMemorySieve::<PointId, ()>::default();
 
     for (cell, cell_type) in cells {
-        let expected = expected_vertex_count(cell_type)
-            .ok_or(MeshSieveError::UnsupportedRefinementCellType { cell, cell_type })?;
-        let vertices = cell_vertices(sieve, cell, expected)?;
+        let vertices = match cell_type {
+            CellType::Polygon(n) => cell_vertices(sieve, cell, n as usize)?,
+            CellType::Polyhedron => cell_vertices_from_closure(sieve, cell)?,
+            _ => {
+                let expected = expected_vertex_count(cell_type)
+                    .ok_or(MeshSieveError::UnsupportedRefinementCellType { cell, cell_type })?;
+                cell_vertices(sieve, cell, expected)?
+            }
+        };
         for v in vertices {
             collapsed.add_arrow(cell, v, ());
         }
@@ -358,9 +364,19 @@ where
                 });
             }
             let cell_type = cell_slice[0];
-            let expected = expected_vertex_count(cell_type)
-                .ok_or(MeshSieveError::UnsupportedRefinementCellType { cell, cell_type })?;
-            let vertices = cell_vertices(coarse, cell, expected)?;
+            let vertices = match cell_type {
+                CellType::Polygon(_) | CellType::Polyhedron => {
+                    return Err(MeshSieveError::InvalidGeometry(format!(
+                        "geometry checks are not supported for {cell_type:?} cells"
+                    )));
+                }
+                _ => {
+                    let expected = expected_vertex_count(cell_type).ok_or(
+                        MeshSieveError::UnsupportedRefinementCellType { cell, cell_type },
+                    )?;
+                    cell_vertices(coarse, cell, expected)?
+                }
+            };
             if let Err(err) = validate_cell_geometry(cell_type, &vertices, coords) {
                 return Err(MeshSieveError::InvalidGeometry(format!(
                     "cell {cell:?}: {err}"
@@ -392,9 +408,15 @@ where
             });
         }
         let cell_type = cell_slice[0];
-        let expected = expected_vertex_count(cell_type)
-            .ok_or(MeshSieveError::UnsupportedRefinementCellType { cell, cell_type })?;
-        let vertices = cell_vertices(coarse, cell, expected)?;
+        let vertices = match cell_type {
+            CellType::Polygon(n) => cell_vertices(coarse, cell, n as usize)?,
+            CellType::Polyhedron => cell_vertices_from_closure(coarse, cell)?,
+            _ => {
+                let expected = expected_vertex_count(cell_type)
+                    .ok_or(MeshSieveError::UnsupportedRefinementCellType { cell, cell_type })?;
+                cell_vertices(coarse, cell, expected)?
+            }
+        };
         let mut fine_cells = Vec::new();
 
         match cell_type {
@@ -788,6 +810,90 @@ where
                     fine_cells.push((fine_cell, Polarity::Forward));
                 }
             }
+            CellType::Polygon(_) => {
+                let n = vertices.len();
+                if n < 3 {
+                    return Err(MeshSieveError::RefinementTopologyMismatch {
+                        cell,
+                        template: "polygon",
+                        expected: 3,
+                        found: n,
+                    });
+                }
+                let mut edge_midpoints_vec = Vec::with_capacity(n);
+                for i in 0..n {
+                    edge_midpoints_vec.push(midpoint(
+                        &mut edge_midpoints,
+                        &mut point_sources,
+                        &mut next_id,
+                        vertices[i],
+                        vertices[(i + 1) % n],
+                    )?);
+                }
+                let center = face_center(
+                    &mut face_centers,
+                    &mut point_sources,
+                    &mut next_id,
+                    &vertices,
+                )?;
+                for i in 0..n {
+                    let verts = [
+                        vertices[i],
+                        edge_midpoints_vec[i],
+                        center,
+                        edge_midpoints_vec[(i + n - 1) % n],
+                    ];
+                    let fine_cell = alloc_point(&mut next_id)?;
+                    for v in verts {
+                        refined.add_arrow(fine_cell, v, ());
+                    }
+                    fine_cells.push((fine_cell, Polarity::Forward));
+                }
+            }
+            CellType::Polyhedron => {
+                let faces = polyhedron_faces(coarse, cell)?;
+                let center = alloc_point(&mut next_id)?;
+                point_sources.insert(center, vertices.clone());
+                for face_vertices in faces {
+                    let n = face_vertices.len();
+                    if n < 3 {
+                        return Err(MeshSieveError::RefinementTopologyMismatch {
+                            cell,
+                            template: "polyhedron face",
+                            expected: 3,
+                            found: n,
+                        });
+                    }
+                    let face_center = face_center(
+                        &mut face_centers,
+                        &mut point_sources,
+                        &mut next_id,
+                        &face_vertices,
+                    )?;
+                    let mut edge_midpoints_vec = Vec::with_capacity(n);
+                    for i in 0..n {
+                        edge_midpoints_vec.push(midpoint(
+                            &mut edge_midpoints,
+                            &mut point_sources,
+                            &mut next_id,
+                            face_vertices[i],
+                            face_vertices[(i + 1) % n],
+                        )?);
+                    }
+                    for i in 0..n {
+                        let v0 = face_vertices[i];
+                        let v1 = face_vertices[(i + 1) % n];
+                        let m = edge_midpoints_vec[i];
+                        for tri in [[v0, m, face_center], [m, v1, face_center]] {
+                            let fine_cell = alloc_point(&mut next_id)?;
+                            for v in [center, tri[0], tri[1], tri[2]] {
+                                refined.add_arrow(fine_cell, v, ());
+                            }
+                            fine_cells.push((fine_cell, Polarity::Forward));
+                        }
+                    }
+                }
+            }
             _ => return Err(MeshSieveError::UnsupportedRefinementCellType { cell, cell_type }),
         }
 
@@ -991,8 +1097,101 @@ fn expected_vertex_count(cell_type: CellType) -> Option<usize> {
         CellType::Hexahedron => Some(8),
         CellType::Prism => Some(6),
         CellType::Pyramid => Some(5),
+        CellType::Polygon(n) => Some(n as usize),
         _ => None,
     }
+}
+
+fn cell_vertices_from_closure(
+    coarse: &mut impl Sieve<Point = PointId>,
+    cell: PointId,
+) -> Result<Vec<PointId>, MeshSieveError> {
+    let mut vertices = Vec::new();
+    for p in coarse.closure(std::iter::once(cell)) {
+        if coarse.cone_points(p).next().is_none() {
+            vertices.push(p);
+        }
+    }
+    vertices.sort();
+    vertices.dedup();
+    if vertices.len() < 3 {
+        return Err(MeshSieveError::RefinementTopologyMismatch {
+            cell,
+            template: "cell",
+            expected: 3,
+            found: vertices.len(),
+        });
+    }
+    Ok(vertices)
+}
+
+fn polyhedron_faces(
+    coarse: &mut impl Sieve<Point = PointId>,
+    cell: PointId,
+) -> Result<Vec<Vec<PointId>>, MeshSieveError> {
+    let faces: Vec<PointId> = coarse.cone_points(cell).collect();
+    if faces.is_empty() {
+        return Err(MeshSieveError::RefinementTopologyMismatch {
+            cell,
+            template: "polyhedron",
+            expected: 1,
+            found: 0,
+        });
+    }
+    if faces
+        .iter()
+        .all(|face| coarse.cone_points(*face).next().is_none())
+    {
+        return Err(MeshSieveError::InvalidGeometry(
+            "polyhedron refinement requires explicit face entities".into(),
+        ));
+    }
+    let mut out = Vec::with_capacity(faces.len());
+    for face in faces {
+        let vertices = face_vertices(coarse, face)?;
+        out.push(vertices);
+    }
+    Ok(out)
+}
+
+fn face_vertices(
+    coarse: &mut impl Sieve<Point = PointId>,
+    face: PointId,
+) -> Result<Vec<PointId>, MeshSieveError> {
+    let cone: Vec<PointId> = coarse.cone_points(face).collect();
+    if cone.is_empty() {
+        return Err(MeshSieveError::RefinementTopologyMismatch {
+            cell: face,
+            template: "face",
+            expected: 3,
+            found: 0,
+        });
+    }
+    if cone.iter().all(|p| coarse.cone_points(*p).next().is_none()) {
+        return Ok(cone);
+    }
+    if cone.iter().all(|p| coarse.cone_points(*p).count() == 2) {
+        if let Some(ordered) = ordered_vertices_from_edges(coarse, &cone) {
+            return Ok(ordered);
+        }
+    }
+    let mut vertices = Vec::new();
+    for p in coarse.closure(std::iter::once(face)) {
+        if coarse.cone_points(p).next().is_none() {
+            vertices.push(p);
+        }
+    }
+    vertices.sort();
+    vertices.dedup();
+    if vertices.len() < 3 {
+        return Err(MeshSieveError::RefinementTopologyMismatch {
+            cell: face,
+            template: "face",
+            expected: 3,
+            found: vertices.len(),
+        });
+    }
+    Ok(vertices)
 }
 
 fn collect_top_cells<CtSt>(
@@ -1096,7 +1295,19 @@ where
             .get(cell)
             .ok_or(MeshSieveError::PointNotInAtlas(*cell))?;
         for (fine_cell, _) in fine_cells {
-            cell_types.try_set(*fine_cell, &[cell_type])?;
+            let refined_type = match cell_type {
+                CellType::Polygon(_) => {
+                    let count = refined.sieve.cone_points(*fine_cell).count();
+                    let count = u8::try_from(count).map_err(|_| {
+                        MeshSieveError::InvalidGeometry(format!(
+                            "refined polygon has too many vertices: {count}"
+                        ))
+                    })?;
+                    CellType::Polygon(count)
+                }
+                _ => cell_type,
+            };
+            cell_types.try_set(*fine_cell, &[refined_type])?;
         }
     }
 
