@@ -273,7 +273,7 @@ fn signed_volume(a: [f64; 3], b: [f64; 3], c: [f64; 3], d: [f64; 3]) -> f64 {
 
 fn prism_signed_volume(vertices: &[[f64; 3]]) -> f64 {
     signed_volume(vertices[0], vertices[1], vertices[2], vertices[3])
-        + signed_volume(vertices[1], vertices[2], vertices[4], vertices[3])
+        + signed_volume(vertices[1], vertices[4], vertices[2], vertices[3])
         + signed_volume(vertices[2], vertices[4], vertices[5], vertices[3])
 }
 
