@@ -4,3 +4,4 @@
 //! using coordinate sections.
 
 pub mod quality;
+pub mod metrics;
