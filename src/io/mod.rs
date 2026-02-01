@@ -9,6 +9,8 @@ pub mod exodus;
 pub mod gmsh;
 pub mod hdf5;
 pub mod partitioned;
+pub mod vtk;
+pub mod xdmf;
 
 use crate::data::coordinates::Coordinates;
 use crate::data::discretization::Discretization;
