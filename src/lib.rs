@@ -54,6 +54,7 @@ pub mod adapt;
 pub mod algs;
 pub mod data;
 pub mod debug_invariants;
+pub mod discretization;
 pub mod forest;
 pub mod geometry;
 pub mod io;
@@ -118,6 +119,11 @@ pub mod prelude {
     pub use crate::data::section::Map;
     pub use crate::data::section::Section;
     pub use crate::debug_invariants::DebugInvariants;
+    pub use crate::discretization::runtime::{
+        Basis, DofMap, ElementRuntime, ElementTabulation, QuadratureRule, assemble_local_matrix,
+        assemble_local_vector, cell_vertices, local_load_vector, local_stiffness_matrix,
+        runtime_from_metadata, tabulate_element,
+    };
     pub use crate::io::MeshBundle;
     pub use crate::overlap::delta::{AddDelta, CopyDelta, ValueDelta};
     pub use crate::overlap::overlap::Overlap;
