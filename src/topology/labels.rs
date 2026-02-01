@@ -6,7 +6,13 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::algs::submesh::{SubmeshMaps, SubmeshSelection, extract_by_label};
+use crate::data::storage::Storage;
+use crate::io::MeshData;
+use crate::mesh_error::MeshSieveError;
+use crate::topology::cell_type::CellType;
 use crate::topology::point::PointId;
+use crate::topology::sieve::{InMemorySieve, Sieve};
 
 /// Named integer labels for mesh points.
 #[derive(Clone, Debug, Default)]
@@ -51,9 +57,11 @@ impl LabelSet {
 
     /// Returns the number of points with label `name == value`.
     pub fn stratum_size(&self, name: &str, value: i32) -> usize {
-        self.labels
-            .get(name)
-            .map_or(0, |map| map.values().filter(|&&label_value| label_value == value).count())
+        self.labels.get(name).map_or(0, |map| {
+            map.values()
+                .filter(|&&label_value| label_value == value)
+                .count()
+        })
     }
 
     /// Returns all points with label `name == value` in deterministic order.
@@ -124,4 +132,71 @@ impl LabelSet {
                 .map(move |(&point, &value)| (name.as_str(), point, value))
         })
     }
+}
+
+/// Expand a label stratum to include the closure of its points.
+///
+/// This mirrors the behavior of DMPlexLabelComplete for a single label value by applying
+/// the label to every point in the closure of each labeled point.
+pub fn complete_label_value<S>(sieve: &S, labels: &LabelSet, name: &str, value: i32) -> LabelSet
+where
+    S: Sieve<Point = PointId>,
+{
+    let mut out = labels.clone();
+    let seeds: Vec<PointId> = labels.points_with_label(name, value).collect();
+    if seeds.is_empty() {
+        return out;
+    }
+    for point in sieve.closure_iter(seeds) {
+        out.set_label(point, name, value);
+    }
+    out
+}
+
+/// Expand all labels to include the closure of their points.
+pub fn complete_label_set<S>(sieve: &S, labels: &LabelSet) -> LabelSet
+where
+    S: Sieve<Point = PointId>,
+{
+    let mut out = labels.clone();
+    let mut names: HashSet<String> = HashSet::new();
+    for (name, _, _) in labels.iter() {
+        names.insert(name.to_string());
+    }
+    for name in names {
+        for value in labels.values(&name) {
+            out = complete_label_value(sieve, &out, &name, value);
+        }
+    }
+    out
+}
+
+/// Extract a submesh from points tagged by a label, including the full closure.
+pub fn extract_submesh_from_label<S, V, St, CtSt>(
+    mesh: &MeshData<S, V, St, CtSt>,
+    labels: &LabelSet,
+    label_name: &str,
+    label_value: i32,
+) -> Result<
+    (
+        MeshData<InMemorySieve<PointId, S::Payload>, V, St, CtSt>,
+        SubmeshMaps,
+    ),
+    MeshSieveError,
+>
+where
+    S: Sieve<Point = PointId>,
+    S::Payload: Clone,
+    V: Clone + Default,
+    St: Storage<V> + Clone,
+    CtSt: Storage<CellType> + Clone,
+{
+    let completed = complete_label_value(&mesh.sieve, labels, label_name, label_value);
+    extract_by_label(
+        mesh,
+        &completed,
+        label_name,
+        label_value,
+        SubmeshSelection::FullClosure,
+    )
 }
