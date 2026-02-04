@@ -13,6 +13,7 @@ pub mod hanging_node_constraints;
 pub mod mixed_section;
 pub mod multi_section;
 pub mod section;
+pub mod section_layout;
 pub mod slice_storage;
 pub mod storage;
 #[cfg(feature = "wgpu")]
@@ -36,7 +37,7 @@ pub use coordinate_dm::{CoordinateDM, CoordinateNumbering};
 pub use discretization::{
     Discretization, DiscretizationMetadata, FieldDiscretization, RegionKey,
 };
-pub use global_map::LocalToGlobalMap;
+pub use global_map::{LocalToGlobalMap, global_vector_for_map};
 pub use hanging_node_constraints::{
     HangingDofConstraint, HangingNodeConstraints, LinearConstraintTerm,
     apply_hanging_constraints_to_section,
@@ -44,6 +45,11 @@ pub use hanging_node_constraints::{
 pub use mixed_section::{MixedScalar, MixedSectionStore, ScalarType, TaggedSection};
 pub use multi_section::{FieldSection, MultiSection};
 pub use section::Section;
+pub use section_layout::{
+    DofLayout, build_layout_with, constrained_dof_len, layout_for_multi_section_with_periodic,
+    layout_for_section_with_constraints_and_periodic, local_vector_for_layout,
+    local_vector_for_section, multi_section_dof_len_with_constraints,
+};
 pub use slice_storage::SliceStorage;
 pub use storage::{Storage, VecStorage};
 #[cfg(feature = "wgpu")]
