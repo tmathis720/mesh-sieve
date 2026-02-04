@@ -3,6 +3,7 @@
 use crate::data::atlas::Atlas;
 use crate::data::section::Section;
 use crate::data::storage::VecStorage;
+use crate::mesh_error::MeshSieveError;
 use std::collections::BTreeMap;
 
 /// Scalar type tag for mixed sections.
@@ -77,6 +78,91 @@ impl TaggedSection {
             TaggedSection::U32(section) => section.atlas(),
             TaggedSection::U64(section) => section.atlas(),
         }
+    }
+
+    /// Gather values from this tagged section in atlas insertion order.
+    pub fn gather_in_order(&self) -> TaggedSectionBuffer {
+        match self {
+            TaggedSection::F64(section) => TaggedSectionBuffer::F64(section.gather_in_order()),
+            TaggedSection::F32(section) => TaggedSectionBuffer::F32(section.gather_in_order()),
+            TaggedSection::I32(section) => TaggedSectionBuffer::I32(section.gather_in_order()),
+            TaggedSection::I64(section) => TaggedSectionBuffer::I64(section.gather_in_order()),
+            TaggedSection::U32(section) => TaggedSectionBuffer::U32(section.gather_in_order()),
+            TaggedSection::U64(section) => TaggedSectionBuffer::U64(section.gather_in_order()),
+        }
+    }
+
+    /// Scatter values into this tagged section in atlas insertion order.
+    pub fn try_scatter_in_order(
+        &mut self,
+        buf: &TaggedSectionBuffer,
+    ) -> Result<(), MeshSieveError> {
+        match (self, buf) {
+            (TaggedSection::F64(section), TaggedSectionBuffer::F64(data)) => {
+                section.try_scatter_in_order(data)
+            }
+            (TaggedSection::F32(section), TaggedSectionBuffer::F32(data)) => {
+                section.try_scatter_in_order(data)
+            }
+            (TaggedSection::I32(section), TaggedSectionBuffer::I32(data)) => {
+                section.try_scatter_in_order(data)
+            }
+            (TaggedSection::I64(section), TaggedSectionBuffer::I64(data)) => {
+                section.try_scatter_in_order(data)
+            }
+            (TaggedSection::U32(section), TaggedSectionBuffer::U32(data)) => {
+                section.try_scatter_in_order(data)
+            }
+            (TaggedSection::U64(section), TaggedSectionBuffer::U64(data)) => {
+                section.try_scatter_in_order(data)
+            }
+            (section, buf) => Err(MeshSieveError::TaggedSectionTypeMismatch {
+                expected: section.scalar_type(),
+                found: buf.scalar_type(),
+            }),
+        }
+    }
+}
+
+/// Typed buffer for tagged section scatter/gather operations.
+#[derive(Clone, Debug)]
+pub enum TaggedSectionBuffer {
+    F64(Vec<f64>),
+    F32(Vec<f32>),
+    I32(Vec<i32>),
+    I64(Vec<i64>),
+    U32(Vec<u32>),
+    U64(Vec<u64>),
+}
+
+impl TaggedSectionBuffer {
+    /// Scalar type tag for this buffer.
+    pub fn scalar_type(&self) -> ScalarType {
+        match self {
+            TaggedSectionBuffer::F64(_) => ScalarType::F64,
+            TaggedSectionBuffer::F32(_) => ScalarType::F32,
+            TaggedSectionBuffer::I32(_) => ScalarType::I32,
+            TaggedSectionBuffer::I64(_) => ScalarType::I64,
+            TaggedSectionBuffer::U32(_) => ScalarType::U32,
+            TaggedSectionBuffer::U64(_) => ScalarType::U64,
+        }
+    }
+
+    /// Length of the underlying flat buffer.
+    pub fn len(&self) -> usize {
+        match self {
+            TaggedSectionBuffer::F64(data) => data.len(),
+            TaggedSectionBuffer::F32(data) => data.len(),
+            TaggedSectionBuffer::I32(data) => data.len(),
+            TaggedSectionBuffer::I64(data) => data.len(),
+            TaggedSectionBuffer::U32(data) => data.len(),
+            TaggedSectionBuffer::U64(data) => data.len(),
+        }
+    }
+
+    /// Return true if the buffer is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
@@ -298,5 +384,29 @@ impl MixedSectionStore {
     /// Return true if the store is empty.
     pub fn is_empty(&self) -> bool {
         self.sections.is_empty()
+    }
+
+    /// Gather all tagged sections into flat buffers in atlas insertion order.
+    pub fn gather_in_order(&self) -> BTreeMap<String, TaggedSectionBuffer> {
+        self.sections
+            .iter()
+            .map(|(name, section)| (name.clone(), section.gather_in_order()))
+            .collect()
+    }
+
+    /// Scatter all tagged sections from flat buffers in atlas insertion order.
+    pub fn try_scatter_in_order(
+        &mut self,
+        buffers: &BTreeMap<String, TaggedSectionBuffer>,
+    ) -> Result<(), MeshSieveError> {
+        for (name, section) in &mut self.sections {
+            let buf = buffers.get(name).ok_or_else(|| {
+                MeshSieveError::MissingSectionName {
+                    name: name.clone(),
+                }
+            })?;
+            section.try_scatter_in_order(buf)?;
+        }
+        Ok(())
     }
 }

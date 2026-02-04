@@ -84,6 +84,7 @@ pub mod prelude {
         complete_section_with_tags_and_ownership, complete_sieve, complete_stack,
         complete_stack_with_tags,
     };
+    pub use crate::algs::point_sf::PointSF;
     #[cfg(feature = "metis-support")]
     pub use crate::algs::distribute::MetisPartitioner;
     pub use crate::algs::distribute::{

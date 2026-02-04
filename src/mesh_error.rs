@@ -106,6 +106,15 @@ pub enum MeshSieveError {
     /// Attempted to use a scatter plan built from an outdated atlas.
     #[error("plan stale: built for atlas version {expected}, current {found}")]
     AtlasPlanStale { expected: u64, found: u64 },
+    /// Missing section name in a multi/mixed scatter operation.
+    #[error("Missing section name {name}")]
+    MissingSectionName { name: String },
+    /// Tagged section buffer type mismatch.
+    #[error("Tagged section type mismatch (expected {expected:?}, found {found:?})")]
+    TaggedSectionTypeMismatch {
+        expected: crate::data::mixed_section::ScalarType,
+        found: crate::data::mixed_section::ScalarType,
+    },
     /// Missing ownership metadata for a point.
     #[error("Ownership missing for point {0:?}")]
     MissingOwnership(crate::topology::point::PointId),
@@ -523,6 +532,17 @@ impl PartialEq for MeshSieveError {
                     found: f1,
                 },
                 AtlasPlanStale {
+                    expected: e2,
+                    found: f2,
+                },
+            ) => e1 == e2 && f1 == f2,
+            (MissingSectionName { name: n1 }, MissingSectionName { name: n2 }) => n1 == n2,
+            (
+                TaggedSectionTypeMismatch {
+                    expected: e1,
+                    found: f1,
+                },
+                TaggedSectionTypeMismatch {
                     expected: e2,
                     found: f2,
                 },

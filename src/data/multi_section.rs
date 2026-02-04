@@ -278,6 +278,74 @@ where
     }
 }
 
+impl<V, S> MultiSection<V, S>
+where
+    V: Clone,
+    S: Storage<V>,
+{
+    /// Gather all fields into a flat buffer in combined atlas order.
+    pub fn gather_in_order(&self) -> Result<Vec<V>, MeshSieveError> {
+        let mut out = Vec::with_capacity(self.atlas.total_len());
+        for point in self.atlas.points() {
+            for field in &self.fields {
+                if field.section().atlas().get(point).is_some() {
+                    let slice = field.section().try_restrict(point)?;
+                    out.extend_from_slice(slice);
+                }
+            }
+        }
+        if out.len() != self.atlas.total_len() {
+            return Err(MeshSieveError::ScatterLengthMismatch {
+                expected: self.atlas.total_len(),
+                found: out.len(),
+            });
+        }
+        Ok(out)
+    }
+
+    /// Scatter values from a flat buffer in combined atlas order.
+    pub fn try_scatter_in_order(&mut self, buf: &[V]) -> Result<(), MeshSieveError> {
+        let total = self.atlas.total_len();
+        if buf.len() != total {
+            return Err(MeshSieveError::ScatterLengthMismatch {
+                expected: total,
+                found: buf.len(),
+            });
+        }
+        let points: Vec<PointId> = self.atlas.points().collect();
+        let mut cursor = 0usize;
+        for point in points {
+            for field in &mut self.fields {
+                if field.section().atlas().get(point).is_some() {
+                    let len = {
+                        let slice = field.section().try_restrict(point)?;
+                        slice.len()
+                    };
+                    let end = cursor
+                        .checked_add(len)
+                        .ok_or(MeshSieveError::ScatterChunkMismatch {
+                            offset: cursor,
+                            len,
+                        })?;
+                    let chunk = buf.get(cursor..end).ok_or(MeshSieveError::ScatterChunkMismatch {
+                        offset: cursor,
+                        len,
+                    })?;
+                    field.section_mut().try_set(point, chunk)?;
+                    cursor = end;
+                }
+            }
+        }
+        if cursor != total {
+            return Err(MeshSieveError::ScatterLengthMismatch {
+                expected: total,
+                found: cursor,
+            });
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{FieldSection, MultiSection};
