@@ -71,11 +71,29 @@ pub struct RefinedMeshWithTopology {
     pub coordinates: Option<Coordinates<f64, VecStorage<f64>>>,
 }
 
+/// Optional anisotropic split hints for refinement.
+#[derive(Clone, Debug, Default)]
+pub struct AnisotropicSplitHints {
+    /// Per-cell edge splits represented by vertex pairs.
+    pub edge_splits: HashMap<PointId, Vec<[PointId; 2]>>,
+    /// Per-cell face splits represented by ordered vertex loops.
+    pub face_splits: HashMap<PointId, Vec<Vec<PointId>>>,
+}
+
+impl AnisotropicSplitHints {
+    /// Returns true if there are no split hints recorded.
+    pub fn is_empty(&self) -> bool {
+        self.edge_splits.is_empty() && self.face_splits.is_empty()
+    }
+}
+
 /// Optional settings for refinement.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct RefineOptions {
     /// When enabled, validate cell geometry and reject inverted or degenerate elements.
     pub check_geometry: bool,
+    /// Optional anisotropic split hints for edges/faces.
+    pub anisotropic_splits: Option<AnisotropicSplitHints>,
 }
 
 /// Pre-interpolate a cell→vertex topology to a full cell→face→edge→vertex mesh.
@@ -331,6 +349,22 @@ where
     S: Storage<CellType>,
     Cs: Storage<f64>,
 {
+    if let Some(hints) = &options.anisotropic_splits {
+        if !hints.is_empty() {
+            let cell_ids: HashSet<_> = cell_types.iter().map(|(cell, _)| cell).collect();
+            for cell in hints
+                .edge_splits
+                .keys()
+                .chain(hints.face_splits.keys())
+            {
+                if !cell_ids.contains(cell) {
+                    return Err(MeshSieveError::UnknownPoint(format!(
+                        "anisotropic split hint for missing cell {cell:?}"
+                    )));
+                }
+            }
+        }
+    }
     let mut dimension: Option<u8> = None;
     for (cell, cell_slice) in cell_types.iter() {
         if cell_slice.len() != 1 {
