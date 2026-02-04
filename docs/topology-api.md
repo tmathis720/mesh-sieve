@@ -117,6 +117,22 @@ let tagged: Vec<_> = labels.points_with_label("boundary", 2).collect();
 Each point can carry multiple labels with different names (e.g., `"boundary"` and
 `"material"`); within a label name, a point maps to a single integer value.
 
+You can query strata explicitly, enumerate distinct values, or run range queries:
+
+```rust
+let boundary_pts = labels.stratum_points("boundary", 2);
+let boundary_values = labels.stratum_values("boundary");
+let region_pts = labels.stratum_points_in_range("region", 1..=3);
+```
+
+Label strata also support set operations against another `LabelSet`:
+
+```rust
+let shared = labels.stratum_intersection(&other, "boundary", 2);
+let union = labels.stratum_union(&other, "boundary", 2);
+let diff = labels.stratum_difference(&other, "boundary", 2);
+```
+
 You can combine `LabelSet` with constrained fields by iterating the label markers and
 adding DOF constraints for those points:
 
@@ -141,6 +157,21 @@ for point in labels.points_with_label("boundary", 1) {
     constrained.insert_constraint(point, 0, 0.0)?;
 }
 constrained.apply_constraints()?;
+```
+
+For boundary/region workflows, you can propagate labels through the topology:
+
+```rust
+use mesh_sieve::topology::labels::{
+    propagate_label_set_closure, propagate_label_set_star,
+};
+
+// Assume `sieve` is your topology and `labels` holds boundary/region markers.
+// Boundary faces -> boundary vertices
+let boundary_vertices = propagate_label_set_closure(&sieve, &labels);
+
+// Boundary vertices -> adjacent cells
+let boundary_cells = propagate_label_set_star(&sieve, &labels);
 ```
 
 ---

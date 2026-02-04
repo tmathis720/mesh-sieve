@@ -326,10 +326,21 @@ let mut labels = LabelSet::new();
 labels.set_label(p, "boundary", 1);
 
 let mut constrained = ConstrainedSection::new(section);
-for point in labels.points_with_label("boundary", 1) {
+for point in labels.stratum_points("boundary", 1) {
     constrained.insert_constraint(point, 2, 0.0)?;
 }
 constrained.apply_constraints()?;
+```
+
+You can also enumerate boundary/region IDs, slice ranges, and propagate labels
+through the topology to grow regions:
+
+```rust
+let boundary_ids = labels.stratum_values("boundary");
+let region_points = labels.stratum_points_in_range("region", 1..=4);
+// Assuming `sieve` is your topology.
+let closure_labels = mesh_sieve::topology::labels::propagate_label_set_closure(&sieve, &labels);
+let star_labels = mesh_sieve::topology::labels::propagate_label_set_star(&sieve, &labels);
 ```
 
 For mesh workflows that refine or assemble, apply constraints afterwards with
