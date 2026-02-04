@@ -8,12 +8,15 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::algs::communicator::{CommTag, Communicator, SectionCommTags, Wait};
-use crate::algs::completion::neighbour_links::neighbour_links_with_ownership;
 use crate::algs::wire::{WireCount, cast_slice, cast_slice_mut};
+use crate::data::constrained_section::ConstraintSet;
+use crate::data::multi_section::MultiSection;
 use crate::data::section::Section;
+use crate::data::section_layout::{constrained_dof_len, multi_section_dof_len_with_constraints};
 use crate::data::storage::Storage;
 use crate::mesh_error::MeshSieveError;
 use crate::overlap::overlap::Overlap;
+use crate::overlap::overlap::local;
 use crate::topology::ownership::PointOwnership;
 use crate::topology::point::PointId;
 
@@ -52,8 +55,14 @@ impl LocalToGlobalMap {
             dof_lengths: vec![None; max_id],
             total_dofs: 0,
         };
-        map.populate_dof_lengths(section)?;
-        map.assign_owned_offsets(section, ownership, comm, my_rank)?;
+        map.populate_dof_lengths_with(section.atlas().points(), |point| {
+            let (_, len) = section
+                .atlas()
+                .get(point)
+                .ok_or(MeshSieveError::PointNotInAtlas(point))?;
+            Ok(len)
+        })?;
+        map.assign_owned_offsets(section.atlas().points(), ownership, comm, my_rank)?;
 
         let mut has_ghosts = false;
         for p in section.atlas().points() {
@@ -74,7 +83,8 @@ impl LocalToGlobalMap {
             return Ok(map);
         }
 
-        let mut links = neighbour_links_with_ownership(section, overlap, ownership, my_rank)?;
+        let mut links =
+            neighbour_links_with_ownership_for_atlas(section.atlas(), overlap, ownership, my_rank)?;
         for link_vec in links.values_mut() {
             link_vec.sort_unstable_by_key(|(send_loc, _)| send_loc.get());
         }
@@ -83,7 +93,7 @@ impl LocalToGlobalMap {
         all_neighbors.extend(links.keys().copied());
         all_neighbors.remove(&my_rank);
 
-        let send_counts = build_send_counts(&links, section, ownership, my_rank)?;
+        let send_counts = build_send_counts(&links, section.atlas(), ownership, my_rank)?;
         let recv_counts =
             exchange_sizes_with_counts(&send_counts, comm, tags.sizes, &all_neighbors)?;
         exchange_offsets(
@@ -91,13 +101,13 @@ impl LocalToGlobalMap {
             &recv_counts,
             comm,
             tags.data,
-            section,
+            section.atlas(),
             ownership,
             &mut map,
             &all_neighbors,
         )?;
 
-        map.ensure_complete(section)?;
+        map.ensure_complete(section.atlas().points())?;
         Ok(map)
     }
 
@@ -115,6 +125,162 @@ impl LocalToGlobalMap {
     {
         let tags = SectionCommTags::from_base(CommTag::new(0xBEEF));
         Self::from_section_with_tags_and_ownership(section, overlap, ownership, comm, my_rank, tags)
+    }
+
+    /// Build a global numbering map using a section, constraints, and ownership data.
+    pub fn from_section_with_constraints_and_ownership<V, S, C, CS>(
+        section: &Section<V, S>,
+        constraints: &CS,
+        overlap: &Overlap,
+        ownership: &PointOwnership,
+        comm: &C,
+        my_rank: usize,
+        tags: SectionCommTags,
+    ) -> Result<Self, MeshSieveError>
+    where
+        S: Storage<V>,
+        C: Communicator + Sync,
+        CS: ConstraintSet<V>,
+    {
+        let mut map = LocalToGlobalMap::default();
+        map.populate_dof_lengths_with(section.atlas().points(), |point| {
+            let (_, len) = section
+                .atlas()
+                .get(point)
+                .ok_or(MeshSieveError::PointNotInAtlas(point))?;
+            constrained_dof_len(point, len, constraints.constraints_for(point))
+        })?;
+        map.assign_owned_offsets(section.atlas().points(), ownership, comm, my_rank)?;
+
+        let mut has_ghosts = false;
+        for p in section.atlas().points() {
+            let owner = ownership.owner_or_err(p)?;
+            if owner != my_rank {
+                has_ghosts = true;
+            }
+        }
+
+        let mut nb: BTreeSet<usize> = overlap.neighbor_ranks().collect();
+        nb.remove(&my_rank);
+        if nb.is_empty() {
+            if has_ghosts {
+                return Err(MeshSieveError::MissingOverlap {
+                    source: format!("rank {my_rank} has ghost points but no overlap").into(),
+                });
+            }
+            return Ok(map);
+        }
+
+        let mut links =
+            neighbour_links_with_ownership_for_atlas(section.atlas(), overlap, ownership, my_rank)?;
+        for link_vec in links.values_mut() {
+            link_vec.sort_unstable_by_key(|(send_loc, _)| send_loc.get());
+        }
+
+        let mut all_neighbors: HashSet<usize> = overlap.neighbor_ranks().collect();
+        all_neighbors.extend(links.keys().copied());
+        all_neighbors.remove(&my_rank);
+
+        let send_counts = build_send_counts(&links, section.atlas(), ownership, my_rank)?;
+        let recv_counts =
+            exchange_sizes_with_counts(&send_counts, comm, tags.sizes, &all_neighbors)?;
+        exchange_offsets(
+            &links,
+            &recv_counts,
+            comm,
+            tags.data,
+            section.atlas(),
+            ownership,
+            &mut map,
+            &all_neighbors,
+        )?;
+
+        map.ensure_complete(section.atlas().points())?;
+        Ok(map)
+    }
+
+    /// Build a global numbering map using a multi-section and ownership data.
+    pub fn from_multi_section_with_tags_and_ownership<V, S, C>(
+        section: &MultiSection<V, S>,
+        overlap: &Overlap,
+        ownership: &PointOwnership,
+        comm: &C,
+        my_rank: usize,
+        tags: SectionCommTags,
+    ) -> Result<Self, MeshSieveError>
+    where
+        S: Storage<V>,
+        C: Communicator + Sync,
+    {
+        let mut map = LocalToGlobalMap::default();
+        map.populate_dof_lengths_with(section.atlas().points(), |point| {
+            multi_section_dof_len_with_constraints(section, point)
+        })?;
+        map.assign_owned_offsets(section.atlas().points(), ownership, comm, my_rank)?;
+
+        let mut has_ghosts = false;
+        for p in section.atlas().points() {
+            let owner = ownership.owner_or_err(p)?;
+            if owner != my_rank {
+                has_ghosts = true;
+            }
+        }
+
+        let mut nb: BTreeSet<usize> = overlap.neighbor_ranks().collect();
+        nb.remove(&my_rank);
+        if nb.is_empty() {
+            if has_ghosts {
+                return Err(MeshSieveError::MissingOverlap {
+                    source: format!("rank {my_rank} has ghost points but no overlap").into(),
+                });
+            }
+            return Ok(map);
+        }
+
+        let mut links =
+            neighbour_links_with_ownership_for_atlas(section.atlas(), overlap, ownership, my_rank)?;
+        for link_vec in links.values_mut() {
+            link_vec.sort_unstable_by_key(|(send_loc, _)| send_loc.get());
+        }
+
+        let mut all_neighbors: HashSet<usize> = overlap.neighbor_ranks().collect();
+        all_neighbors.extend(links.keys().copied());
+        all_neighbors.remove(&my_rank);
+
+        let send_counts = build_send_counts(&links, section.atlas(), ownership, my_rank)?;
+        let recv_counts =
+            exchange_sizes_with_counts(&send_counts, comm, tags.sizes, &all_neighbors)?;
+        exchange_offsets(
+            &links,
+            &recv_counts,
+            comm,
+            tags.data,
+            section.atlas(),
+            ownership,
+            &mut map,
+            &all_neighbors,
+        )?;
+
+        map.ensure_complete(section.atlas().points())?;
+        Ok(map)
+    }
+
+    /// Build a global numbering map for a multi-section using a legacy default tag (0xBEEF).
+    pub fn from_multi_section_with_ownership<V, S, C>(
+        section: &MultiSection<V, S>,
+        overlap: &Overlap,
+        ownership: &PointOwnership,
+        comm: &C,
+        my_rank: usize,
+    ) -> Result<Self, MeshSieveError>
+    where
+        S: Storage<V>,
+        C: Communicator + Sync,
+    {
+        let tags = SectionCommTags::from_base(CommTag::new(0xBEEF));
+        Self::from_multi_section_with_tags_and_ownership(
+            section, overlap, ownership, comm, my_rank, tags,
+        )
     }
 
     /// Return the global offset (start index) for a point.
@@ -161,15 +327,17 @@ impl LocalToGlobalMap {
         self.total_dofs
     }
 
-    fn populate_dof_lengths<V, S>(&mut self, section: &Section<V, S>) -> Result<(), MeshSieveError>
+    fn populate_dof_lengths_with<I, F>(
+        &mut self,
+        points: I,
+        mut dof_len: F,
+    ) -> Result<(), MeshSieveError>
     where
-        S: Storage<V>,
+        I: IntoIterator<Item = PointId>,
+        F: FnMut(PointId) -> Result<usize, MeshSieveError>,
     {
-        for p in section.atlas().points() {
-            let (.., len) = section
-                .atlas()
-                .get(p)
-                .ok_or(MeshSieveError::PointNotInAtlas(p))?;
+        for p in points {
+            let len = dof_len(p)?;
             let idx = point_index(p)?;
             if idx >= self.dof_lengths.len() {
                 self.dof_lengths.resize(idx + 1, None);
@@ -180,22 +348,19 @@ impl LocalToGlobalMap {
         Ok(())
     }
 
-    fn assign_owned_offsets<V, S, C>(
+    fn assign_owned_offsets<I, C>(
         &mut self,
-        section: &Section<V, S>,
+        points: I,
         ownership: &PointOwnership,
         comm: &C,
         my_rank: usize,
     ) -> Result<(), MeshSieveError>
     where
-        S: Storage<V>,
+        I: IntoIterator<Item = PointId>,
         C: Communicator + Sync,
     {
-        let mut owned_points: Vec<PointId> = section
-            .atlas()
-            .points()
-            .filter(|&p| ownership.is_owned_by(p, my_rank))
-            .collect();
+        let mut owned_points: Vec<PointId> =
+            points.into_iter().filter(|&p| ownership.is_owned_by(p, my_rank)).collect();
         owned_points.sort_unstable();
 
         let mut local_total = 0u64;
@@ -233,11 +398,11 @@ impl LocalToGlobalMap {
         Ok(())
     }
 
-    fn ensure_complete<V, S>(&self, section: &Section<V, S>) -> Result<(), MeshSieveError>
+    fn ensure_complete<I>(&self, points: I) -> Result<(), MeshSieveError>
     where
-        S: Storage<V>,
+        I: IntoIterator<Item = PointId>,
     {
-        for p in section.atlas().points() {
+        for p in points {
             let idx = point_index(p)?;
             if self.offsets.get(idx).and_then(|val| *val).is_none() {
                 return Err(MeshSieveError::MissingOverlap {
@@ -249,6 +414,14 @@ impl LocalToGlobalMap {
     }
 }
 
+/// Allocate a zero-initialized global vector for a local-to-global map.
+pub fn global_vector_for_map<V>(map: &LocalToGlobalMap) -> Vec<V>
+where
+    V: Clone + Default,
+{
+    vec![V::default(); map.total_dofs as usize]
+}
+
 fn point_index(point: PointId) -> Result<usize, MeshSieveError> {
     point
         .get()
@@ -257,20 +430,18 @@ fn point_index(point: PointId) -> Result<usize, MeshSieveError> {
         .map(|idx| idx as usize)
 }
 
-fn build_send_counts<V, S>(
+fn build_send_counts(
     links: &HashMap<usize, Vec<(PointId, PointId)>>,
-    section: &Section<V, S>,
+    atlas: &crate::data::atlas::Atlas,
     ownership: &PointOwnership,
     my_rank: usize,
 ) -> Result<HashMap<usize, u32>, MeshSieveError>
-where
-    S: Storage<V>,
 {
     let mut counts = HashMap::with_capacity(links.len());
     for (nbr, link_vec) in links {
         let mut count = 0usize;
         for &(send_loc, _) in link_vec {
-            if section.atlas().contains(send_loc) && ownership.owner_or_err(send_loc)? == my_rank {
+            if atlas.contains(send_loc) && ownership.owner_or_err(send_loc)? == my_rank {
                 count += 1;
             }
         }
@@ -356,18 +527,17 @@ where
     }
 }
 
-fn exchange_offsets<V, S, C>(
+fn exchange_offsets<C>(
     links: &HashMap<usize, Vec<(PointId, PointId)>>,
     recv_counts: &HashMap<usize, u32>,
     comm: &C,
     tag: CommTag,
-    section: &Section<V, S>,
+    atlas: &crate::data::atlas::Atlas,
     ownership: &PointOwnership,
     map: &mut LocalToGlobalMap,
     all_neighbors: &HashSet<usize>,
 ) -> Result<(), MeshSieveError>
 where
-    S: Storage<V>,
     C: Communicator + Sync,
 {
     let mut recv_data: HashMap<usize, (C::RecvHandle, Vec<u64>)> = HashMap::new();
@@ -384,9 +554,7 @@ where
         let link_vec = links.get(&nbr).map_or(&[][..], |v| &v[..]);
         let mut scratch = Vec::new();
         for &(send_loc, _) in link_vec {
-            if section.atlas().contains(send_loc)
-                && ownership.owner_or_err(send_loc)? == comm.rank()
-            {
+            if atlas.contains(send_loc) && ownership.owner_or_err(send_loc)? == comm.rank() {
                 let idx = point_index(send_loc)?;
                 if let Some(offset) = map.offsets.get(idx).and_then(|val| *val) {
                     scratch.push(offset);
@@ -415,7 +583,7 @@ where
         let link_vec = links.get(&nbr).map_or(&[][..], |v| &v[..]);
         let mut recv_pairs = Vec::new();
         for &(send_loc, recv_loc) in link_vec {
-            if !section.atlas().contains(recv_loc) {
+            if !atlas.contains(recv_loc) {
                 continue;
             }
             if ownership.owner_or_err(recv_loc)? == nbr {
@@ -445,4 +613,45 @@ where
     drop(send_bufs);
 
     Ok(())
+}
+
+fn neighbour_links_with_ownership_for_atlas(
+    atlas: &crate::data::atlas::Atlas,
+    ovlp: &Overlap,
+    ownership: &PointOwnership,
+    my_rank: usize,
+) -> Result<HashMap<usize, Vec<(PointId, PointId)>>, MeshSieveError> {
+    let mut out: HashMap<usize, Vec<(PointId, PointId)>> = HashMap::new();
+
+    for p in atlas.points() {
+        let owner = ownership.owner_or_err(p)?;
+        if owner == my_rank {
+            for (_dst, rem) in ovlp.cone(local(p)) {
+                if rem.rank != my_rank {
+                    let remote_pt = rem
+                        .remote_point
+                        .ok_or(MeshSieveError::OverlapLinkMissing(p, rem.rank))?;
+                    out.entry(rem.rank).or_default().push((p, remote_pt));
+                }
+            }
+        } else {
+            let mut remote_point = None;
+            for (_dst, rem) in ovlp.cone(local(p)) {
+                if rem.rank == owner {
+                    remote_point = rem.remote_point;
+                    break;
+                }
+            }
+            let remote_pt = remote_point.ok_or(MeshSieveError::OverlapLinkMissing(p, owner))?;
+            out.entry(owner).or_default().push((remote_pt, p));
+        }
+    }
+
+    if out.is_empty() {
+        return Err(MeshSieveError::MissingOverlap {
+            source: format!("rank {my_rank} has no neighbour links").into(),
+        });
+    }
+
+    Ok(out)
 }
