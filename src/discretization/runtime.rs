@@ -127,6 +127,24 @@ impl QuadratureRule {
         }
     }
 
+    /// Construct a quadrature rule from explicit points and weights.
+    pub fn from_explicit(
+        name: impl Into<String>,
+        points: Vec<Vec<f64>>,
+        weights: Vec<f64>,
+    ) -> Result<Self, MeshSieveError> {
+        if points.len() != weights.len() {
+            return Err(MeshSieveError::InvalidGeometry(
+                "quadrature points/weights length mismatch".to_string(),
+            ));
+        }
+        Ok(Self {
+            name: name.into(),
+            points,
+            weights,
+        })
+    }
+
     /// Dimension of the quadrature points.
     pub fn dimension(&self) -> usize {
         self.points.first().map(|p| p.len()).unwrap_or(0)
@@ -146,7 +164,15 @@ pub fn runtime_from_metadata(
     cell_type: CellType,
 ) -> Result<ElementRuntime, MeshSieveError> {
     let basis = Basis::from_metadata(&metadata.basis, cell_type)?;
-    let quadrature = QuadratureRule::from_metadata(&metadata.quadrature, cell_type)?;
+    let quadrature = if metadata.has_quadrature_data() {
+        QuadratureRule::from_explicit(
+            metadata.quadrature.clone(),
+            metadata.quadrature_points.clone(),
+            metadata.quadrature_weights.clone(),
+        )?
+    } else {
+        QuadratureRule::from_metadata(&metadata.quadrature, cell_type)?
+    };
     Ok(ElementRuntime { basis, quadrature })
 }
 

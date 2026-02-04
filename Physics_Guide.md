@@ -2,6 +2,9 @@
 
 This guide maps common physics workflows (FEM/FVM/DG, multigrid, domain decomposition) onto `mesh-sieve`’s concepts and shows how to use them safely and efficiently. Examples are minimal but realistic; everything compiles with the fallible (`try_*`) APIs.
 
+For a focused walkthrough of discretization metadata and element assembly, see
+[`docs/fe-setup.md`](docs/fe-setup.md).
+
 ---
 
 ## 0) Core mental model (physics ↔ API)
