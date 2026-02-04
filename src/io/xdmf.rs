@@ -1,21 +1,29 @@
 //! XDMF (XML) reader/writer for unstructured grids.
 //!
-//! This implementation writes inline XML `DataItem` payloads and preserves
-//! mesh-sieve metadata via `Attribute` arrays.
+//! This implementation writes inline XML `DataItem` payloads (for small meshes)
+//! and can optionally emit HDF5-backed `DataItem`s with a companion HDF5 file.
+//! Mesh-sieve metadata is preserved via `Attribute` arrays.
 
 use crate::data::atlas::Atlas;
 use crate::data::coordinates::Coordinates;
 use crate::data::section::Section;
 use crate::data::storage::VecStorage;
+use crate::io::hdf5::{
+    DATASET_CELL_IDS, DATASET_COORDINATES, DATASET_EMBED_DIM, DATASET_MIXED, DATASET_POINT_IDS,
+    DATASET_SECTION_IDS, DATASET_SECTION_VALUES, DATASET_TOPO_DIM, GROUP_GEOMETRY, GROUP_LABELS,
+    GROUP_SECTIONS, GROUP_TOPOLOGY, write_mesh_to_hdf5,
+};
 use crate::io::{MeshData, SieveSectionReader, SieveSectionWriter};
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cell_type::CellType;
 use crate::topology::labels::LabelSet;
 use crate::topology::point::PointId;
 use crate::topology::sieve::{InMemorySieve, Sieve};
+use hdf5::File;
 use roxmltree::Document;
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
+use std::path::PathBuf;
 
 const ATTR_POINT_IDS: &str = "mesh_sieve:point_ids";
 const ATTR_CELL_IDS: &str = "mesh_sieve:cell_ids";
@@ -27,8 +35,49 @@ const ATTR_LABEL_PREFIX: &str = "mesh_sieve:label:";
 #[derive(Debug, Default, Clone)]
 pub struct XdmfReader;
 
-#[derive(Debug, Default, Clone)]
-pub struct XdmfWriter;
+#[derive(Debug, Clone)]
+pub struct XdmfWriter {
+    hdf5_path: Option<PathBuf>,
+    inline_threshold: usize,
+}
+
+impl Default for XdmfWriter {
+    fn default() -> Self {
+        Self {
+            hdf5_path: None,
+            inline_threshold: 1024,
+        }
+    }
+}
+
+impl XdmfWriter {
+    /// Create a writer that emits HDF5-backed DataItems to the given path.
+    pub fn with_hdf5_path<P: Into<PathBuf>>(path: P) -> Self {
+        Self {
+            hdf5_path: Some(path.into()),
+            ..Self::default()
+        }
+    }
+
+    /// Adjust the inline XML threshold (number of scalar values).
+    pub fn with_inline_threshold(mut self, threshold: usize) -> Self {
+        self.inline_threshold = threshold;
+        self
+    }
+
+    fn hdf5_reference(&self) -> Option<String> {
+        self.hdf5_path.as_ref().map(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.to_string())
+                .unwrap_or_else(|| path.to_string_lossy().to_string())
+        })
+    }
+
+    fn should_inline(&self, value_count: usize) -> bool {
+        self.hdf5_path.is_none() || value_count <= self.inline_threshold
+    }
+}
 
 impl XdmfWriter {
     fn mixed_cell_type(cell_type: CellType) -> Option<(i64, usize)> {
@@ -64,6 +113,22 @@ impl XdmfWriter {
             write!(writer, "{value}")?;
         }
         writeln!(writer)?;
+        writeln!(writer, "{indent}</DataItem>")?;
+        Ok(())
+    }
+
+    fn write_data_item_hdf<W: Write>(
+        writer: &mut W,
+        indent: &str,
+        dimensions: &str,
+        number_type: &str,
+        reference: &str,
+    ) -> Result<(), MeshSieveError> {
+        writeln!(
+            writer,
+            "{indent}<DataItem Dimensions=\"{dimensions}\" NumberType=\"{number_type}\" Format=\"HDF\">"
+        )?;
+        writeln!(writer, "{indent}  {reference}")?;
         writeln!(writer, "{indent}</DataItem>")?;
         Ok(())
     }
@@ -132,6 +197,33 @@ impl SieveSectionWriter for XdmfWriter {
             coord_values.extend(values.iter().map(|v| v.to_string()));
         }
 
+        let mut value_count = coord_values.len() + mixed.len() + point_ids.len() + cell_ids.len();
+        for section in mesh.sections.values() {
+            let ids_len = section.atlas().points().count();
+            let values_len: usize = section.iter().map(|(_, data)| data.len()).sum();
+            value_count += ids_len + values_len;
+        }
+        if let Some(labels) = &mesh.labels {
+            let mut label_count = 0usize;
+            for (_name, _point, _value) in labels.iter() {
+                label_count += 2;
+            }
+            value_count += label_count;
+        }
+
+        let use_hdf = self.hdf5_path.is_some() && !self.should_inline(value_count);
+        let hdf_ref = self.hdf5_reference();
+        if use_hdf {
+            let path = self
+                .hdf5_path
+                .as_ref()
+                .ok_or_else(|| MeshSieveError::MeshIoParse("missing HDF5 path".into()))?;
+            let file = File::create(path).map_err(|err| {
+                MeshSieveError::MeshIoParse(format!("HDF5 create error: {err}"))
+            })?;
+            write_mesh_to_hdf5(&file, mesh)?;
+        }
+
         writeln!(writer, "<?xml version=\"1.0\" ?>")?;
         writeln!(writer, "<Xdmf Version=\"3.0\">")?;
         writeln!(writer, "  <Domain>")?;
@@ -144,22 +236,50 @@ impl SieveSectionWriter for XdmfWriter {
             "      <Topology TopologyType=\"Mixed\" NumberOfElements=\"{}\">",
             cell_ids.len()
         )?;
-        Self::write_data_item(
-            &mut writer,
-            "        ",
-            &mixed.len().to_string(),
-            "Int",
-            &mixed,
-        )?;
+        if use_hdf {
+            let reference = format!(
+                "{}:/{GROUP_TOPOLOGY}/{DATASET_MIXED}",
+                hdf_ref.as_deref().unwrap_or(\"mesh.h5\")
+            );
+            Self::write_data_item_hdf(
+                &mut writer,
+                "        ",
+                &mixed.len().to_string(),
+                "Int",
+                &reference,
+            )?;
+        } else {
+            Self::write_data_item(
+                &mut writer,
+                "        ",
+                &mixed.len().to_string(),
+                "Int",
+                &mixed,
+            )?;
+        }
         writeln!(writer, "      </Topology>")?;
         writeln!(writer, "      <Geometry GeometryType=\"XYZ\">")?;
-        Self::write_data_item(
-            &mut writer,
-            "        ",
-            &format!("{} 3", point_ids.len()),
-            "Float",
-            &coord_values,
-        )?;
+        if use_hdf {
+            let reference = format!(
+                "{}:/{GROUP_GEOMETRY}/{DATASET_COORDINATES}",
+                hdf_ref.as_deref().unwrap_or(\"mesh.h5\")
+            );
+            Self::write_data_item_hdf(
+                &mut writer,
+                "        ",
+                &format!("{} 3", point_ids.len()),
+                "Float",
+                &reference,
+            )?;
+        } else {
+            Self::write_data_item(
+                &mut writer,
+                "        ",
+                &format!("{} 3", point_ids.len()),
+                "Float",
+                &coord_values,
+            )?;
+        }
         writeln!(writer, "      </Geometry>")?;
 
         writeln!(
@@ -168,13 +288,27 @@ impl SieveSectionWriter for XdmfWriter {
         )?;
         let point_id_values: Vec<String> =
             point_ids.iter().map(|p| p.get().to_string()).collect();
-        Self::write_data_item(
-            &mut writer,
-            "        ",
-            &point_ids.len().to_string(),
-            "Int",
-            &point_id_values,
-        )?;
+        if use_hdf {
+            let reference = format!(
+                "{}:/{GROUP_GEOMETRY}/{DATASET_POINT_IDS}",
+                hdf_ref.as_deref().unwrap_or(\"mesh.h5\")
+            );
+            Self::write_data_item_hdf(
+                &mut writer,
+                "        ",
+                &point_ids.len().to_string(),
+                "Int",
+                &reference,
+            )?;
+        } else {
+            Self::write_data_item(
+                &mut writer,
+                "        ",
+                &point_ids.len().to_string(),
+                "Int",
+                &point_id_values,
+            )?;
+        }
         writeln!(writer, "      </Attribute>")?;
 
         writeln!(
@@ -183,39 +317,69 @@ impl SieveSectionWriter for XdmfWriter {
         )?;
         let cell_id_values: Vec<String> =
             cell_ids.iter().map(|c| c.get().to_string()).collect();
-        Self::write_data_item(
-            &mut writer,
-            "        ",
-            &cell_ids.len().to_string(),
-            "Int",
-            &cell_id_values,
-        )?;
+        if use_hdf {
+            let reference = format!(
+                "{}:/{GROUP_TOPOLOGY}/{DATASET_CELL_IDS}",
+                hdf_ref.as_deref().unwrap_or(\"mesh.h5\")
+            );
+            Self::write_data_item_hdf(
+                &mut writer,
+                "        ",
+                &cell_ids.len().to_string(),
+                "Int",
+                &reference,
+            )?;
+        } else {
+            Self::write_data_item(
+                &mut writer,
+                "        ",
+                &cell_ids.len().to_string(),
+                "Int",
+                &cell_id_values,
+            )?;
+        }
         writeln!(writer, "      </Attribute>")?;
 
         writeln!(
             writer,
             "      <Attribute Name=\"{ATTR_COORD_TOPO_DIM}\" AttributeType=\"Scalar\" Center=\"Grid\">"
         )?;
-        Self::write_data_item(
-            &mut writer,
-            "        ",
-            "1",
-            "Int",
-            &[coords.topological_dimension().to_string()],
-        )?;
+        if use_hdf {
+            let reference = format!(
+                "{}:/{GROUP_GEOMETRY}/{DATASET_TOPO_DIM}",
+                hdf_ref.as_deref().unwrap_or(\"mesh.h5\")
+            );
+            Self::write_data_item_hdf(&mut writer, "        ", "1", "Int", &reference)?;
+        } else {
+            Self::write_data_item(
+                &mut writer,
+                "        ",
+                "1",
+                "Int",
+                &[coords.topological_dimension().to_string()],
+            )?;
+        }
         writeln!(writer, "      </Attribute>")?;
 
         writeln!(
             writer,
             "      <Attribute Name=\"{ATTR_COORD_EMBED_DIM}\" AttributeType=\"Scalar\" Center=\"Grid\">"
         )?;
-        Self::write_data_item(
-            &mut writer,
-            "        ",
-            "1",
-            "Int",
-            &[coords.embedding_dimension().to_string()],
-        )?;
+        if use_hdf {
+            let reference = format!(
+                "{}:/{GROUP_GEOMETRY}/{DATASET_EMBED_DIM}",
+                hdf_ref.as_deref().unwrap_or(\"mesh.h5\")
+            );
+            Self::write_data_item_hdf(&mut writer, "        ", "1", "Int", &reference)?;
+        } else {
+            Self::write_data_item(
+                &mut writer,
+                "        ",
+                "1",
+                "Int",
+                &[coords.embedding_dimension().to_string()],
+            )?;
+        }
         writeln!(writer, "      </Attribute>")?;
 
         for (name, section) in &mesh.sections {
@@ -236,13 +400,27 @@ impl SieveSectionWriter for XdmfWriter {
                 writer,
                 "      <Attribute Name=\"{ATTR_SECTION_PREFIX}{name}:ids\" AttributeType=\"Scalar\" Center=\"Node\">"
             )?;
-            Self::write_data_item(
-                &mut writer,
-                "        ",
-                &ids.len().to_string(),
-                "Int",
-                &ids,
-            )?;
+            if use_hdf {
+                let reference = format!(
+                    "{}:/{GROUP_SECTIONS}/{name}/{DATASET_SECTION_IDS}",
+                    hdf_ref.as_deref().unwrap_or(\"mesh.h5\")
+                );
+                Self::write_data_item_hdf(
+                    &mut writer,
+                    "        ",
+                    &ids.len().to_string(),
+                    "Int",
+                    &reference,
+                )?;
+            } else {
+                Self::write_data_item(
+                    &mut writer,
+                    "        ",
+                    &ids.len().to_string(),
+                    "Int",
+                    &ids,
+                )?;
+            }
             writeln!(writer, "      </Attribute>")?;
 
             writeln!(
@@ -259,7 +437,15 @@ impl SieveSectionWriter for XdmfWriter {
             } else {
                 format!("{tuples} {num_components}")
             };
-            Self::write_data_item(&mut writer, "        ", &dims, "Float", &values)?;
+            if use_hdf {
+                let reference = format!(
+                    "{}:/{GROUP_SECTIONS}/{name}/{DATASET_SECTION_VALUES}",
+                    hdf_ref.as_deref().unwrap_or(\"mesh.h5\")
+                );
+                Self::write_data_item_hdf(&mut writer, "        ", &dims, "Float", &reference)?;
+            } else {
+                Self::write_data_item(&mut writer, "        ", &dims, "Float", &values)?;
+            }
             writeln!(writer, "      </Attribute>")?;
         }
 
@@ -280,25 +466,53 @@ impl SieveSectionWriter for XdmfWriter {
                     writer,
                     "      <Attribute Name=\"{ATTR_LABEL_PREFIX}{name}:ids\" AttributeType=\"Scalar\" Center=\"Node\">"
                 )?;
-                Self::write_data_item(
-                    &mut writer,
-                    "        ",
-                    &ids.len().to_string(),
-                    "Int",
-                    &ids,
-                )?;
+                if use_hdf {
+                    let reference = format!(
+                        "{}:/{GROUP_LABELS}/{name}/{DATASET_SECTION_IDS}",
+                        hdf_ref.as_deref().unwrap_or(\"mesh.h5\")
+                    );
+                    Self::write_data_item_hdf(
+                        &mut writer,
+                        "        ",
+                        &ids.len().to_string(),
+                        "Int",
+                        &reference,
+                    )?;
+                } else {
+                    Self::write_data_item(
+                        &mut writer,
+                        "        ",
+                        &ids.len().to_string(),
+                        "Int",
+                        &ids,
+                    )?;
+                }
                 writeln!(writer, "      </Attribute>")?;
                 writeln!(
                     writer,
                     "      <Attribute Name=\"{ATTR_LABEL_PREFIX}{name}:values\" AttributeType=\"Scalar\" Center=\"Node\">"
                 )?;
-                Self::write_data_item(
-                    &mut writer,
-                    "        ",
-                    &values.len().to_string(),
-                    "Int",
-                    &values,
-                )?;
+                if use_hdf {
+                    let reference = format!(
+                        "{}:/{GROUP_LABELS}/{name}/{DATASET_SECTION_VALUES}",
+                        hdf_ref.as_deref().unwrap_or(\"mesh.h5\")
+                    );
+                    Self::write_data_item_hdf(
+                        &mut writer,
+                        "        ",
+                        &values.len().to_string(),
+                        "Int",
+                        &reference,
+                    )?;
+                } else {
+                    Self::write_data_item(
+                        &mut writer,
+                        "        ",
+                        &values.len().to_string(),
+                        "Int",
+                        &values,
+                    )?;
+                }
                 writeln!(writer, "      </Attribute>")?;
             }
         }
@@ -310,31 +524,104 @@ impl SieveSectionWriter for XdmfWriter {
     }
 }
 
+#[derive(Clone, Debug)]
 struct DataItem {
     dimensions: Vec<usize>,
     values: Vec<String>,
+    format: DataFormat,
+}
+
+#[derive(Clone, Debug)]
+enum DataFormat {
+    Xml,
+    Hdf5(Hdf5Ref),
+}
+
+#[derive(Clone, Debug)]
+struct Hdf5Ref {
+    file: String,
+    dataset: String,
 }
 
 impl DataItem {
     fn values_as_i64(&self) -> Result<Vec<i64>, MeshSieveError> {
-        self.values
-            .iter()
-            .map(|v| {
-                v.parse::<i64>()
-                    .map_err(|_| MeshSieveError::MeshIoParse(format!("invalid int value {v}")))
-            })
-            .collect()
+        match &self.format {
+            DataFormat::Xml => self
+                .values
+                .iter()
+                .map(|v| {
+                    v.parse::<i64>()
+                        .map_err(|_| MeshSieveError::MeshIoParse(format!("invalid int value {v}")))
+                })
+                .collect(),
+            DataFormat::Hdf5(hdf_ref) => read_hdf_dataset_i64(hdf_ref),
+        }
     }
 
     fn values_as_f64(&self) -> Result<Vec<f64>, MeshSieveError> {
-        self.values
-            .iter()
-            .map(|v| {
-                v.parse::<f64>()
-                    .map_err(|_| MeshSieveError::MeshIoParse(format!("invalid float value {v}")))
-            })
-            .collect()
+        match &self.format {
+            DataFormat::Xml => self
+                .values
+                .iter()
+                .map(|v| {
+                    v.parse::<f64>()
+                        .map_err(|_| MeshSieveError::MeshIoParse(format!("invalid float value {v}")))
+                })
+                .collect(),
+            DataFormat::Hdf5(hdf_ref) => read_hdf_dataset_f64(hdf_ref),
+        }
     }
+
+    fn effective_dimensions(&self) -> Result<Vec<usize>, MeshSieveError> {
+        if !self.dimensions.is_empty() {
+            return Ok(self.dimensions.clone());
+        }
+        match &self.format {
+            DataFormat::Xml => Ok(self.dimensions.clone()),
+            DataFormat::Hdf5(hdf_ref) => {
+                let file = File::open(&hdf_ref.file).map_err(|err| {
+                    MeshSieveError::MeshIoParse(format!("HDF5 open error: {err}"))
+                })?;
+                let dataset = file.dataset(&hdf_ref.dataset).map_err(|err| {
+                    MeshSieveError::MeshIoParse(format!(
+                        "HDF5 dataset {} error: {err}",
+                        hdf_ref.dataset
+                    ))
+                })?;
+                Ok(dataset.shape())
+            }
+        }
+    }
+}
+
+fn read_hdf_dataset_i64(hdf_ref: &Hdf5Ref) -> Result<Vec<i64>, MeshSieveError> {
+    let file = File::open(&hdf_ref.file)
+        .map_err(|err| MeshSieveError::MeshIoParse(format!("HDF5 open error: {err}")))?;
+    let dataset = file.dataset(&hdf_ref.dataset).map_err(|err| {
+        MeshSieveError::MeshIoParse(format!("HDF5 dataset {} error: {err}", hdf_ref.dataset))
+    })?;
+    if let Ok(values) = dataset.read_raw::<i64>() {
+        return Ok(values);
+    }
+    let values = dataset
+        .read_raw::<i32>()
+        .map_err(|err| MeshSieveError::MeshIoParse(format!("HDF5 int read error: {err}")))?;
+    Ok(values.into_iter().map(|v| v as i64).collect())
+}
+
+fn read_hdf_dataset_f64(hdf_ref: &Hdf5Ref) -> Result<Vec<f64>, MeshSieveError> {
+    let file = File::open(&hdf_ref.file)
+        .map_err(|err| MeshSieveError::MeshIoParse(format!("HDF5 open error: {err}")))?;
+    let dataset = file.dataset(&hdf_ref.dataset).map_err(|err| {
+        MeshSieveError::MeshIoParse(format!("HDF5 dataset {} error: {err}", hdf_ref.dataset))
+    })?;
+    if let Ok(values) = dataset.read_raw::<f64>() {
+        return Ok(values);
+    }
+    let values = dataset
+        .read_raw::<f32>()
+        .map_err(|err| MeshSieveError::MeshIoParse(format!("HDF5 float read error: {err}")))?;
+    Ok(values.into_iter().map(|v| v as f64).collect())
 }
 
 impl XdmfReader {
@@ -347,16 +634,48 @@ impl XdmfReader {
 
     fn parse_data_item(node: roxmltree::Node) -> Result<DataItem, MeshSieveError> {
         let dimensions = Self::parse_dimensions(node.attribute("Dimensions"));
-        let text = node
-            .text()
-            .unwrap_or("")
-            .split_whitespace()
-            .map(|v| v.to_string())
-            .collect::<Vec<_>>();
-        Ok(DataItem {
-            dimensions,
-            values: text,
-        })
+        let format = node
+            .attribute("Format")
+            .unwrap_or("XML")
+            .trim()
+            .to_ascii_uppercase();
+        if format == "HDF" {
+            let text = node.text().unwrap_or("").trim();
+            let mut parts = text.splitn(2, ':');
+            let file = parts
+                .next()
+                .filter(|v| !v.is_empty())
+                .ok_or_else(|| MeshSieveError::MeshIoParse("HDF DataItem missing file".into()))?;
+            let dataset = parts
+                .next()
+                .filter(|v| !v.is_empty())
+                .ok_or_else(|| MeshSieveError::MeshIoParse("HDF DataItem missing dataset".into()))?;
+            let dataset = if dataset.starts_with('/') {
+                dataset.to_string()
+            } else {
+                format!("/{dataset}")
+            };
+            Ok(DataItem {
+                dimensions,
+                values: Vec::new(),
+                format: DataFormat::Hdf5(Hdf5Ref {
+                    file: file.to_string(),
+                    dataset,
+                }),
+            })
+        } else {
+            let text = node
+                .text()
+                .unwrap_or("")
+                .split_whitespace()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>();
+            Ok(DataItem {
+                dimensions,
+                values: text,
+                format: DataFormat::Xml,
+            })
+        }
     }
 
     fn mixed_cell_type(code: i64) -> Result<(CellType, usize), MeshSieveError> {
@@ -427,11 +746,8 @@ impl SieveSectionReader for XdmfReader {
             }
         }
 
-        let num_points = geometry_item
-            .dimensions
-            .get(0)
-            .copied()
-            .unwrap_or(0);
+        let geometry_dims = geometry_item.effective_dimensions()?;
+        let num_points = geometry_dims.get(0).copied().unwrap_or(0);
         let point_ids = if let Some(item) = attributes.get(ATTR_POINT_IDS) {
             item.values_as_i64()?
                 .into_iter()
@@ -539,11 +855,8 @@ impl SieveSectionReader for XdmfReader {
                         })?;
                     let ids = item.values_as_i64()?;
                     let values = values_item.values_as_f64()?;
-                    let num_components = values_item
-                        .dimensions
-                        .get(1)
-                        .copied()
-                        .unwrap_or(1);
+                    let value_dims = values_item.effective_dimensions()?;
+                    let num_components = value_dims.get(1).copied().unwrap_or(1);
                     let mut atlas = Atlas::default();
                     for raw_id in &ids {
                         let point = PointId::new(*raw_id as u64)?;
