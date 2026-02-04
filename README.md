@@ -82,7 +82,8 @@ let right_wall = PointId::new(12)?;
 labels.set_label(left_wall, "boundary", 1);
 labels.set_label(right_wall, "boundary", 2);
 
-let left_boundary: Vec<_> = labels.points_with_label("boundary", 1).collect();
+let left_boundary = labels.stratum_points("boundary", 1);
+let all_boundaries = labels.stratum_values("boundary");
 ```
 
 ### Field Data (Atlas + Section over Vec)

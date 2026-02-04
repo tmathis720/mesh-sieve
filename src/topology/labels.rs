@@ -4,7 +4,8 @@
 //! This is useful for boundary conditions, material IDs, or other
 //! integer annotations on mesh points.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::ops::RangeBounds;
 
 use crate::algs::submesh::{SubmeshMaps, SubmeshSelection, extract_by_label};
 use crate::data::storage::Storage;
@@ -72,7 +73,7 @@ impl LabelSet {
     }
 
     /// Returns all distinct values stored for label `name`, sorted ascending.
-    pub fn values(&self, name: &str) -> Vec<i32> {
+    pub fn stratum_values(&self, name: &str) -> Vec<i32> {
         let mut values: Vec<i32> = self
             .labels
             .get(name)
@@ -80,6 +81,79 @@ impl LabelSet {
         values.sort_unstable();
         values.dedup();
         values
+    }
+
+    /// Backwards-compatible alias for [`LabelSet::stratum_values`].
+    pub fn values(&self, name: &str) -> Vec<i32> {
+        self.stratum_values(name)
+    }
+
+    /// Builds a value-indexed view of the label stratum for efficient range queries.
+    pub fn strata_by_value(&self, name: &str) -> BTreeMap<i32, Vec<PointId>> {
+        let Some(map) = self.labels.get(name) else {
+            return BTreeMap::new();
+        };
+        let mut strata: BTreeMap<i32, Vec<PointId>> = BTreeMap::new();
+        for (&point, &value) in map {
+            strata.entry(value).or_default().push(point);
+        }
+        for points in strata.values_mut() {
+            points.sort_unstable();
+        }
+        strata
+    }
+
+    /// Returns points with `name` values inside the provided range.
+    ///
+    /// Points are ordered by value, then by point ID.
+    pub fn stratum_points_in_range<R>(&self, name: &str, range: R) -> Vec<PointId>
+    where
+        R: RangeBounds<i32>,
+    {
+        let strata = self.strata_by_value(name);
+        let mut points = Vec::new();
+        for (_, stratum_points) in strata.range(range) {
+            points.extend(stratum_points.iter().copied());
+        }
+        points
+    }
+
+    /// Returns the union of two label strata, sorted deterministically.
+    pub fn stratum_union(&self, other: &LabelSet, name: &str, value: i32) -> Vec<PointId> {
+        let mut union: HashSet<PointId> = self.points_with_label(name, value).collect();
+        union.extend(other.points_with_label(name, value));
+        let mut points: Vec<_> = union.into_iter().collect();
+        points.sort_unstable();
+        points
+    }
+
+    /// Returns the intersection of two label strata, sorted deterministically.
+    pub fn stratum_intersection(
+        &self,
+        other: &LabelSet,
+        name: &str,
+        value: i32,
+    ) -> Vec<PointId> {
+        let other_points: HashSet<PointId> = other.points_with_label(name, value).collect();
+        let mut points: Vec<_> = self
+            .points_with_label(name, value)
+            .filter(|point| other_points.contains(point))
+            .collect();
+        points.sort_unstable();
+        points
+    }
+
+    /// Returns the difference between two label strata, sorted deterministically.
+    ///
+    /// Points returned are those in `self` that are not in `other`.
+    pub fn stratum_difference(&self, other: &LabelSet, name: &str, value: i32) -> Vec<PointId> {
+        let other_points: HashSet<PointId> = other.points_with_label(name, value).collect();
+        let mut points: Vec<_> = self
+            .points_with_label(name, value)
+            .filter(|point| !other_points.contains(point))
+            .collect();
+        points.sort_unstable();
+        points
     }
 
     /// Removes all points with label `name == value`.
@@ -142,6 +216,27 @@ pub fn complete_label_value<S>(sieve: &S, labels: &LabelSet, name: &str, value: 
 where
     S: Sieve<Point = PointId>,
 {
+    propagate_label_value_closure(sieve, labels, name, value)
+}
+
+/// Expand all labels to include the closure of their points.
+pub fn complete_label_set<S>(sieve: &S, labels: &LabelSet) -> LabelSet
+where
+    S: Sieve<Point = PointId>,
+{
+    propagate_label_set_closure(sieve, labels)
+}
+
+/// Propagate a label stratum through the closure of its points.
+pub fn propagate_label_value_closure<S>(
+    sieve: &S,
+    labels: &LabelSet,
+    name: &str,
+    value: i32,
+) -> LabelSet
+where
+    S: Sieve<Point = PointId>,
+{
     let mut out = labels.clone();
     let seeds: Vec<PointId> = labels.points_with_label(name, value).collect();
     if seeds.is_empty() {
@@ -153,8 +248,29 @@ where
     out
 }
 
-/// Expand all labels to include the closure of their points.
-pub fn complete_label_set<S>(sieve: &S, labels: &LabelSet) -> LabelSet
+/// Propagate a label stratum through the star of its points.
+pub fn propagate_label_value_star<S>(
+    sieve: &S,
+    labels: &LabelSet,
+    name: &str,
+    value: i32,
+) -> LabelSet
+where
+    S: Sieve<Point = PointId>,
+{
+    let mut out = labels.clone();
+    let seeds: Vec<PointId> = labels.points_with_label(name, value).collect();
+    if seeds.is_empty() {
+        return out;
+    }
+    for point in sieve.star_iter(seeds) {
+        out.set_label(point, name, value);
+    }
+    out
+}
+
+/// Propagate all labels through the closure of their points.
+pub fn propagate_label_set_closure<S>(sieve: &S, labels: &LabelSet) -> LabelSet
 where
     S: Sieve<Point = PointId>,
 {
@@ -164,8 +280,26 @@ where
         names.insert(name.to_string());
     }
     for name in names {
-        for value in labels.values(&name) {
-            out = complete_label_value(sieve, &out, &name, value);
+        for value in labels.stratum_values(&name) {
+            out = propagate_label_value_closure(sieve, &out, &name, value);
+        }
+    }
+    out
+}
+
+/// Propagate all labels through the star of their points.
+pub fn propagate_label_set_star<S>(sieve: &S, labels: &LabelSet) -> LabelSet
+where
+    S: Sieve<Point = PointId>,
+{
+    let mut out = labels.clone();
+    let mut names: HashSet<String> = HashSet::new();
+    for (name, _, _) in labels.iter() {
+        names.insert(name.to_string());
+    }
+    for name in names {
+        for value in labels.stratum_values(&name) {
+            out = propagate_label_value_star(sieve, &out, &name, value);
         }
     }
     out
