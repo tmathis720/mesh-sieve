@@ -64,6 +64,7 @@ pub mod mesh_graph;
 pub mod overlap;
 #[cfg(feature = "mpi-support")]
 pub mod partitioning;
+pub mod physics;
 pub mod section;
 pub mod topology;
 
@@ -128,6 +129,10 @@ pub mod prelude {
     pub use crate::io::MeshBundle;
     pub use crate::overlap::delta::{AddDelta, CopyDelta, ValueDelta};
     pub use crate::overlap::overlap::Overlap;
+    pub use crate::physics::fe::{
+        ElementMatrices, ReferenceElementEvaluation, assemble_element_matrices,
+        evaluate_reference_element, integrate_reference_scalar,
+    };
     pub use crate::topology::bounds::{PayloadLike, PointLike};
     pub use crate::topology::cell_type::CellType;
     pub use crate::topology::labels::LabelSet;

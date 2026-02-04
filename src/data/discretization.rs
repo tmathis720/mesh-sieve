@@ -28,12 +28,22 @@ impl RegionKey {
 }
 
 /// Basis and quadrature metadata for a region.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DiscretizationMetadata {
     /// Basis function identifier for the region.
     pub basis: String,
+    /// Optional polynomial order for the basis functions.
+    pub basis_order: Option<usize>,
+    /// Optional labels describing the basis shape functions.
+    pub shape_functions: Vec<String>,
     /// Quadrature rule identifier for the region.
     pub quadrature: String,
+    /// Optional quadrature order.
+    pub quadrature_order: Option<usize>,
+    /// Optional quadrature points in reference coordinates.
+    pub quadrature_points: Vec<Vec<f64>>,
+    /// Optional quadrature weights matching `quadrature_points`.
+    pub quadrature_weights: Vec<f64>,
 }
 
 impl DiscretizationMetadata {
@@ -41,8 +51,43 @@ impl DiscretizationMetadata {
     pub fn new(basis: impl Into<String>, quadrature: impl Into<String>) -> Self {
         Self {
             basis: basis.into(),
+            basis_order: None,
+            shape_functions: Vec::new(),
             quadrature: quadrature.into(),
+            quadrature_order: None,
+            quadrature_points: Vec::new(),
+            quadrature_weights: Vec::new(),
         }
+    }
+
+    /// Add basis metadata describing order and shape-function labels.
+    pub fn with_basis_metadata(
+        mut self,
+        order: usize,
+        shape_functions: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.basis_order = Some(order);
+        self.shape_functions = shape_functions.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Add quadrature metadata describing order, points, and weights.
+    pub fn with_quadrature_metadata(
+        mut self,
+        order: usize,
+        points: Vec<Vec<f64>>,
+        weights: Vec<f64>,
+    ) -> Self {
+        self.quadrature_order = Some(order);
+        self.quadrature_points = points;
+        self.quadrature_weights = weights;
+        self
+    }
+
+    /// Returns true when explicit quadrature points and weights are available.
+    pub fn has_quadrature_data(&self) -> bool {
+        !self.quadrature_points.is_empty()
+            && self.quadrature_points.len() == self.quadrature_weights.len()
     }
 }
 
