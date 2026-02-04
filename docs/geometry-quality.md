@@ -79,7 +79,10 @@ let mesh = reader.read_with_options(std::fs::File::open("mesh.msh")?, opts)?;
 ```rust
 use mesh_sieve::topology::refine::{refine_mesh_with_options, RefineOptions};
 
-let opts = RefineOptions { check_geometry: true };
+let opts = RefineOptions {
+    check_geometry: true,
+    anisotropic_splits: None,
+};
 let refined = refine_mesh_with_options(
     &mut coarse_sieve,
     &cell_types,

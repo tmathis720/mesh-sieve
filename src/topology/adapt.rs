@@ -125,6 +125,7 @@ where
             coordinates,
             RefineOptions {
                 check_geometry: options.check_geometry,
+                anisotropic_splits: None,
             },
         )?;
         return Ok(AdaptivityResult {
