@@ -199,6 +199,27 @@ impl LabelSet {
         self.labels.is_empty()
     }
 
+    /// Remove all label entries for the provided points.
+    pub fn clear_points<I>(&mut self, points: I)
+    where
+        I: IntoIterator<Item = PointId>,
+    {
+        let targets: HashSet<PointId> = points.into_iter().collect();
+        if targets.is_empty() {
+            return;
+        }
+        let mut empty_labels = Vec::new();
+        for (name, map) in &mut self.labels {
+            map.retain(|point, _| !targets.contains(point));
+            if map.is_empty() {
+                empty_labels.push(name.clone());
+            }
+        }
+        for name in empty_labels {
+            self.labels.remove(&name);
+        }
+    }
+
     /// Iterate over all labels as `(name, point, value)`.
     pub fn iter(&self) -> impl Iterator<Item = (&str, PointId, i32)> + '_ {
         self.labels.iter().flat_map(|(name, map)| {

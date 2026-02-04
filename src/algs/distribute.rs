@@ -2,6 +2,7 @@
 
 use crate::algs::communicator::{CommTag, Communicator, Wait};
 use crate::algs::completion::{complete_section_with_ownership, complete_sieve};
+use crate::algs::point_sf::PointSF;
 use crate::algs::wire::{WirePointRepr, cast_slice, cast_slice_mut};
 use crate::data::atlas::Atlas;
 use crate::data::coordinates::{Coordinates, HighOrderCoordinates};
@@ -235,6 +236,59 @@ where
             maps.insert(name.clone(), map);
         }
         Ok(maps)
+    }
+
+    /// Update ghost values for all registered sections and labels.
+    pub fn distribute_fields<C>(&mut self, comm: &C) -> Result<(), MeshSieveError>
+    where
+        C: Communicator + Sync,
+        V: Clone + Default + Send + PartialEq + 'static,
+    {
+        let sf = PointSF::with_ownership(&self.overlap, &self.ownership, comm, comm.rank());
+        sf.validate()?;
+
+        if let Some(coords) = &mut self.coordinates {
+            sf.complete_section(coords.section_mut())?;
+            if let Some(high_order) = coords.high_order_mut() {
+                sf.complete_section(high_order.section_mut())?;
+            }
+        }
+
+        for section in self.sections.values_mut() {
+            sf.complete_section(section)?;
+        }
+
+        for (_name, section) in self.mixed_sections.iter_mut() {
+            complete_tagged_section_with_ownership(
+                section,
+                &self.overlap,
+                &self.ownership,
+                comm,
+                comm.rank(),
+            )?;
+        }
+
+        if let Some(cell_types) = &mut self.cell_types {
+            complete_section_with_ownership::<CellType, _, CopyDelta, C>(
+                cell_types,
+                &self.overlap,
+                &self.ownership,
+                comm,
+                comm.rank(),
+            )?;
+        }
+
+        if let Some(labels) = &mut self.labels {
+            complete_labels_with_ownership(
+                labels,
+                &self.overlap,
+                &self.ownership,
+                comm,
+                comm.rank(),
+            )?;
+        }
+
+        Ok(())
     }
 }
 
@@ -885,6 +939,171 @@ where
             )
         }
     }
+}
+
+fn complete_labels_with_ownership<C>(
+    labels: &mut LabelSet,
+    overlap: &Overlap,
+    ownership: &PointOwnership,
+    comm: &C,
+    my_rank: usize,
+) -> Result<(), MeshSieveError>
+where
+    C: Communicator + Sync,
+{
+    #[cfg(any(
+        debug_assertions,
+        feature = "strict-invariants",
+        feature = "check-invariants"
+    ))]
+    overlap.validate_invariants()?;
+
+    let mut nb: BTreeSet<usize> = overlap.neighbor_ranks().collect();
+    nb.remove(&my_rank);
+    if nb.is_empty() {
+        return Ok(());
+    }
+
+    labels.clear_points(ownership.ghost_points());
+
+    let mut send_payloads: HashMap<usize, Vec<u8>> = HashMap::new();
+    for (name, point, value) in labels.iter() {
+        let owner = ownership.owner_or_err(point)?;
+        if owner != my_rank {
+            continue;
+        }
+        let name_len: u16 = name.len().try_into().map_err(|_| MeshSieveError::CommError {
+            neighbor: my_rank,
+            source: format!("label name too long: {name}").into(),
+        })?;
+        for (_dst, rem) in overlap.cone(crate::overlap::overlap::local(point)) {
+            if rem.rank == my_rank {
+                continue;
+            }
+            let remote_pt = rem
+                .remote_point
+                .ok_or(MeshSieveError::OverlapLinkMissing(point, rem.rank))?;
+            let payload = send_payloads.entry(rem.rank).or_default();
+            payload.extend_from_slice(&remote_pt.get().to_le_bytes());
+            payload.extend_from_slice(&value.to_le_bytes());
+            payload.extend_from_slice(&name_len.to_le_bytes());
+            payload.extend_from_slice(name.as_bytes());
+        }
+    }
+
+    let neighbors: HashSet<usize> = nb.iter().copied().collect();
+    let tag = CommTag::new(0xD1A5);
+    let counts =
+        crate::algs::completion::size_exchange::exchange_sizes_symmetric::<_, u8>(
+            &send_payloads,
+            comm,
+            tag,
+            &neighbors,
+        )?;
+
+    let mut recvs = Vec::new();
+    for &nbr in &nb {
+        let n = counts.get(&nbr).copied().unwrap_or(0) as usize;
+        let mut buf = vec![0u8; n];
+        let h = comm.irecv_result(nbr, tag.offset(1).as_u16(), &mut buf)?;
+        recvs.push((nbr, h, buf));
+    }
+
+    let mut sends = Vec::new();
+    for &nbr in &nb {
+        let out = send_payloads.get(&nbr).map_or(&[][..], |v| &v[..]);
+        sends.push(comm.isend_result(nbr, tag.offset(1).as_u16(), out)?);
+    }
+
+    let mut maybe_err: Option<MeshSieveError> = None;
+    for (nbr, h, mut buf) in recvs {
+        match h.wait() {
+            Some(raw) if raw.len() == buf.len() => {
+                buf.copy_from_slice(&raw);
+                if let Err(err) = decode_label_payload(&buf, nbr).and_then(|entries| {
+                    for (point, name, value) in entries {
+                        labels.set_label(point, &name, value);
+                    }
+                    Ok(())
+                }) {
+                    if maybe_err.is_none() {
+                        maybe_err = Some(err);
+                    }
+                }
+            }
+            Some(raw) if maybe_err.is_none() => {
+                maybe_err = Some(MeshSieveError::CommError {
+                    neighbor: nbr,
+                    source: format!(
+                        "label payload size mismatch: expected {}B, got {}B",
+                        buf.len(),
+                        raw.len()
+                    )
+                    .into(),
+                });
+            }
+            None if maybe_err.is_none() => {
+                maybe_err = Some(MeshSieveError::CommError {
+                    neighbor: nbr,
+                    source: format!("failed to receive label payload from rank {nbr}").into(),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    for send in sends {
+        let _ = send.wait();
+    }
+
+    if let Some(err) = maybe_err {
+        Err(err)
+    } else {
+        Ok(())
+    }
+}
+
+fn decode_label_payload(
+    buf: &[u8],
+    neighbor: usize,
+) -> Result<Vec<(PointId, String, i32)>, MeshSieveError> {
+    let mut out = Vec::new();
+    let mut idx = 0usize;
+    while idx < buf.len() {
+        let remaining = buf.len() - idx;
+        if remaining < (8 + 4 + 2) {
+            return Err(MeshSieveError::CommError {
+                neighbor,
+                source: "label payload truncated header".into(),
+            });
+        }
+        let mut raw_id = [0u8; 8];
+        raw_id.copy_from_slice(&buf[idx..idx + 8]);
+        idx += 8;
+        let mut raw_val = [0u8; 4];
+        raw_val.copy_from_slice(&buf[idx..idx + 4]);
+        idx += 4;
+        let mut raw_len = [0u8; 2];
+        raw_len.copy_from_slice(&buf[idx..idx + 2]);
+        idx += 2;
+        let name_len = u16::from_le_bytes(raw_len) as usize;
+        if idx + name_len > buf.len() {
+            return Err(MeshSieveError::CommError {
+                neighbor,
+                source: "label payload truncated name".into(),
+            });
+        }
+        let name_bytes = &buf[idx..idx + name_len];
+        idx += name_len;
+        let name = std::str::from_utf8(name_bytes).map_err(|e| MeshSieveError::CommError {
+            neighbor,
+            source: format!("label name invalid utf8: {e}").into(),
+        })?;
+        let point = PointId::new(u64::from_le_bytes(raw_id))?;
+        let value = i32::from_le_bytes(raw_val);
+        out.push((point, name.to_string(), value));
+    }
+    Ok(out)
 }
 
 fn resolve_overlap_via_exchange<C>(

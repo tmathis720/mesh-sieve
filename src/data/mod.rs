@@ -42,7 +42,9 @@ pub use hanging_node_constraints::{
     HangingDofConstraint, HangingNodeConstraints, LinearConstraintTerm,
     apply_hanging_constraints_to_section,
 };
-pub use mixed_section::{MixedScalar, MixedSectionStore, ScalarType, TaggedSection};
+pub use mixed_section::{
+    MixedScalar, MixedSectionStore, ScalarType, TaggedSection, TaggedSectionBuffer,
+};
 pub use multi_section::{FieldSection, MultiSection};
 pub use section::Section;
 pub use section_layout::{
