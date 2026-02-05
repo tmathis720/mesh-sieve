@@ -304,7 +304,10 @@ where
     }
 
     /// Scatter values from a flat buffer in combined atlas order.
-    pub fn try_scatter_in_order(&mut self, buf: &[V]) -> Result<(), MeshSieveError> {
+    pub fn try_scatter_in_order(&mut self, buf: &[V]) -> Result<(), MeshSieveError>
+    where
+        V: Clone + Default,
+    {
         let total = self.atlas.total_len();
         if buf.len() != total {
             return Err(MeshSieveError::ScatterLengthMismatch {
@@ -321,16 +324,19 @@ where
                         let slice = field.section().try_restrict(point)?;
                         slice.len()
                     };
-                    let end = cursor
-                        .checked_add(len)
-                        .ok_or(MeshSieveError::ScatterChunkMismatch {
-                            offset: cursor,
-                            len,
-                        })?;
-                    let chunk = buf.get(cursor..end).ok_or(MeshSieveError::ScatterChunkMismatch {
-                        offset: cursor,
-                        len,
-                    })?;
+                    let end =
+                        cursor
+                            .checked_add(len)
+                            .ok_or(MeshSieveError::ScatterChunkMismatch {
+                                offset: cursor,
+                                len,
+                            })?;
+                    let chunk =
+                        buf.get(cursor..end)
+                            .ok_or(MeshSieveError::ScatterChunkMismatch {
+                                offset: cursor,
+                                len,
+                            })?;
                     field.section_mut().try_set(point, chunk)?;
                     cursor = end;
                 }

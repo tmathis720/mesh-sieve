@@ -1,3 +1,4 @@
+// cargo run --example meshgen_basic
 use mesh_sieve::algs::meshgen::{
     MeshGenOptions, StructuredCellType, cylinder_shell, sphere_shell, structured_box_2d,
     structured_box_3d,

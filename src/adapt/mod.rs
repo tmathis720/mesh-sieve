@@ -2,18 +2,19 @@
 
 use crate::data::atlas::Atlas;
 use crate::data::coordinates::Coordinates;
+use crate::data::refine::delta::SliceDelta;
 use crate::data::refine::sieved_array::SievedArray;
 use crate::data::section::Section;
 use crate::data::storage::{Storage, VecStorage};
-use crate::geometry::quality::{cell_quality_from_section, CellQuality};
+use crate::geometry::quality::{CellQuality, cell_quality_from_section};
 use crate::mesh_error::MeshSieveError;
 use crate::topology::arrow::Polarity;
 use crate::topology::cell_type::CellType;
-use crate::topology::coarsen::{coarsen_topology, CoarsenEntity, CoarsenedTopology};
+use crate::topology::coarsen::{CoarsenEntity, CoarsenedTopology, coarsen_topology};
 use crate::topology::point::PointId;
 use crate::topology::refine::{
-    collapse_to_cell_vertices, refine_mesh_with_options, AnisotropicSplitHints, RefineOptions,
-    RefinedMesh,
+    AnisotropicSplitHints, RefineOptions, RefinedMesh, collapse_to_cell_vertices,
+    refine_mesh_with_options,
 };
 use crate::topology::sieve::Sieve;
 use std::collections::HashMap;
@@ -110,6 +111,12 @@ pub struct MetricTensor {
     pub dimension: usize,
     /// Symmetric tensor entries stored as (m00, m11, m22, m01, m02, m12).
     pub data: [f64; 6],
+}
+
+impl Default for MetricTensor {
+    fn default() -> Self {
+        Self::new_2d(1.0, 1.0, 0.0)
+    }
 }
 
 impl MetricTensor {
@@ -261,7 +268,10 @@ fn polygon_edges(vertices: &[PointId]) -> Vec<[PointId; 2]> {
     edges
 }
 
-fn cell_edges(cell_type: CellType, vertices: &[PointId]) -> Result<Vec<[PointId; 2]>, MeshSieveError> {
+fn cell_edges(
+    cell_type: CellType,
+    vertices: &[PointId],
+) -> Result<Vec<[PointId; 2]>, MeshSieveError> {
     let edges = match cell_type {
         CellType::Triangle => vec![
             [vertices[0], vertices[1]],
@@ -322,7 +332,10 @@ fn cell_edges(cell_type: CellType, vertices: &[PointId]) -> Result<Vec<[PointId;
     Ok(edges)
 }
 
-fn cell_faces(cell_type: CellType, vertices: &[PointId]) -> Result<Vec<Vec<PointId>>, MeshSieveError> {
+fn cell_faces(
+    cell_type: CellType,
+    vertices: &[PointId],
+) -> Result<Vec<Vec<PointId>>, MeshSieveError> {
     let faces = match cell_type {
         CellType::Tetrahedron => vec![
             vec![vertices[0], vertices[1], vertices[2]],

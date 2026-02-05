@@ -6,9 +6,9 @@ use crate::data::section::Section;
 use crate::data::storage::{Storage, VecStorage};
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cell_type::CellType;
-use crate::topology::coarsen::{coarsen_topology, CoarsenEntity, CoarsenedTopology};
+use crate::topology::coarsen::{CoarsenEntity, CoarsenedTopology, coarsen_topology};
 use crate::topology::point::PointId;
-use crate::topology::refine::{refine_mesh_with_options, RefineOptions, RefinedMesh};
+use crate::topology::refine::{RefineOptions, RefinedMesh, refine_mesh_with_options};
 use crate::topology::sieve::Sieve;
 
 /// Configuration for the adaptivity driver.

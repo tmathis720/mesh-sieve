@@ -31,7 +31,8 @@ where
     CtSt: Storage<CellType>,
 {
     /// Invoked after coordinates are updated.
-    pub after_update: Option<&'a mut dyn FnMut(&MeshData<M, f64, St, CtSt>) -> Result<(), MeshSieveError>>,
+    pub after_update:
+        Option<&'a mut dyn FnMut(&MeshData<M, f64, St, CtSt>) -> Result<(), MeshSieveError>>,
 }
 
 /// Apply a coordinate transformation to a mesh, leaving topology unchanged.
@@ -45,9 +46,10 @@ where
     St: Storage<f64>,
     CtSt: Storage<CellType>,
 {
-    let coords = mesh.coordinates.as_mut().ok_or_else(|| {
-        MeshSieveError::InvalidGeometry("mesh is missing coordinates".into())
-    })?;
+    let coords = mesh
+        .coordinates
+        .as_mut()
+        .ok_or_else(|| MeshSieveError::InvalidGeometry("mesh is missing coordinates".into()))?;
     let dim = coords.dimension();
     let points: Vec<PointId> = coords.section().atlas().points().collect();
 

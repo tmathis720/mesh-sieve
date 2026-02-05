@@ -242,6 +242,9 @@ pub enum MeshSieveError {
     /// Generic I/O error for mesh readers/writers.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+    /// HDF5 error for mesh readers/writers.
+    #[error("HDF5 error: {0}")]
+    Hdf5(#[from] hdf5::Error),
     /// Invalid or inverted geometry detected.
     #[error("Geometry error: {0}")]
     InvalidGeometry(String),

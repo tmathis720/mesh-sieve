@@ -1,5 +1,5 @@
 // cargo mpirun -n 2 --features mpi-support --example distribute_mpi
-// Version 1.3.0: Passing
+// Version 3.2.0: Passing
 // This example demonstrates how to distribute a simple mesh across two MPI ranks
 // using the `mesh_sieve` library. It creates a mesh with three points and two arrows,
 // partitions it such that rank 0 owns point 1 and rank 1 owns points 2 and 3, and

@@ -1,3 +1,4 @@
+// cargo run --example poisson_quad
 use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::discretization::{Discretization, DiscretizationMetadata, RegionKey};
 use mesh_sieve::data::section::Section;

@@ -2,7 +2,7 @@ use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::refine::sieved_array::SievedArray;
 use mesh_sieve::data::section::Section;
 use mesh_sieve::data::storage::VecStorage;
-use mesh_sieve::topology::adapt::{adapt_topology, AdaptivityAction, AdaptivityOptions};
+use mesh_sieve::topology::adapt::{AdaptivityAction, AdaptivityOptions, adapt_topology};
 use mesh_sieve::topology::cell_type::CellType;
 use mesh_sieve::topology::coarsen::{CoarsenEntity, CoarsenedTopology};
 use mesh_sieve::topology::point::PointId;

@@ -212,8 +212,8 @@ where
     writer.write(&mut mesh_bytes, mesh)?;
     let overlap_meta = overlap.map(overlap_to_metadata);
     let metadata = PartitionedMeshMetadata::new(rank, size, overlap_meta);
-    let metadata_bytes = serde_json::to_vec(&metadata)
-        .map_err(|e| MeshSieveError::MeshIoParse(e.to_string()))?;
+    let metadata_bytes =
+        serde_json::to_vec(&metadata).map_err(|e| MeshSieveError::MeshIoParse(e.to_string()))?;
 
     let local_total = (mesh_bytes.len() + metadata_bytes.len()) as u64;
     let mut total_bytes = [local_total];
@@ -409,9 +409,9 @@ where
 
         let mut data_buf = vec![0u8; data_len.0 + data_len.1];
         let recv = comm.irecv(root, data_tag, &mut data_buf);
-        let payload = recv.wait().ok_or_else(|| {
-            MeshSieveError::MeshIoParse("failed to receive mesh payload".into())
-        })?;
+        let payload = recv
+            .wait()
+            .ok_or_else(|| MeshSieveError::MeshIoParse("failed to receive mesh payload".into()))?;
         if payload.len() != data_buf.len() {
             return Err(MeshSieveError::MeshIoParse(
                 "mesh payload length mismatch".into(),

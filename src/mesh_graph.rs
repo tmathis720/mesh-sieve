@@ -13,8 +13,8 @@ use crate::algs::adjacency_graph::{
 };
 use crate::mesh_error::MeshSieveError;
 use crate::topology::point::PointId;
-use crate::topology::sieve::strata::compute_strata;
 use crate::topology::sieve::Sieve;
+use crate::topology::sieve::strata::compute_strata;
 
 /// Weighting mode for adjacency graphs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -181,11 +181,7 @@ where
     out
 }
 
-fn downward_boundary_points<S>(
-    sieve: &S,
-    p: PointId,
-    max_down_depth: Option<u32>,
-) -> Vec<PointId>
+fn downward_boundary_points<S>(sieve: &S, p: PointId, max_down_depth: Option<u32>) -> Vec<PointId>
 where
     S: Sieve<Point = PointId>,
 {
@@ -224,11 +220,7 @@ where
     }
 }
 
-fn upward_boundary_points<S>(
-    sieve: &S,
-    p: PointId,
-    max_up_depth: Option<u32>,
-) -> Vec<PointId>
+fn upward_boundary_points<S>(sieve: &S, p: PointId, max_up_depth: Option<u32>) -> Vec<PointId>
 where
     S: Sieve<Point = PointId>,
 {

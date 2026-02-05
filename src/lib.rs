@@ -85,13 +85,13 @@ pub mod prelude {
         complete_section_with_tags_and_ownership, complete_sieve, complete_stack,
         complete_stack_with_tags,
     };
-    pub use crate::algs::point_sf::PointSF;
     #[cfg(feature = "metis-support")]
     pub use crate::algs::distribute::MetisPartitioner;
     pub use crate::algs::distribute::{
         CustomPartitioner, DistributionConfig, ProvidedPartition, distribute_with_overlap,
         distribute_with_overlap_periodic,
     };
+    pub use crate::algs::point_sf::PointSF;
     pub use crate::algs::rcm::distributed_rcm;
     pub use crate::algs::renumber::{
         StratifiedOrdering, renumber_coordinate_dm, renumber_points, renumber_points_stratified,

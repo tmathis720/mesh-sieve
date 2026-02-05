@@ -453,8 +453,7 @@ mod tests {
         for vert in vertices {
             coord_atlas.try_insert(vert, 2).unwrap();
         }
-        let mut coords =
-            Coordinates::<f64, VecStorage<f64>>::try_new(2, 2, coord_atlas).unwrap();
+        let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(2, 2, coord_atlas).unwrap();
         coords
             .section_mut()
             .try_set(vertices[0], &[0.0, 0.0])
@@ -505,8 +504,7 @@ mod tests {
         for vert in vertices {
             coord_atlas.try_insert(vert, 2).unwrap();
         }
-        let mut coords =
-            Coordinates::<f64, VecStorage<f64>>::try_new(2, 2, coord_atlas).unwrap();
+        let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(2, 2, coord_atlas).unwrap();
         for (idx, vert) in vertices.iter().enumerate() {
             coords
                 .section_mut()
@@ -549,8 +547,7 @@ mod tests {
         for vert in vertices {
             coord_atlas.try_insert(vert, 2).unwrap();
         }
-        let mut coords =
-            Coordinates::<f64, VecStorage<f64>>::try_new(2, 2, coord_atlas).unwrap();
+        let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(2, 2, coord_atlas).unwrap();
         coords
             .section_mut()
             .try_set(vertices[0], &[0.0, 0.0])
@@ -607,8 +604,7 @@ mod tests {
         for vert in vertices {
             coord_atlas.try_insert(vert, 2).unwrap();
         }
-        let mut coords =
-            Coordinates::<f64, VecStorage<f64>>::try_new(2, 2, coord_atlas).unwrap();
+        let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(2, 2, coord_atlas).unwrap();
         coords
             .section_mut()
             .try_set(vertices[0], &[0.0, 0.0])

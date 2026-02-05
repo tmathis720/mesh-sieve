@@ -1,5 +1,5 @@
 use mesh_sieve::adapt::{
-    adapt_with_quality_and_transfer, evaluate_quality_metrics, AdaptationAction, QualityThresholds,
+    AdaptationAction, QualityThresholds, adapt_with_quality_and_transfer, evaluate_quality_metrics,
 };
 use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::coordinates::Coordinates;
@@ -116,12 +116,8 @@ fn refine_low_quality_cells_by_size_metric() {
         .as_ref()
         .expect("refinement should create coordinates");
     let mut refined_sieve = refined.sieve.clone();
-    let refined_metrics = evaluate_quality_metrics(
-        &mut refined_sieve,
-        &refined_cell_types,
-        refined_coords,
-    )
-    .unwrap();
+    let refined_metrics =
+        evaluate_quality_metrics(&mut refined_sieve, &refined_cell_types, refined_coords).unwrap();
     let max_refined_size = refined_metrics
         .iter()
         .map(|(_, metric)| metric.cell_size)

@@ -47,13 +47,8 @@ fn gmsh_mixed_element_mesh_ingests_and_traverses() {
         CellType::Quadrilateral
     );
 
-    let closure = closure_to_depth(
-        &mesh.sieve,
-        [tri, quad],
-        0,
-        Some(TraversalOrder::Sorted),
-    )
-    .expect("closure traversal");
+    let closure = closure_to_depth(&mesh.sieve, [tri, quad], 0, Some(TraversalOrder::Sorted))
+        .expect("closure traversal");
     let mut closure_sorted = closure.clone();
     closure_sorted.sort_unstable();
     let expected: Vec<PointId> = (1..=5).map(|id| PointId::new(id).unwrap()).collect();
@@ -80,13 +75,16 @@ fn mixed_element_pipelines_support_surface_meshes() {
     let refined = refine_mesh(&mut sieve_refine, cell_types).expect("refine mixed elements");
     assert_eq!(refined.cell_refinement.len(), 2);
 
-    let extruded =
-        extrude_surface_layers(&mesh.sieve, cell_types, coords, &[0.0, 1.0]).unwrap();
+    let extruded = extrude_surface_layers(&mesh.sieve, cell_types, coords, &[0.0, 1.0]).unwrap();
     let cell_types_out = extruded.cell_types.as_ref().expect("extruded types");
-    assert!(cell_types_out
-        .iter()
-        .any(|(_, ty)| ty[0] == CellType::Prism));
-    assert!(cell_types_out
-        .iter()
-        .any(|(_, ty)| ty[0] == CellType::Hexahedron));
+    assert!(
+        cell_types_out
+            .iter()
+            .any(|(_, ty)| ty[0] == CellType::Prism)
+    );
+    assert!(
+        cell_types_out
+            .iter()
+            .any(|(_, ty)| ty[0] == CellType::Hexahedron)
+    );
 }

@@ -130,9 +130,7 @@ impl<const D: usize> Forest<D> {
         let sibling_count = 1 << D;
         for (parent, children) in parent_to_children {
             if children.len() == sibling_count
-                && children
-                    .iter()
-                    .all(|child| indicator(child) < threshold)
+                && children.iter().all(|child| indicator(child) < threshold)
             {
                 to_coarsen.push((parent, children));
             }
@@ -175,21 +173,13 @@ impl<const D: usize> Forest<D> {
     }
 
     fn max_level(&self) -> u8 {
-        self.leaves
-            .iter()
-            .map(|cell| cell.level)
-            .max()
-            .unwrap_or(0)
+        self.leaves.iter().map(|cell| cell.level).max().unwrap_or(0)
     }
 
     fn balance(&mut self) {
         loop {
             let leaves: Vec<_> = self.leaves.iter().copied().collect();
-            let max_level = leaves
-                .iter()
-                .map(|cell| cell.level)
-                .max()
-                .unwrap_or(0);
+            let max_level = leaves.iter().map(|cell| cell.level).max().unwrap_or(0);
             let mut to_refine = HashSet::new();
             for (i, cell) in leaves.iter().enumerate() {
                 for other in leaves.iter().skip(i + 1) {
@@ -257,11 +247,7 @@ fn cell_bounds<const D: usize>(cell: &TreeCell<D>, max_level: u8) -> [(u32, u32)
     bounds
 }
 
-fn are_face_neighbors<const D: usize>(
-    a: &TreeCell<D>,
-    b: &TreeCell<D>,
-    max_level: u8,
-) -> bool {
+fn are_face_neighbors<const D: usize>(a: &TreeCell<D>, b: &TreeCell<D>, max_level: u8) -> bool {
     let a_bounds = cell_bounds(a, max_level);
     let b_bounds = cell_bounds(b, max_level);
     let mut touching_axis = None;
@@ -301,7 +287,11 @@ fn cell_vertices<const D: usize>(cell: &TreeCell<D>, max_level: u8) -> Vec<Fores
         let mut coords = [0u32; D];
         for axis in 0..D {
             let bit = (idx >> axis) & 1;
-            coords[axis] = if bit == 0 { bounds[axis].0 } else { bounds[axis].1 };
+            coords[axis] = if bit == 0 {
+                bounds[axis].0
+            } else {
+                bounds[axis].1
+            };
         }
         vertices.push(ForestVertex { coords });
     }
@@ -317,23 +307,25 @@ mod tests {
         let mut forest = QuadForest::new();
         assert_eq!(forest.leaf_count(), 1);
 
-        let refined = forest.refine_by_indicator(|cell| {
-            if cell.level == 0 {
-                1.0
-            } else {
-                0.0
-            }
-        }, 0.5);
+        let refined = forest.refine_by_indicator(
+            |cell| {
+                if cell.level == 0 { 1.0 } else { 0.0 }
+            },
+            0.5,
+        );
         assert_eq!(refined, 1);
         assert_eq!(forest.leaf_count(), 4);
 
-        forest.refine_by_indicator(|cell| {
-            if cell.level == 1 && cell.coords == [0, 0] {
-                1.0
-            } else {
-                0.0
-            }
-        }, 0.5);
+        forest.refine_by_indicator(
+            |cell| {
+                if cell.level == 1 && cell.coords == [0, 0] {
+                    1.0
+                } else {
+                    0.0
+                }
+            },
+            0.5,
+        );
         assert_eq!(forest.leaf_count(), 7);
 
         let coarsened = forest.coarsen_by_indicator(|_| 0.0, 0.1);
@@ -349,13 +341,16 @@ mod tests {
     fn forest_conforming_view_has_consistent_topology() {
         let mut forest = QuadForest::new();
         forest.refine_by_indicator(|cell| if cell.level == 0 { 1.0 } else { 0.0 }, 0.0);
-        forest.refine_by_indicator(|cell| {
-            if cell.level == 1 && cell.coords == [0, 0] {
-                1.0
-            } else {
-                0.0
-            }
-        }, 0.5);
+        forest.refine_by_indicator(
+            |cell| {
+                if cell.level == 1 && cell.coords == [0, 0] {
+                    1.0
+                } else {
+                    0.0
+                }
+            },
+            0.5,
+        );
 
         let view = forest.conforming_view();
         assert_eq!(view.max_level, 2);

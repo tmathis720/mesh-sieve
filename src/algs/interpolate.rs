@@ -116,12 +116,18 @@ where
 
     for (cell, cell_type) in cells {
         let expected = expected_vertex_count(cell_type);
-        let permutation = ordering
-            .and_then(|meta| meta.vertex_permutations.get(&cell).map(|perm| perm.as_slice()));
+        let permutation = ordering.and_then(|meta| {
+            meta.vertex_permutations
+                .get(&cell)
+                .map(|perm| perm.as_slice())
+        });
         let vertices = cell_vertices(sieve, cell, expected, permutation)?;
 
-        let poly_faces = ordering
-            .and_then(|meta| meta.polyhedron_faces.get(&cell).map(|faces| faces.as_slice()));
+        let poly_faces = ordering.and_then(|meta| {
+            meta.polyhedron_faces
+                .get(&cell)
+                .map(|faces| faces.as_slice())
+        });
         let edges = cell_edges(cell_type, &vertices, poly_faces)?;
         for [a, b] in edges {
             let edge = edge_point(
@@ -561,9 +567,7 @@ fn face_type_for_vertices(count: usize) -> Result<CellType, MeshSieveError> {
         4 => Ok(CellType::Quadrilateral),
         n => {
             let n_u8 = u8::try_from(n).map_err(|_| {
-                MeshSieveError::InvalidGeometry(format!(
-                    "polygon face vertex count {n} exceeds u8"
-                ))
+                MeshSieveError::InvalidGeometry(format!("polygon face vertex count {n} exceeds u8"))
             })?;
             Ok(CellType::Polygon(n_u8))
         }

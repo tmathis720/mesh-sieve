@@ -400,11 +400,9 @@ impl MixedSectionStore {
         buffers: &BTreeMap<String, TaggedSectionBuffer>,
     ) -> Result<(), MeshSieveError> {
         for (name, section) in &mut self.sections {
-            let buf = buffers.get(name).ok_or_else(|| {
-                MeshSieveError::MissingSectionName {
-                    name: name.clone(),
-                }
-            })?;
+            let buf = buffers
+                .get(name)
+                .ok_or_else(|| MeshSieveError::MissingSectionName { name: name.clone() })?;
             section.try_scatter_in_order(buf)?;
         }
         Ok(())

@@ -1,8 +1,12 @@
-use mesh_sieve::adapt::{adapt_with_metric, MetricAdaptationAction, MetricThresholds, MetricTensor};
+// cargo run --example adapt_with_metric
+use mesh_sieve::adapt::{
+    MetricAdaptationAction, MetricTensor, MetricThresholds, adapt_with_metric,
+};
 use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::coordinates::Coordinates;
 use mesh_sieve::data::section::Section;
 use mesh_sieve::data::storage::VecStorage;
+use mesh_sieve::topology::Sieve;
 use mesh_sieve::topology::cell_type::CellType;
 use mesh_sieve::topology::coarsen::CoarsenEntity;
 use mesh_sieve::topology::point::PointId;

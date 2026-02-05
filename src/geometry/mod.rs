@@ -3,5 +3,5 @@
 //! This module provides helpers for evaluating basic cell quality metrics
 //! using coordinate sections.
 
-pub mod quality;
 pub mod metrics;
+pub mod quality;

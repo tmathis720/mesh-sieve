@@ -13,7 +13,7 @@ use crate::data::section::Section;
 use crate::data::storage::Storage;
 use crate::io::MeshData;
 use crate::mesh_error::MeshSieveError;
-use crate::overlap::delta::CopyDelta;
+use crate::overlap::delta::{CellTypeDelta, CopyDelta};
 use crate::overlap::overlap::{Overlap, OvlId};
 use crate::overlap::overlap::{ensure_closure_of_support, expand_one_layer_mesh};
 use crate::topology::cell_type::CellType;
@@ -242,7 +242,7 @@ where
     pub fn distribute_fields<C>(&mut self, comm: &C) -> Result<(), MeshSieveError>
     where
         C: Communicator + Sync,
-        V: Clone + Default + Send + PartialEq + 'static,
+        V: Clone + Default + Send + PartialEq + bytemuck::Pod + 'static,
     {
         let sf = PointSF::with_ownership(&self.overlap, &self.ownership, comm, comm.rank());
         sf.validate()?;
@@ -269,7 +269,7 @@ where
         }
 
         if let Some(cell_types) = &mut self.cell_types {
-            complete_section_with_ownership::<CellType, _, CopyDelta, C>(
+            complete_section_with_ownership::<CellType, _, CellTypeDelta, C>(
                 cell_types,
                 &self.overlap,
                 &self.ownership,
@@ -444,11 +444,8 @@ where
     let periodic_classes = periodic
         .map(|eq| build_periodic_classes(&points, eq))
         .unwrap_or_default();
-    let periodic_remote_map = build_periodic_remote_map(
-        &periodic_classes,
-        &point_owners,
-        point_owners.len(),
-    );
+    let periodic_remote_map =
+        build_periodic_remote_map(&periodic_classes, &point_owners, point_owners.len());
 
     let adjacency = build_adjacency(&mesh_data.sieve, max_id, &periodic_classes);
     let use_comm_completion = should_use_comm_completion(comm);
@@ -506,18 +503,23 @@ where
         Some(&periodic_remote_map),
         use_comm_completion,
     )?;
+    ensure_periodic_remote_links(&mut overlap)?;
+
+    let mut local_set = owned_set.clone();
+    for nbr in overlap.neighbor_ranks() {
+        for (p, remote) in overlap.links_to(nbr) {
+            local_set.insert(p);
+            if let Some(remote_point) = remote {
+                local_set.insert(remote_point);
+            }
+        }
+    }
 
     let local_sieve = if use_comm_completion {
-        let mut local = build_local_sieve(mesh_data, &owned_set);
+        let mut local = build_local_sieve(mesh_data, &local_set);
         complete_sieve(&mut local, &overlap, comm, my_rank)?;
         local
     } else {
-        let mut local_set = owned_set.clone();
-        for nbr in overlap.neighbor_ranks() {
-            for (p, _) in overlap.links_to(nbr) {
-                local_set.insert(p);
-            }
-        }
         build_local_sieve(mesh_data, &local_set)
     };
 
@@ -531,14 +533,10 @@ where
         })
         .collect();
 
-    let ownership = PointOwnership::from_local_set(local_points.iter().copied(), &point_owners, my_rank)?;
+    let ownership =
+        PointOwnership::from_local_set(local_points.iter().copied(), &point_owners, my_rank)?;
 
-    debug_validate_overlap_ownership_topology(
-        &local_sieve,
-        &ownership,
-        Some(&overlap),
-        my_rank,
-    )?;
+    debug_validate_overlap_ownership_topology(&local_sieve, &ownership, Some(&overlap), my_rank)?;
 
     let section_points = if config.synchronize_sections {
         &local_points
@@ -794,6 +792,26 @@ fn build_periodic_remote_map(
     remote_map
 }
 
+fn ensure_periodic_remote_links(overlap: &mut Overlap) -> Result<(), MeshSieveError> {
+    let mut extras: Vec<(PointId, usize)> = Vec::new();
+    for nbr in overlap.neighbor_ranks() {
+        for (local, remote) in overlap.links_to(nbr) {
+            if let Some(remote_point) = remote {
+                if remote_point != local {
+                    extras.push((remote_point, nbr));
+                }
+            }
+        }
+    }
+    extras.sort_unstable();
+    extras.dedup();
+    for (local, nbr) in extras {
+        overlap.try_add_link_structural_one(local, nbr)?;
+        overlap.resolve_remote_point(local, nbr, local)?;
+    }
+    Ok(())
+}
+
 fn build_local_sieve<M, V, St, CtSt>(
     mesh_data: &MeshData<M, V, St, CtSt>,
     local_set: &BTreeSet<PointId>,
@@ -864,36 +882,24 @@ fn build_local_tagged_section(
     owned_points: &BTreeSet<PointId>,
 ) -> Result<TaggedSection, MeshSieveError> {
     Ok(match section {
-        TaggedSection::F64(sec) => TaggedSection::F64(build_local_section_owned(
-            sec,
-            local_points,
-            owned_points,
-        )?),
-        TaggedSection::F32(sec) => TaggedSection::F32(build_local_section_owned(
-            sec,
-            local_points,
-            owned_points,
-        )?),
-        TaggedSection::I32(sec) => TaggedSection::I32(build_local_section_owned(
-            sec,
-            local_points,
-            owned_points,
-        )?),
-        TaggedSection::I64(sec) => TaggedSection::I64(build_local_section_owned(
-            sec,
-            local_points,
-            owned_points,
-        )?),
-        TaggedSection::U32(sec) => TaggedSection::U32(build_local_section_owned(
-            sec,
-            local_points,
-            owned_points,
-        )?),
-        TaggedSection::U64(sec) => TaggedSection::U64(build_local_section_owned(
-            sec,
-            local_points,
-            owned_points,
-        )?),
+        TaggedSection::F64(sec) => {
+            TaggedSection::F64(build_local_section_owned(sec, local_points, owned_points)?)
+        }
+        TaggedSection::F32(sec) => {
+            TaggedSection::F32(build_local_section_owned(sec, local_points, owned_points)?)
+        }
+        TaggedSection::I32(sec) => {
+            TaggedSection::I32(build_local_section_owned(sec, local_points, owned_points)?)
+        }
+        TaggedSection::I64(sec) => {
+            TaggedSection::I64(build_local_section_owned(sec, local_points, owned_points)?)
+        }
+        TaggedSection::U32(sec) => {
+            TaggedSection::U32(build_local_section_owned(sec, local_points, owned_points)?)
+        }
+        TaggedSection::U64(sec) => {
+            TaggedSection::U64(build_local_section_owned(sec, local_points, owned_points)?)
+        }
     })
 }
 
@@ -908,36 +914,24 @@ where
     C: Communicator + Sync,
 {
     match section {
-        TaggedSection::F64(sec) => {
-            complete_section_with_ownership::<f64, _, CopyDelta, C>(
-                sec, overlap, ownership, comm, my_rank,
-            )
-        }
-        TaggedSection::F32(sec) => {
-            complete_section_with_ownership::<f32, _, CopyDelta, C>(
-                sec, overlap, ownership, comm, my_rank,
-            )
-        }
-        TaggedSection::I32(sec) => {
-            complete_section_with_ownership::<i32, _, CopyDelta, C>(
-                sec, overlap, ownership, comm, my_rank,
-            )
-        }
-        TaggedSection::I64(sec) => {
-            complete_section_with_ownership::<i64, _, CopyDelta, C>(
-                sec, overlap, ownership, comm, my_rank,
-            )
-        }
-        TaggedSection::U32(sec) => {
-            complete_section_with_ownership::<u32, _, CopyDelta, C>(
-                sec, overlap, ownership, comm, my_rank,
-            )
-        }
-        TaggedSection::U64(sec) => {
-            complete_section_with_ownership::<u64, _, CopyDelta, C>(
-                sec, overlap, ownership, comm, my_rank,
-            )
-        }
+        TaggedSection::F64(sec) => complete_section_with_ownership::<f64, _, CopyDelta, C>(
+            sec, overlap, ownership, comm, my_rank,
+        ),
+        TaggedSection::F32(sec) => complete_section_with_ownership::<f32, _, CopyDelta, C>(
+            sec, overlap, ownership, comm, my_rank,
+        ),
+        TaggedSection::I32(sec) => complete_section_with_ownership::<i32, _, CopyDelta, C>(
+            sec, overlap, ownership, comm, my_rank,
+        ),
+        TaggedSection::I64(sec) => complete_section_with_ownership::<i64, _, CopyDelta, C>(
+            sec, overlap, ownership, comm, my_rank,
+        ),
+        TaggedSection::U32(sec) => complete_section_with_ownership::<u32, _, CopyDelta, C>(
+            sec, overlap, ownership, comm, my_rank,
+        ),
+        TaggedSection::U64(sec) => complete_section_with_ownership::<u64, _, CopyDelta, C>(
+            sec, overlap, ownership, comm, my_rank,
+        ),
     }
 }
 
@@ -972,10 +966,13 @@ where
         if owner != my_rank {
             continue;
         }
-        let name_len: u16 = name.len().try_into().map_err(|_| MeshSieveError::CommError {
-            neighbor: my_rank,
-            source: format!("label name too long: {name}").into(),
-        })?;
+        let name_len: u16 = name
+            .len()
+            .try_into()
+            .map_err(|_| MeshSieveError::CommError {
+                neighbor: my_rank,
+                source: format!("label name too long: {name}").into(),
+            })?;
         for (_dst, rem) in overlap.cone(crate::overlap::overlap::local(point)) {
             if rem.rank == my_rank {
                 continue;
@@ -993,13 +990,12 @@ where
 
     let neighbors: HashSet<usize> = nb.iter().copied().collect();
     let tag = CommTag::new(0xD1A5);
-    let counts =
-        crate::algs::completion::size_exchange::exchange_sizes_symmetric::<_, u8>(
-            &send_payloads,
-            comm,
-            tag,
-            &neighbors,
-        )?;
+    let counts = crate::algs::completion::size_exchange::exchange_sizes_symmetric::<_, u8>(
+        &send_payloads,
+        comm,
+        tag,
+        &neighbors,
+    )?;
 
     let mut recvs = Vec::new();
     for &nbr in &nb {
@@ -1174,11 +1170,7 @@ where
     let mut sends = Vec::new();
     for &nbr in &neighbors {
         let out = send_points.get(&nbr).map_or(&[][..], |v| &v[..]);
-        sends.push(comm.isend_result(
-            nbr,
-            tag.offset(1).as_u16(),
-            cast_slice(out),
-        )?);
+        sends.push(comm.isend_result(nbr, tag.offset(1).as_u16(), cast_slice(out))?);
     }
 
     let mut recv_sets: HashMap<usize, HashSet<u64>> = HashMap::new();
@@ -1194,11 +1186,8 @@ where
                 let exp = buf.len() * std::mem::size_of::<WirePointRepr>();
                 maybe_err = Some(MeshSieveError::CommError {
                     neighbor: nbr,
-                    source: format!(
-                        "payload size mismatch: expected {exp}B, got {}B",
-                        raw.len()
-                    )
-                    .into(),
+                    source: format!("payload size mismatch: expected {exp}B, got {}B", raw.len())
+                        .into(),
                 });
             }
             None if maybe_err.is_none() => {
@@ -1229,11 +1218,7 @@ where
                 .unwrap_or(p);
             if !recv_set.contains(&remote.get()) {
                 return Err(MeshSieveError::MissingOverlap {
-                    source: format!(
-                        "neighbor {nbr} missing shared point {}",
-                        remote.get()
-                    )
-                    .into(),
+                    source: format!("neighbor {nbr} missing shared point {}", remote.get()).into(),
                 });
             }
             overlap.resolve_remote_point(p, nbr, remote)?;

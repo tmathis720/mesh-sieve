@@ -1,5 +1,6 @@
 //! Exodus mesh reader/writer.
 
+use crate::data::atlas::Atlas;
 use crate::data::coordinates::Coordinates;
 use crate::data::section::Section;
 use crate::data::storage::VecStorage;
@@ -10,12 +11,13 @@ use crate::topology::labels::LabelSet;
 use crate::topology::point::PointId;
 use crate::topology::sieve::{InMemorySieve, MutableSieve, Sieve};
 use crate::topology::validation::{TopologyValidationOptions, validate_sieve_topology};
-use crate::data::atlas::Atlas;
 use hdf5::File;
+use hdf5::types::{VarLenAscii, VarLenUnicode};
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Legacy Exodus ASCII reader.
@@ -105,7 +107,9 @@ fn read_f64_dataset(dataset: &hdf5::Dataset) -> Result<Vec<f64>, MeshSieveError>
 }
 
 fn read_i64_dataset_optional(file: &File, name: &str) -> Option<Vec<i64>> {
-    file.dataset(name).ok().and_then(|dataset| read_i64_dataset(&dataset).ok())
+    file.dataset(name)
+        .ok()
+        .and_then(|dataset| read_i64_dataset(&dataset).ok())
 }
 
 fn read_i32_scalar_optional(file: &File, name: &str) -> Option<i32> {
@@ -121,11 +125,17 @@ fn read_i32_scalar_optional(file: &File, name: &str) -> Option<i32> {
 
 fn read_string_attr_optional(dataset: &hdf5::Dataset, name: &str) -> Option<String> {
     let attr = dataset.attr(name).ok()?;
-    if let Ok(value) = attr.read_scalar::<String>() {
-        return Some(value.trim_matches('\0').trim().to_string());
+    if let Ok(value) = attr.read_scalar::<VarLenUnicode>() {
+        return Some(value.as_str().trim_matches('\0').trim().to_string());
+    }
+    if let Ok(value) = attr.read_scalar::<VarLenAscii>() {
+        return Some(value.as_str().trim_matches('\0').trim().to_string());
     }
     let raw: Vec<u8> = attr.read_raw().ok()?;
-    let value = String::from_utf8_lossy(&raw).trim_matches('\0').trim().to_string();
+    let value = String::from_utf8_lossy(&raw)
+        .trim_matches('\0')
+        .trim()
+        .to_string();
     (!value.is_empty()).then_some(value)
 }
 
@@ -235,8 +245,10 @@ impl ExodusReader {
         &self,
         mut reader: R,
         options: ExodusReadOptions,
-    ) -> Result<MeshData<InMemorySieve<PointId, ()>, f64, VecStorage<f64>, VecStorage<CellType>>, MeshSieveError>
-    {
+    ) -> Result<
+        MeshData<InMemorySieve<PointId, ()>, f64, VecStorage<f64>, VecStorage<CellType>>,
+        MeshSieveError,
+    > {
         let mut contents = String::new();
         reader.read_to_string(&mut contents)?;
         let mut lines = contents.lines();
@@ -245,9 +257,7 @@ impl ExodusReader {
             .next()
             .ok_or_else(|| MeshSieveError::MeshIoParse("missing exodus header".into()))?;
         if header.trim() != "EXODUS" {
-            return Err(MeshSieveError::MeshIoParse(
-                "invalid exodus header".into(),
-            ));
+            return Err(MeshSieveError::MeshIoParse("invalid exodus header".into()));
         }
 
         let dim_line = lines
@@ -275,9 +285,7 @@ impl ExodusReader {
             .ok_or_else(|| MeshSieveError::MeshIoParse("missing nodes header".into()))?;
         let mut nodes_parts = nodes_line.split_whitespace();
         if nodes_parts.next() != Some("NODES") {
-            return Err(MeshSieveError::MeshIoParse(
-                "missing NODES section".into(),
-            ));
+            return Err(MeshSieveError::MeshIoParse("missing NODES section".into()));
         }
         let node_count: usize = nodes_parts
             .next()
@@ -298,9 +306,8 @@ impl ExodusReader {
                 .ok_or_else(|| MeshSieveError::MeshIoParse("missing node id".into()))?
                 .parse::<u64>()
                 .map_err(|_| MeshSieveError::MeshIoParse("invalid node id".into()))?;
-            let point = PointId::new(id).map_err(|_| {
-                MeshSieveError::MeshIoParse(format!("invalid node id {id}"))
-            })?;
+            let point = PointId::new(id)
+                .map_err(|_| MeshSieveError::MeshIoParse(format!("invalid node id {id}")))?;
             let mut values = Vec::with_capacity(coord_dim);
             for _ in 0..coord_dim {
                 let value = parts
@@ -354,9 +361,8 @@ impl ExodusReader {
                 .ok_or_else(|| MeshSieveError::MeshIoParse("missing element id".into()))?
                 .parse::<u64>()
                 .map_err(|_| MeshSieveError::MeshIoParse("invalid element id".into()))?;
-            let point = PointId::new(id).map_err(|_| {
-                MeshSieveError::MeshIoParse(format!("invalid element id {id}"))
-            })?;
+            let point = PointId::new(id)
+                .map_err(|_| MeshSieveError::MeshIoParse(format!("invalid element id {id}")))?;
             let cell_token = parts
                 .next()
                 .ok_or_else(|| MeshSieveError::MeshIoParse("missing cell type".into()))?;
@@ -383,7 +389,10 @@ impl ExodusReader {
             for node in conn {
                 if let Some(ref mut seen) = seen_arrows {
                     if !seen.insert((point, node)) {
-                        return Err(MeshSieveError::DuplicateArrow { src: point, dst: node });
+                        return Err(MeshSieveError::DuplicateArrow {
+                            src: point,
+                            dst: node,
+                        });
                     }
                 }
                 Sieve::add_arrow(&mut sieve, point, node, ());
@@ -515,10 +524,7 @@ fn read_exodus_ii_from_hdf5(
         )));
     }
 
-    let node_count = coord_arrays
-        .first()
-        .map(|values| values.len())
-        .unwrap_or(0);
+    let node_count = coord_arrays.first().map(|values| values.len()).unwrap_or(0);
     for values in &coord_arrays {
         if values.len() != node_count {
             return Err(MeshSieveError::MeshIoParse(
@@ -596,22 +602,14 @@ fn read_exodus_ii_from_hdf5(
     let total_elems: usize = connect_names
         .iter()
         .filter_map(|(_, name)| file.dataset(name).ok())
-        .map(|dataset| {
-            dataset
-                .shape()
-                .get(0)
-                .copied()
-                .unwrap_or(0) as usize
-        })
+        .map(|dataset| dataset.shape().get(0).copied().unwrap_or(0) as usize)
         .sum();
 
     let elem_ids_raw = read_i64_dataset_optional(file, "elem_num_map")
         .or_else(|| read_i64_dataset_optional(file, "elem_id_map"));
-    let mut elem_ids: Vec<i64> = elem_ids_raw.unwrap_or_else(|| {
-        (1..=total_elems as i64).collect()
-    });
+    let mut elem_ids: Vec<i64> = elem_ids_raw.unwrap_or_else(|| (1..=total_elems as i64).collect());
     if elem_ids.len() < total_elems {
-        elem_ids.extend((elem_ids.len() as i64 + 1..=total_elems as i64));
+        elem_ids.extend(elem_ids.len() as i64 + 1..=total_elems as i64);
     }
 
     let mut elem_offset = 0usize;
@@ -644,14 +642,11 @@ fn read_exodus_ii_from_hdf5(
             MutableSieve::add_point(&mut sieve, elem_point);
             for node_idx in 0..nodes_per_elem {
                 let offset = elem_idx * nodes_per_elem + node_idx;
-                let node_raw = values
-                    .get(offset)
-                    .copied()
-                    .ok_or_else(|| {
-                        MeshSieveError::MeshIoParse(format!(
-                            "connectivity dataset {name} is incomplete"
-                        ))
-                    })?;
+                let node_raw = values.get(offset).copied().ok_or_else(|| {
+                    MeshSieveError::MeshIoParse(format!(
+                        "connectivity dataset {name} is incomplete"
+                    ))
+                })?;
                 let node_point = PointId::new(node_raw as u64)?;
                 Sieve::add_arrow(&mut sieve, elem_point, node_point, ());
             }
@@ -678,10 +673,7 @@ fn read_exodus_ii_from_hdf5(
     for (idx, name) in node_set_names {
         let dataset = file.dataset(&name)?;
         let nodes = read_i64_dataset(&dataset)?;
-        let set_id = node_set_ids
-            .get(idx - 1)
-            .copied()
-            .unwrap_or(idx as i64);
+        let set_id = node_set_ids.get(idx - 1).copied().unwrap_or(idx as i64);
         let label_name = format!("exodus:node_set:{set_id}");
         for raw_id in nodes {
             let point = PointId::new(raw_id as u64)?;
@@ -711,17 +703,11 @@ fn read_exodus_ii_from_hdf5(
             .ok()
             .and_then(|dataset| read_i64_dataset(&dataset).ok())
             .unwrap_or_default();
-        let set_id = side_set_ids
-            .get(idx - 1)
-            .copied()
-            .unwrap_or(idx as i64);
+        let set_id = side_set_ids.get(idx - 1).copied().unwrap_or(idx as i64);
         let label_name = format!("exodus:side_set:{set_id}");
         for (entry_idx, raw_id) in elem_ids.iter().enumerate() {
             let point = PointId::new(*raw_id as u64)?;
-            let side_value = side_ids
-                .get(entry_idx)
-                .copied()
-                .unwrap_or(1) as i32;
+            let side_value = side_ids.get(entry_idx).copied().unwrap_or(1) as i32;
             labels.set_label(point, &label_name, side_value);
             has_labels = true;
         }
@@ -934,8 +920,8 @@ impl SieveSectionWriter for ExodusIiWriter {
         let mut block_connectivity: Vec<(String, Vec<i64>, usize, String)> = Vec::new();
 
         for (idx, (block_id, cell_type, cells)) in block_defs.into_iter().enumerate() {
-            let (elem_type, nodes_per_elem) = cell_type_to_exodus_elem_type(cell_type)
-                .ok_or_else(|| {
+            let (elem_type, nodes_per_elem) =
+                cell_type_to_exodus_elem_type(cell_type).ok_or_else(|| {
                     MeshSieveError::MeshIoParse(format!(
                         "unsupported cell type {cell_type:?} for Exodus II"
                     ))
@@ -956,7 +942,12 @@ impl SieveSectionWriter for ExodusIiWriter {
                 }
             }
             let dataset_name = format!("connect{}", idx + 1);
-            block_connectivity.push((dataset_name, connectivity, nodes_per_elem, elem_type.to_string()));
+            block_connectivity.push((
+                dataset_name,
+                connectivity,
+                nodes_per_elem,
+                elem_type.to_string(),
+            ));
         }
 
         file.new_dataset::<i64>()
@@ -972,10 +963,12 @@ impl SieveSectionWriter for ExodusIiWriter {
             let dataset = file
                 .new_dataset::<i64>()
                 .shape((connectivity.len() / nodes_per_elem, nodes_per_elem))
-                .create(&name)?;
+                .create(name.as_str())?;
             dataset.write(&connectivity)?;
-            if let Ok(attr) = dataset.new_attr::<String>().create("elem_type") {
-                let _ = attr.write_scalar(&elem_type);
+            if let Ok(attr) = dataset.new_attr::<VarLenUnicode>().create("elem_type") {
+                if let Ok(value) = VarLenUnicode::from_str(&elem_type) {
+                    let _ = attr.write_scalar(&value);
+                }
             }
         }
 
@@ -985,7 +978,10 @@ impl SieveSectionWriter for ExodusIiWriter {
             for (name, point, value) in labels.iter() {
                 if let Some(id) = name.strip_prefix("exodus:node_set:") {
                     if let Ok(set_id) = id.parse::<i64>() {
-                        node_sets.entry(set_id).or_default().push(point.get() as i64);
+                        node_sets
+                            .entry(set_id)
+                            .or_default()
+                            .push(point.get() as i64);
                     }
                 }
                 if let Some(id) = name.strip_prefix("exodus:side_set:") {
@@ -1009,7 +1005,7 @@ impl SieveSectionWriter for ExodusIiWriter {
                     let dataset_name = format!("node_ns{}", idx + 1);
                     file.new_dataset::<i64>()
                         .shape(nodes.len())
-                        .create(&dataset_name)?
+                        .create(dataset_name.as_str())?
                         .write(&nodes)?;
                 }
             }
@@ -1027,11 +1023,11 @@ impl SieveSectionWriter for ExodusIiWriter {
                     let sides: Vec<i64> = entries.iter().map(|(_, side)| *side).collect();
                     file.new_dataset::<i64>()
                         .shape(elems.len())
-                        .create(&elem_name)?
+                        .create(elem_name.as_str())?
                         .write(&elems)?;
                     file.new_dataset::<i64>()
                         .shape(sides.len())
-                        .create(&side_name)?
+                        .create(side_name.as_str())?
                         .write(&sides)?;
                 }
             }

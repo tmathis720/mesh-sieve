@@ -128,9 +128,8 @@ where
             }
             None => None,
         };
-        let numbering = CoordinateNumbering::try_from_points(
-            coordinates.section().atlas().points(),
-        )?;
+        let numbering =
+            CoordinateNumbering::try_from_points(coordinates.section().atlas().points())?;
         Ok(Self {
             coordinates,
             labels,
@@ -159,9 +158,8 @@ where
             }
             None => None,
         };
-        let numbering = CoordinateNumbering::try_from_points(
-            coordinates.section().atlas().points(),
-        )?;
+        let numbering =
+            CoordinateNumbering::try_from_points(coordinates.section().atlas().points())?;
         Ok(Self {
             coordinates,
             labels,

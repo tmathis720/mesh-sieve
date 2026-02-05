@@ -26,10 +26,10 @@ fn counts_for_2d_quad_mesh() {
     interpolate_edges_faces(&mut mesh.sieve, &mut cell_types).expect("interpolate");
     mesh.cell_types = Some(cell_types);
 
-    let cells = points_of_dim_with_cell_types(&mut mesh.sieve, mesh.cell_types.as_ref(), 2)
-        .expect("cells");
-    let edges = points_of_dim_with_cell_types(&mut mesh.sieve, mesh.cell_types.as_ref(), 1)
-        .expect("edges");
+    let cells =
+        points_of_dim_with_cell_types(&mut mesh.sieve, mesh.cell_types.as_ref(), 2).expect("cells");
+    let edges =
+        points_of_dim_with_cell_types(&mut mesh.sieve, mesh.cell_types.as_ref(), 1).expect("edges");
     let vertices = points_of_dim_with_cell_types(&mut mesh.sieve, mesh.cell_types.as_ref(), 0)
         .expect("vertices");
 
@@ -59,12 +59,12 @@ fn counts_for_3d_hex_mesh() {
     interpolate_edges_faces(&mut mesh.sieve, &mut cell_types).expect("interpolate");
     mesh.cell_types = Some(cell_types);
 
-    let cells = points_of_dim_with_cell_types(&mut mesh.sieve, mesh.cell_types.as_ref(), 3)
-        .expect("cells");
-    let faces = points_of_dim_with_cell_types(&mut mesh.sieve, mesh.cell_types.as_ref(), 2)
-        .expect("faces");
-    let edges = points_of_dim_with_cell_types(&mut mesh.sieve, mesh.cell_types.as_ref(), 1)
-        .expect("edges");
+    let cells =
+        points_of_dim_with_cell_types(&mut mesh.sieve, mesh.cell_types.as_ref(), 3).expect("cells");
+    let faces =
+        points_of_dim_with_cell_types(&mut mesh.sieve, mesh.cell_types.as_ref(), 2).expect("faces");
+    let edges =
+        points_of_dim_with_cell_types(&mut mesh.sieve, mesh.cell_types.as_ref(), 1).expect("edges");
     let vertices = points_of_dim_with_cell_types(&mut mesh.sieve, mesh.cell_types.as_ref(), 0)
         .expect("vertices");
 

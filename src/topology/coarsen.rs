@@ -49,16 +49,12 @@ pub fn coarsen_topology(
     for entity in entities {
         for (fine_point, _) in &entity.fine_points {
             if !fine_points.contains(fine_point) {
-                return Err(MeshSieveError::UnknownPoint(format!(
-                    "{fine_point:?}"
-                )));
+                return Err(MeshSieveError::UnknownPoint(format!("{fine_point:?}")));
             }
         }
         for cone_point in &entity.cone {
             if !fine_points.contains(cone_point) {
-                return Err(MeshSieveError::UnknownPoint(format!(
-                    "{cone_point:?}"
-                )));
+                return Err(MeshSieveError::UnknownPoint(format!("{cone_point:?}")));
             }
             coarse.add_arrow(entity.coarse_point, *cone_point, ());
         }

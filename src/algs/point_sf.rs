@@ -8,6 +8,7 @@ use crate::mesh_error::MeshSieveError;
 use crate::overlap::delta::CopyDelta;
 use crate::overlap::overlap::Overlap;
 use crate::topology::ownership::PointOwnership;
+use crate::topology::sieve::sieve_trait::Sieve;
 
 /// Lightweight wrapper for overlap-based communication.
 #[derive(Clone, Copy, Debug)]
@@ -92,7 +93,7 @@ where
     /// Complete a section using CopyDelta and optional ownership metadata.
     pub fn complete_section<V, S>(&self, section: &mut Section<V, S>) -> Result<(), MeshSieveError>
     where
-        V: Clone + Default + Send + PartialEq + 'static,
+        V: Clone + Default + Send + PartialEq + bytemuck::Pod + 'static,
         S: Storage<V>,
     {
         self.validate()?;

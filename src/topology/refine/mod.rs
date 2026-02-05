@@ -352,11 +352,7 @@ where
     if let Some(hints) = &options.anisotropic_splits {
         if !hints.is_empty() {
             let cell_ids: HashSet<_> = cell_types.iter().map(|(cell, _)| cell).collect();
-            for cell in hints
-                .edge_splits
-                .keys()
-                .chain(hints.face_splits.keys())
-            {
+            for cell in hints.edge_splits.keys().chain(hints.face_splits.keys()) {
                 if !cell_ids.contains(cell) {
                     return Err(MeshSieveError::UnknownPoint(format!(
                         "anisotropic split hint for missing cell {cell:?}"
@@ -405,9 +401,8 @@ where
                     )));
                 }
                 _ => {
-                    let expected = expected_vertex_count(cell_type).ok_or(
-                        MeshSieveError::UnsupportedRefinementCellType { cell, cell_type },
-                    )?;
+                    let expected = expected_vertex_count(cell_type)
+                        .ok_or(MeshSieveError::UnsupportedRefinementCellType { cell, cell_type })?;
                     cell_vertices(coarse, cell, expected)?
                 }
             };
@@ -1398,11 +1393,8 @@ where
         section.try_set(vertex, &accum)?;
     }
 
-    let mut out = Coordinates::from_section(
-        coarse_coords.topological_dimension(),
-        dimension,
-        section,
-    )?;
+    let mut out =
+        Coordinates::from_section(coarse_coords.topological_dimension(), dimension, section)?;
     if let Some(high_order) = coarse_coords.high_order() {
         let mut ho_entries = Vec::new();
         for (cell, fine_cells) in refinement_map {

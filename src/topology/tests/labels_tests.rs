@@ -1,8 +1,7 @@
-use crate::topology::labels::{
-    LabelSet, propagate_label_set_closure, propagate_label_set_star,
-};
+use crate::topology::labels::{LabelSet, propagate_label_set_closure, propagate_label_set_star};
 use crate::topology::point::PointId;
 use crate::topology::sieve::InMemorySieve;
+use crate::topology::sieve::sieve_trait::Sieve;
 
 #[test]
 fn label_set_roundtrip() {
@@ -81,18 +80,9 @@ fn label_set_range_queries_and_set_ops() {
     right.set_label(p2, "region", 2);
     right.set_label(p4, "region", 2);
 
-    assert_eq!(
-        left.stratum_points_in_range("region", 2..=3),
-        vec![p2, p3]
-    );
-    assert_eq!(
-        left.stratum_union(&right, "region", 2),
-        vec![p2, p4]
-    );
-    assert_eq!(
-        left.stratum_intersection(&right, "region", 2),
-        vec![p2]
-    );
+    assert_eq!(left.stratum_points_in_range("region", 2..=3), vec![p2, p3]);
+    assert_eq!(left.stratum_union(&right, "region", 2), vec![p2, p4]);
+    assert_eq!(left.stratum_intersection(&right, "region", 2), vec![p2]);
     assert_eq!(
         left.stratum_difference(&right, "region", 2),
         Vec::<PointId>::new()

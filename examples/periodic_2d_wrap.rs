@@ -1,3 +1,4 @@
+// cargo run --example periodic_2d_wrap
 use mesh_sieve::mesh_error::MeshSieveError;
 use mesh_sieve::topology::periodic::{PeriodicMap, collapse_points, quotient_sieve};
 use mesh_sieve::topology::point::PointId;

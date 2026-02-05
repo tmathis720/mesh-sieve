@@ -53,10 +53,7 @@ impl VtkWriter {
         data_type: &str,
         values: &[String],
     ) -> Result<(), MeshSieveError> {
-        writeln!(
-            writer,
-            "{name} {num_components} {num_tuples} {data_type}"
-        )?;
+        writeln!(writer, "{name} {num_components} {num_tuples} {data_type}")?;
         let mut line_len = 0usize;
         for value in values {
             if line_len + value.len() + 1 > 70 {
@@ -108,9 +105,7 @@ impl SieveSectionWriter for VtkWriter {
         for cell in &cell_ids {
             let cell_type = cell_types.try_restrict(*cell)?[0];
             let vtk_type = Self::vtk_cell_type(cell_type).ok_or_else(|| {
-                MeshSieveError::MeshIoParse(format!(
-                    "unsupported VTK cell type {cell_type:?}"
-                ))
+                MeshSieveError::MeshIoParse(format!("unsupported VTK cell type {cell_type:?}"))
             })?;
             vtk_cell_types.push(vtk_type);
             let cone: Vec<PointId> = mesh.sieve.cone_points(*cell).collect();
@@ -132,19 +127,12 @@ impl SieveSectionWriter for VtkWriter {
             writeln!(writer, "{} {} {}", values[0], values[1], values[2])?;
         }
 
-        writeln!(
-            writer,
-            "CELLS {} {}",
-            cell_ids.len(),
-            total_size
-        )?;
+        writeln!(writer, "CELLS {} {}", cell_ids.len(), total_size)?;
         for cone in &connectivity {
             write!(writer, "{}", cone.len())?;
             for point in cone {
                 let idx = point_index.get(point).ok_or_else(|| {
-                    MeshSieveError::MeshIoParse(format!(
-                        "missing point {point:?} in coordinates"
-                    ))
+                    MeshSieveError::MeshIoParse(format!("missing point {point:?} in coordinates"))
                 })?;
                 write!(writer, " {idx}")?;
             }
@@ -311,7 +299,9 @@ impl VtkReader {
         }
     }
 
-    fn parse_fields(tokens: &mut impl Iterator<Item = String>) -> Result<HashMap<String, FieldArray>, MeshSieveError> {
+    fn parse_fields(
+        tokens: &mut impl Iterator<Item = String>,
+    ) -> Result<HashMap<String, FieldArray>, MeshSieveError> {
         let mut fields = HashMap::new();
         while let Some(token) = tokens.next() {
             match token.as_str() {
@@ -333,33 +323,35 @@ impl VtkReader {
                         .parse()
                         .map_err(|_| MeshSieveError::MeshIoParse("invalid field count".into()))?;
                     for _ in 0..num_arrays {
-                        let name = tokens
-                            .next()
-                            .ok_or_else(|| MeshSieveError::MeshIoParse("missing field name".into()))?;
+                        let name = tokens.next().ok_or_else(|| {
+                            MeshSieveError::MeshIoParse("missing field name".into())
+                        })?;
                         let components: usize = tokens
                             .next()
-                            .ok_or_else(|| MeshSieveError::MeshIoParse("missing field components".into()))?
+                            .ok_or_else(|| {
+                                MeshSieveError::MeshIoParse("missing field components".into())
+                            })?
                             .parse()
                             .map_err(|_| {
                                 MeshSieveError::MeshIoParse("invalid field components".into())
                             })?;
                         let tuples: usize = tokens
                             .next()
-                            .ok_or_else(|| MeshSieveError::MeshIoParse("missing field tuples".into()))?
+                            .ok_or_else(|| {
+                                MeshSieveError::MeshIoParse("missing field tuples".into())
+                            })?
                             .parse()
                             .map_err(|_| {
                                 MeshSieveError::MeshIoParse("invalid field tuples".into())
                             })?;
-                        let data_type = tokens
-                            .next()
-                            .ok_or_else(|| MeshSieveError::MeshIoParse("missing field type".into()))?;
+                        let data_type = tokens.next().ok_or_else(|| {
+                            MeshSieveError::MeshIoParse("missing field type".into())
+                        })?;
                         let total = components * tuples;
                         let mut values = Vec::with_capacity(total);
                         for _ in 0..total {
                             values.push(tokens.next().ok_or_else(|| {
-                                MeshSieveError::MeshIoParse(
-                                    "missing field data values".into(),
-                                )
+                                MeshSieveError::MeshIoParse("missing field data values".into())
                             })?);
                         }
                         fields.insert(
@@ -381,33 +373,35 @@ impl VtkReader {
                         .parse()
                         .map_err(|_| MeshSieveError::MeshIoParse("invalid field count".into()))?;
                     for _ in 0..num_arrays {
-                        let name = tokens
-                            .next()
-                            .ok_or_else(|| MeshSieveError::MeshIoParse("missing field name".into()))?;
+                        let name = tokens.next().ok_or_else(|| {
+                            MeshSieveError::MeshIoParse("missing field name".into())
+                        })?;
                         let components: usize = tokens
                             .next()
-                            .ok_or_else(|| MeshSieveError::MeshIoParse("missing field components".into()))?
+                            .ok_or_else(|| {
+                                MeshSieveError::MeshIoParse("missing field components".into())
+                            })?
                             .parse()
                             .map_err(|_| {
                                 MeshSieveError::MeshIoParse("invalid field components".into())
                             })?;
                         let tuples: usize = tokens
                             .next()
-                            .ok_or_else(|| MeshSieveError::MeshIoParse("missing field tuples".into()))?
+                            .ok_or_else(|| {
+                                MeshSieveError::MeshIoParse("missing field tuples".into())
+                            })?
                             .parse()
                             .map_err(|_| {
                                 MeshSieveError::MeshIoParse("invalid field tuples".into())
                             })?;
-                        let data_type = tokens
-                            .next()
-                            .ok_or_else(|| MeshSieveError::MeshIoParse("missing field type".into()))?;
+                        let data_type = tokens.next().ok_or_else(|| {
+                            MeshSieveError::MeshIoParse("missing field type".into())
+                        })?;
                         let total = components * tuples;
                         let mut values = Vec::with_capacity(total);
                         for _ in 0..total {
                             values.push(tokens.next().ok_or_else(|| {
-                                MeshSieveError::MeshIoParse(
-                                    "missing field data values".into(),
-                                )
+                                MeshSieveError::MeshIoParse("missing field data values".into())
                             })?);
                         }
                         fields.insert(
@@ -503,9 +497,7 @@ impl SieveSectionReader for VtkReader {
             .next()
             .ok_or_else(|| MeshSieveError::MeshIoParse("missing CELLS".into()))?;
         if cells_token != "CELLS" {
-            return Err(MeshSieveError::MeshIoParse(
-                "expected CELLS section".into(),
-            ));
+            return Err(MeshSieveError::MeshIoParse("expected CELLS section".into()));
         }
         let num_cells: usize = tokens
             .next()
@@ -617,9 +609,9 @@ impl SieveSectionReader for VtkReader {
         for (cell_idx, cell) in cell_ids.iter().enumerate() {
             let conn = &connectivity[cell_idx];
             for &point_idx in conn {
-                let point = point_ids
-                    .get(point_idx)
-                    .ok_or_else(|| MeshSieveError::MeshIoParse("point index out of range".into()))?;
+                let point = point_ids.get(point_idx).ok_or_else(|| {
+                    MeshSieveError::MeshIoParse("point index out of range".into())
+                })?;
                 sieve.add_arrow(*cell, *point, ());
             }
         }
@@ -684,7 +676,11 @@ impl SieveSectionReader for VtkReader {
             }
         }
 
-        let labels = if labels.is_empty() { None } else { Some(labels) };
+        let labels = if labels.is_empty() {
+            None
+        } else {
+            Some(labels)
+        };
 
         Ok(MeshData {
             sieve,

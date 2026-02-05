@@ -31,13 +31,11 @@ fn find_points_by_coords(
     coords
         .section()
         .iter()
-        .filter_map(|(point, values)| {
-            if values == target {
-                Some(point)
-            } else {
-                None
-            }
-        })
+        .filter_map(
+            |(point, values)| {
+                if values == target { Some(point) } else { None }
+            },
+        )
         .collect()
 }
 
@@ -165,12 +163,12 @@ fn refine_mixed_hex_and_polyhedron_reuses_shared_face_center() {
     }
 
     let poly_faces = [
-        [pt(2), pt(9), pt(10), pt(3)],  // bottom
-        [pt(6), pt(12), pt(11), pt(7)], // top
-        [pt(2), pt(9), pt(12), pt(6)],  // front
+        [pt(2), pt(9), pt(10), pt(3)],   // bottom
+        [pt(6), pt(12), pt(11), pt(7)],  // top
+        [pt(2), pt(9), pt(12), pt(6)],   // front
         [pt(9), pt(10), pt(11), pt(12)], // right
-        [pt(10), pt(3), pt(7), pt(11)], // back
-        [pt(3), pt(2), pt(6), pt(7)],   // shared left face
+        [pt(10), pt(3), pt(7), pt(11)],  // back
+        [pt(3), pt(2), pt(6), pt(7)],    // shared left face
     ];
     for (face, vertices) in face_ids.iter().zip(poly_faces.iter()) {
         for v in vertices {
@@ -178,7 +176,8 @@ fn refine_mixed_hex_and_polyhedron_reuses_shared_face_center() {
         }
     }
 
-    let cell_types = cell_types_section(&[(hex, CellType::Hexahedron), (poly, CellType::Polyhedron)]);
+    let cell_types =
+        cell_types_section(&[(hex, CellType::Hexahedron), (poly, CellType::Polyhedron)]);
 
     let mut coord_atlas = Atlas::default();
     for (vertex, _) in vertices.iter() {

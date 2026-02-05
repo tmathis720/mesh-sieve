@@ -1,7 +1,11 @@
 //! Demonstrate overlap-aware distribution on two in-process ranks.
-
+// cargo run --example distribute_with_overlap
+// Version 3.2.0: Passing
+// cargo mpirun -n 2 --features mpi-support --example distribute_with_overlap
 use mesh_sieve::algs::communicator::RayonComm;
-use mesh_sieve::algs::distribute::{distribute_with_overlap, DistributionConfig, ProvidedPartition};
+use mesh_sieve::algs::distribute::{
+    DistributionConfig, ProvidedPartition, distribute_with_overlap,
+};
 use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::coordinates::Coordinates;
 use mesh_sieve::data::section::Section;
@@ -41,7 +45,9 @@ fn build_mesh_data() -> (
 
     let mut temp_section = Section::<f64, VecStorage<f64>>::new(coord_atlas);
     for &pt in &all_points {
-        temp_section.try_set(pt, &[100.0 + pt.get() as f64]).unwrap();
+        temp_section
+            .try_set(pt, &[100.0 + pt.get() as f64])
+            .unwrap();
     }
 
     let mut sections = std::collections::BTreeMap::new();

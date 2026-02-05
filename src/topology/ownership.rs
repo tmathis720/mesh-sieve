@@ -7,9 +7,7 @@ use crate::mesh_error::MeshSieveError;
 use crate::topology::point::PointId;
 use std::collections::BTreeSet;
 
-#[derive(
-    Copy, Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct OwnershipEntry {
     pub owner: usize,
     pub is_ghost: bool,
@@ -124,41 +122,33 @@ impl PointOwnership {
         self.entries
             .iter()
             .enumerate()
-            .filter_map(|(idx, entry)| {
-                entry.map(|_| PointId::new((idx + 1) as u64).ok()).flatten()
-            })
+            .filter_map(|(idx, entry)| entry.map(|_| PointId::new((idx + 1) as u64).ok()).flatten())
     }
 
     /// Iterate over owned points (non-ghosts).
     pub fn owned_points(&self) -> impl Iterator<Item = PointId> + '_ {
-        self.entries
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, entry)| {
-                entry.and_then(|entry| {
-                    if entry.is_ghost {
-                        None
-                    } else {
-                        PointId::new((idx + 1) as u64).ok()
-                    }
-                })
+        self.entries.iter().enumerate().filter_map(|(idx, entry)| {
+            entry.and_then(|entry| {
+                if entry.is_ghost {
+                    None
+                } else {
+                    PointId::new((idx + 1) as u64).ok()
+                }
             })
+        })
     }
 
     /// Iterate over ghost points.
     pub fn ghost_points(&self) -> impl Iterator<Item = PointId> + '_ {
-        self.entries
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, entry)| {
-                entry.and_then(|entry| {
-                    if entry.is_ghost {
-                        PointId::new((idx + 1) as u64).ok()
-                    } else {
-                        None
-                    }
-                })
+        self.entries.iter().enumerate().filter_map(|(idx, entry)| {
+            entry.and_then(|entry| {
+                if entry.is_ghost {
+                    PointId::new((idx + 1) as u64).ok()
+                } else {
+                    None
+                }
             })
+        })
     }
 
     /// Collect all local points into a sorted set.

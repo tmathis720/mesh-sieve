@@ -5,8 +5,8 @@ use crate::mesh_error::MeshSieveError;
 use crate::topology::bounds::PointLike;
 use crate::topology::cell_type::CellType;
 use crate::topology::point::PointId;
-use crate::topology::sieve::strata::compute_strata;
 use crate::topology::sieve::Sieve;
+use crate::topology::sieve::strata::compute_strata;
 use std::collections::{HashMap, VecDeque};
 
 /// Returns the topological dimension of a sieve, derived from its strata.

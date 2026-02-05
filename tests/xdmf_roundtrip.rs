@@ -13,8 +13,8 @@ fn pid(id: u64) -> PointId {
     PointId::new(id).unwrap()
 }
 
-fn build_mesh(
-) -> MeshData<InMemorySieve<PointId, ()>, f64, VecStorage<f64>, VecStorage<CellType>> {
+fn build_mesh() -> MeshData<InMemorySieve<PointId, ()>, f64, VecStorage<f64>, VecStorage<CellType>>
+{
     let mut sieve = InMemorySieve::<PointId, ()>::default();
     let cell = pid(20);
     for v in [pid(4), pid(5), pid(6)] {
@@ -26,9 +26,18 @@ fn build_mesh(
         coord_atlas.try_insert(v, 2).unwrap();
     }
     let mut coords = Coordinates::try_new(2, 2, coord_atlas).unwrap();
-    coords.try_restrict_mut(pid(4)).unwrap().copy_from_slice(&[0.0, 0.0]);
-    coords.try_restrict_mut(pid(5)).unwrap().copy_from_slice(&[1.0, 0.0]);
-    coords.try_restrict_mut(pid(6)).unwrap().copy_from_slice(&[0.0, 1.0]);
+    coords
+        .try_restrict_mut(pid(4))
+        .unwrap()
+        .copy_from_slice(&[0.0, 0.0]);
+    coords
+        .try_restrict_mut(pid(5))
+        .unwrap()
+        .copy_from_slice(&[1.0, 0.0]);
+    coords
+        .try_restrict_mut(pid(6))
+        .unwrap()
+        .copy_from_slice(&[0.0, 1.0]);
 
     let mut section_atlas = Atlas::default();
     for v in [pid(4), pid(5), pid(6)] {
@@ -81,7 +90,10 @@ fn xdmf_round_trip_preserves_topology_labels_and_sections() {
     assert_eq!(coords.try_restrict(pid(5)).unwrap(), &[1.0, 0.0]);
 
     let cell_types = round_tripped.cell_types.as_ref().expect("cell types");
-    assert_eq!(cell_types.try_restrict(cell).unwrap()[0], CellType::Triangle);
+    assert_eq!(
+        cell_types.try_restrict(cell).unwrap()[0],
+        CellType::Triangle
+    );
 
     let labels = round_tripped.labels.as_ref().expect("labels");
     assert_eq!(labels.get_label(pid(4), "corner"), Some(2));

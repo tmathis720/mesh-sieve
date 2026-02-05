@@ -9,11 +9,7 @@ use pollster::block_on;
 
 #[test]
 fn wgpu_storage_basic_ops() {
-    if std::env::var("MESH_SIEVE_RUN_WGPU_TESTS")
-        .ok()
-        .as_deref()
-        != Some("1")
-    {
+    if std::env::var("MESH_SIEVE_RUN_WGPU_TESTS").ok().as_deref() != Some("1") {
         eprintln!("skipping wgpu test; set MESH_SIEVE_RUN_WGPU_TESTS=1 to enable");
         return;
     }

@@ -93,8 +93,24 @@ fn face_orientation_validation_and_repair() {
     let mut sieve = InMemoryOrientedSieve::<u32, (), D3>::default();
     let (cell_a, cell_b, face) = (1, 2, 10);
 
-    sieve.add_arrow_o(cell_a, face, (), D3 { rot: 1, flip: false });
-    sieve.add_arrow_o(cell_b, face, (), D3 { rot: 1, flip: false });
+    sieve.add_arrow_o(
+        cell_a,
+        face,
+        (),
+        D3 {
+            rot: 1,
+            flip: false,
+        },
+    );
+    sieve.add_arrow_o(
+        cell_b,
+        face,
+        (),
+        D3 {
+            rot: 1,
+            flip: false,
+        },
+    );
 
     let mismatches = validate_adjacent_face_orientations(&mut sieve).unwrap();
     assert_eq!(mismatches.len(), 1);

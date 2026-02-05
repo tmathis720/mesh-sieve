@@ -9,8 +9,8 @@ use mesh_sieve::data::coordinates::Coordinates;
 use mesh_sieve::data::section::Section;
 use mesh_sieve::data::storage::VecStorage;
 use mesh_sieve::io::MeshData;
-use mesh_sieve::topology::labels::LabelSet;
 use mesh_sieve::topology::cell_type::CellType;
+use mesh_sieve::topology::labels::LabelSet;
 use mesh_sieve::topology::point::PointId;
 use mesh_sieve::topology::sieve::{InMemorySieve, MutableSieve, Sieve};
 
@@ -18,8 +18,8 @@ fn pid(id: u64) -> PointId {
     PointId::new(id).unwrap()
 }
 
-fn build_mesh(
-) -> MeshData<InMemorySieve<PointId, ()>, f64, VecStorage<f64>, VecStorage<CellType>> {
+fn build_mesh() -> MeshData<InMemorySieve<PointId, ()>, f64, VecStorage<f64>, VecStorage<CellType>>
+{
     let vertices = [pid(1), pid(2), pid(3), pid(4)];
     let cells = [pid(10), pid(11)];
 
@@ -60,8 +60,7 @@ fn build_mesh(
     }
 }
 
-fn build_coordinate_dm(
-) -> CoordinateDM<f64, VecStorage<f64>> {
+fn build_coordinate_dm() -> CoordinateDM<f64, VecStorage<f64>> {
     let vertices = [pid(1), pid(2), pid(3), pid(4)];
 
     let mut atlas = Atlas::default();
@@ -70,10 +69,22 @@ fn build_coordinate_dm(
     }
 
     let mut coords = Coordinates::try_new(2, 2, atlas).unwrap();
-    coords.try_restrict_mut(vertices[0]).unwrap().copy_from_slice(&[0.0, 0.0]);
-    coords.try_restrict_mut(vertices[1]).unwrap().copy_from_slice(&[1.0, 0.0]);
-    coords.try_restrict_mut(vertices[2]).unwrap().copy_from_slice(&[1.0, 1.0]);
-    coords.try_restrict_mut(vertices[3]).unwrap().copy_from_slice(&[0.0, 1.0]);
+    coords
+        .try_restrict_mut(vertices[0])
+        .unwrap()
+        .copy_from_slice(&[0.0, 0.0]);
+    coords
+        .try_restrict_mut(vertices[1])
+        .unwrap()
+        .copy_from_slice(&[1.0, 0.0]);
+    coords
+        .try_restrict_mut(vertices[2])
+        .unwrap()
+        .copy_from_slice(&[1.0, 1.0]);
+    coords
+        .try_restrict_mut(vertices[3])
+        .unwrap()
+        .copy_from_slice(&[0.0, 1.0]);
 
     let mut labels = LabelSet::new();
     labels.set_label(vertices[0], "corner", 1);
@@ -168,14 +179,8 @@ fn renumber_coordinate_dm_preserves_coordinates() {
 
     for &old in &[pid(1), pid(2), pid(3), pid(4)] {
         let new = mapping[&old];
-        let old_slice = coordinate_dm
-            .coordinates
-            .try_restrict(old)
-            .unwrap();
-        let new_slice = renumbered
-            .coordinates
-            .try_restrict(new)
-            .unwrap();
+        let old_slice = coordinate_dm.coordinates.try_restrict(old).unwrap();
+        let new_slice = renumbered.coordinates.try_restrict(new).unwrap();
         assert_eq!(old_slice, new_slice);
     }
 

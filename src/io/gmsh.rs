@@ -634,11 +634,7 @@ impl GmshReader {
             Self::validate_element_dimensions(&elements)?;
         }
 
-        Self::remap_elements_if_needed(
-            &mut elements,
-            &mut mixed_sections,
-            &element_data_names,
-        )?;
+        Self::remap_elements_if_needed(&mut elements, &mut mixed_sections, &element_data_names)?;
 
         let node_lookup: HashMap<PointId, [f64; 3]> = nodes.iter().cloned().collect();
         let mut vertex_nodes = HashSet::new();

@@ -1,3 +1,4 @@
+// cargo run --example refine_triangle
 use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::refine::SievedArray;
 use mesh_sieve::data::section::Section;

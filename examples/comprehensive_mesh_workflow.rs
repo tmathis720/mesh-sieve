@@ -1,6 +1,6 @@
 //! Comprehensive integration test covering advanced mesh-sieve features
 //! cargo mpirun -n 4 --features mpi-support,metis-support --example comprehensive_mesh_workflow
-//! passes on version 1.3.0
+//! passes on version 3.2.0
 //! This example demonstrates a complete mesh workflow including:
 //! - Hierarchical mesh construction (tetrahedral with refinement)
 //! - Lattice operations (meet/join) for mesh analysis

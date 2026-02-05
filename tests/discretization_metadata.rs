@@ -16,9 +16,11 @@ fn field_discretization_lookup_by_region() {
 
     assert_eq!(field.metadata_for(&label_region), Some(&label_metadata));
     assert_eq!(field.metadata_for(&cell_region), Some(&cell_metadata));
-    assert!(field
-        .metadata_for(&RegionKey::label("material", 2))
-        .is_none());
+    assert!(
+        field
+            .metadata_for(&RegionKey::label("material", 2))
+            .is_none()
+    );
 }
 
 #[test]

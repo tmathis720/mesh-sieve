@@ -168,7 +168,11 @@ where
             .ok_or(MeshSieveError::PointNotInAtlas(point))?;
         constrained_dof_len(point, len, constraints.constraints_for(point))
     };
-    let rep = |point: PointId| periodic.and_then(|map| map.master_of(point)).unwrap_or(point);
+    let rep = |point: PointId| {
+        periodic
+            .and_then(|map| map.master_of(point))
+            .unwrap_or(point)
+    };
     build_layout_with(section.atlas().points(), dof_len, rep)
 }
 
@@ -181,7 +185,11 @@ where
     S: Storage<V>,
 {
     let dof_len = |point: PointId| multi_section_dof_len_with_constraints(section, point);
-    let rep = |point: PointId| periodic.and_then(|map| map.master_of(point)).unwrap_or(point);
+    let rep = |point: PointId| {
+        periodic
+            .and_then(|map| map.master_of(point))
+            .unwrap_or(point)
+    };
     build_layout_with(section.atlas().points(), dof_len, rep)
 }
 

@@ -1,3 +1,4 @@
+// cargo run --example mesh_bundle_shared_boundary
 use mesh_sieve::data::{Coordinates, VecStorage};
 use mesh_sieve::io::{MeshBundle, MeshData};
 use mesh_sieve::mesh_error::MeshSieveError;

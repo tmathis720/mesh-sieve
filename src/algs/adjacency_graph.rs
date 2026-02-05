@@ -13,8 +13,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::mesh_error::MeshSieveError;
 use crate::topology::point::PointId;
-use crate::topology::sieve::strata::compute_strata;
 use crate::topology::sieve::Sieve;
+use crate::topology::sieve::strata::compute_strata;
 
 use crate::algs::lattice::AdjacencyOpts;
 
@@ -187,10 +187,9 @@ where
 {
     let cells = order_points(cells, ordering);
     let max_down_depth = by.max_down_depth(cell_dimension);
-    let neigh = build_shared_boundary_lists(
-        &cells,
-        |p| downward_boundary_points(sieve, p, max_down_depth),
-    );
+    let neigh = build_shared_boundary_lists(&cells, |p| {
+        downward_boundary_points(sieve, p, max_down_depth)
+    });
     CellAdjacencyLists {
         order: cells,
         neighbors: neigh,
@@ -334,7 +333,9 @@ where
 {
     let strata = compute_strata(sieve)?;
     let cells = match stratum {
-        CellAdjacencyStratum::Height(k) => strata.strata.get(k as usize).cloned().unwrap_or_default(),
+        CellAdjacencyStratum::Height(k) => {
+            strata.strata.get(k as usize).cloned().unwrap_or_default()
+        }
         CellAdjacencyStratum::Depth(k) => strata
             .depth
             .iter()
@@ -344,11 +345,7 @@ where
     Ok(cells)
 }
 
-fn downward_boundary_points<S>(
-    sieve: &S,
-    p: PointId,
-    max_down_depth: Option<u32>,
-) -> Vec<PointId>
+fn downward_boundary_points<S>(sieve: &S, p: PointId, max_down_depth: Option<u32>) -> Vec<PointId>
 where
     S: Sieve<Point = PointId>,
 {
@@ -385,11 +382,7 @@ where
     }
 }
 
-fn upward_boundary_points<S>(
-    sieve: &S,
-    p: PointId,
-    max_up_depth: Option<u32>,
-) -> Vec<PointId>
+fn upward_boundary_points<S>(sieve: &S, p: PointId, max_up_depth: Option<u32>) -> Vec<PointId>
 where
     S: Sieve<Point = PointId>,
 {
@@ -525,7 +518,10 @@ fn build_shared_boundary_lists(
         let mut list = list;
         list.sort_unstable();
         list.dedup();
-        out[i] = list.into_iter().filter_map(|idx| points.get(idx).copied()).collect();
+        out[i] = list
+            .into_iter()
+            .filter_map(|idx| points.get(idx).copied())
+            .collect();
     }
     out
 }

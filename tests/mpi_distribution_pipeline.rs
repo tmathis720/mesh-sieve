@@ -1,17 +1,19 @@
 #![cfg(feature = "mpi-support")]
 
 use mesh_sieve::algs::communicator::{Communicator, MpiComm};
-use mesh_sieve::algs::distribute::{distribute_with_overlap, DistributionConfig, ProvidedPartition};
+use mesh_sieve::algs::distribute::{
+    DistributionConfig, ProvidedPartition, distribute_with_overlap,
+};
 use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::section::Section;
 use mesh_sieve::data::storage::VecStorage;
 use mesh_sieve::io::MeshData;
+use mesh_sieve::topology::Sieve;
 use mesh_sieve::topology::cell_type::CellType;
 use mesh_sieve::topology::point::PointId;
 use mesh_sieve::topology::sieve::InMemorySieve;
 
-fn build_mesh(
-) -> (
+fn build_mesh() -> (
     MeshData<InMemorySieve<PointId, ()>, f64, VecStorage<f64>, VecStorage<CellType>>,
     Vec<PointId>,
 ) {

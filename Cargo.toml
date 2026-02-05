@@ -1,6 +1,6 @@
 [package]
 name = "mesh-sieve"
-version = "3.1.2"
+version = "3.2.0"
 authors = ["Thomas James Mathis <tmathis720@gmail.com>"]
 edition = "2024"
 description = "Modular, high-performance Rust library for mesh and data management, designed for scientific computing and PDE codes."
@@ -26,6 +26,7 @@ static_assertions = "1.1.0"
 bytemuck = { version = "1", features = ["derive"] }
 roxmltree = "0.20"
 hdf5 = "0.8.1"
+hdf5-sys = { version = "0.8.1", features = ["static"] }
 # MPI optional: enabled only when the mpi-support feature is requested
 mpi = { version = "0.8", optional = true, default-features = false, features = [] }
 # libffi/metis optional to avoid requiring system libs in CI unless explicitly enabled

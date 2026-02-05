@@ -1,7 +1,7 @@
 use mesh_sieve::algs::communicator::RayonComm;
 use mesh_sieve::algs::distribute::{
-    distribute_with_overlap, distribute_with_overlap_periodic, DistributionConfig,
-    ProvidedPartition,
+    DistributionConfig, ProvidedPartition, distribute_with_overlap,
+    distribute_with_overlap_periodic,
 };
 use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::coordinates::Coordinates;

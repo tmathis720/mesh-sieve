@@ -1,8 +1,8 @@
 use mesh_sieve::algs::{classify_boundary_points, label_boundary_points};
 use mesh_sieve::topology::labels::LabelSet;
 use mesh_sieve::topology::point::PointId;
-use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
 use mesh_sieve::topology::sieve::Sieve;
+use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
 
 fn p(i: u64) -> PointId {
     PointId::new(i).unwrap()

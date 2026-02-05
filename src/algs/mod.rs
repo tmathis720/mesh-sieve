@@ -45,12 +45,12 @@ pub use completion::{
     complete_section, complete_section_with_ownership, complete_section_with_tags,
     complete_section_with_tags_and_ownership,
 };
-pub use point_sf::PointSF;
 pub use field_transfer::{
     transfer_section_by_nearest_cell_centroid, transfer_section_by_nearest_point,
     transfer_section_by_refinement_map, transfer_section_by_shared_labels,
 };
 pub use lattice::adjacent;
+pub use point_sf::PointSF;
 pub use renumber::{
     StratifiedOrdering, renumber_coordinate_dm, renumber_points, renumber_points_stratified,
     stratified_permutation,

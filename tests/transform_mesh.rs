@@ -10,8 +10,7 @@ use mesh_sieve::topology::point::PointId;
 use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
 use std::collections::BTreeSet;
 
-fn build_triangle_mesh(
-) -> (
+fn build_triangle_mesh() -> (
     MeshData<InMemorySieve<PointId, ()>, f64, VecStorage<f64>, VecStorage<CellType>>,
     [PointId; 3],
 ) {
@@ -31,9 +30,18 @@ fn build_triangle_mesh(
     coord_atlas.try_insert(v2, 2).unwrap();
 
     let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(2, 2, coord_atlas).unwrap();
-    coords.try_restrict_mut(v0).unwrap().copy_from_slice(&[0.0, 0.0]);
-    coords.try_restrict_mut(v1).unwrap().copy_from_slice(&[1.0, 0.0]);
-    coords.try_restrict_mut(v2).unwrap().copy_from_slice(&[0.0, 1.0]);
+    coords
+        .try_restrict_mut(v0)
+        .unwrap()
+        .copy_from_slice(&[0.0, 0.0]);
+    coords
+        .try_restrict_mut(v1)
+        .unwrap()
+        .copy_from_slice(&[1.0, 0.0]);
+    coords
+        .try_restrict_mut(v2)
+        .unwrap()
+        .copy_from_slice(&[0.0, 1.0]);
 
     let mut cell_atlas = Atlas::default();
     cell_atlas.try_insert(cell, 1).unwrap();
@@ -54,9 +62,12 @@ fn build_triangle_mesh(
 fn transform_mesh_displacement_updates_quality() {
     let (mut mesh, vertices) = build_triangle_mesh();
     let points_before: BTreeSet<_> = mesh.sieve.points().collect();
-    let quality_before =
-        cell_quality_from_section(CellType::Triangle, &vertices, mesh.coordinates.as_ref().unwrap())
-            .unwrap();
+    let quality_before = cell_quality_from_section(
+        CellType::Triangle,
+        &vertices,
+        mesh.coordinates.as_ref().unwrap(),
+    )
+    .unwrap();
 
     let atlas = mesh.coordinates.as_ref().unwrap().section().atlas().clone();
     let mut displacement = Section::<f64, VecStorage<f64>>::new(atlas);
@@ -77,8 +88,11 @@ fn transform_mesh_displacement_updates_quality() {
     let hooks = TransformHooks {
         after_update: Some(&mut |mesh| {
             let coords = mesh.coordinates.as_ref().unwrap();
-            quality_after =
-                Some(cell_quality_from_section(CellType::Triangle, &vertices, coords)?);
+            quality_after = Some(cell_quality_from_section(
+                CellType::Triangle,
+                &vertices,
+                coords,
+            )?);
             Ok(())
         }),
     };

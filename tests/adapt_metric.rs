@@ -1,11 +1,12 @@
 use mesh_sieve::adapt::{
-    adapt_with_metric_and_transfer, MetricAdaptationAction, MetricThresholds, MetricTensor,
+    MetricAdaptationAction, MetricTensor, MetricThresholds, adapt_with_metric_and_transfer,
 };
 use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::coordinates::Coordinates;
 use mesh_sieve::data::refine::sieved_array::SievedArray;
 use mesh_sieve::data::section::Section;
 use mesh_sieve::data::storage::VecStorage;
+use mesh_sieve::topology::Sieve;
 use mesh_sieve::topology::cell_type::CellType;
 use mesh_sieve::topology::coarsen::CoarsenEntity;
 use mesh_sieve::topology::point::PointId;
@@ -88,10 +89,12 @@ fn refine_cells_from_metric_tensor() {
     .unwrap();
 
     assert_eq!(result.refine_cells, vec![cell]);
-    assert!(result
-        .split_hints
-        .iter()
-        .any(|hint| hint.cell == cell && !hint.split_edges.is_empty()));
+    assert!(
+        result
+            .split_hints
+            .iter()
+            .any(|hint| hint.cell == cell && !hint.split_edges.is_empty())
+    );
 
     let refined = match result.action {
         MetricAdaptationAction::Refined { mesh } => mesh,

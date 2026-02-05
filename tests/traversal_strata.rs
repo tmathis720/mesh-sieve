@@ -37,8 +37,7 @@ fn closure_depth_and_height_respect_strata_on_mixed_mesh() {
     chart_sorted.sort_unstable();
     assert_eq!(chart_sorted, expected_depth);
 
-    let sorted_height =
-        closure_to_height(&s, [c0, c1], 1, Some(TraversalOrder::Sorted)).unwrap();
+    let sorted_height = closure_to_height(&s, [c0, c1], 1, Some(TraversalOrder::Sorted)).unwrap();
     let expected_height = vec![c0, e0, c1, v1];
     assert_eq!(sorted_height, expected_height);
 }
@@ -62,12 +61,10 @@ fn closure_depth_selects_multiple_strata() {
     s.add_arrow(c1, e1, ());
     s.add_arrow(e1, v1, ());
 
-    let depth1 =
-        closure_to_depth(&s, [c0, c1], 1, Some(TraversalOrder::Sorted)).unwrap();
+    let depth1 = closure_to_depth(&s, [c0, c1], 1, Some(TraversalOrder::Sorted)).unwrap();
     assert_eq!(depth1, vec![e0, v0, e1, v1]);
 
-    let depth2 =
-        closure_to_depth(&s, [c0, c1], 2, Some(TraversalOrder::Sorted)).unwrap();
+    let depth2 = closure_to_depth(&s, [c0, c1], 2, Some(TraversalOrder::Sorted)).unwrap();
     assert_eq!(depth2, vec![f0, e0, v0, c1, e1, v1]);
 }
 

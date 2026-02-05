@@ -8,8 +8,8 @@ use std::collections::HashSet;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::labels::LabelSet;
 use crate::topology::point::PointId;
-use crate::topology::sieve::strata::compute_strata;
 use crate::topology::sieve::Sieve;
+use crate::topology::sieve::strata::compute_strata;
 
 /// Default label name for boundary points.
 pub const DEFAULT_BOUNDARY_LABEL: &str = "boundary";

@@ -121,13 +121,11 @@ where
         }
     }
 
-    let links =
-        neighbour_links_with_ownership::<V, S>(section, overlap, ownership, my_rank).map_err(
-            |e| MeshSieveError::CommError {
-                neighbor: my_rank,
-                source: format!("neighbour_links_with_ownership failed: {e}").into(),
-            },
-        )?;
+    let links = neighbour_links_with_ownership::<V, S>(section, overlap, ownership, my_rank)
+        .map_err(|e| MeshSieveError::CommError {
+            neighbor: my_rank,
+            source: format!("neighbour_links_with_ownership failed: {e}").into(),
+        })?;
 
     let mut all: BTreeSet<usize> = overlap.neighbor_ranks().collect();
     all.extend(links.keys().copied());
@@ -194,12 +192,7 @@ where
 {
     let tags = SectionCommTags::from_base(CommTag::new(0xBEEF));
     complete_section_with_tags_and_ownership::<V, S, D, C>(
-        section,
-        overlap,
-        ownership,
-        comm,
-        my_rank,
-        tags,
+        section, overlap, ownership, comm, my_rank, tags,
     )
 }
 

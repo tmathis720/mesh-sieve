@@ -8,7 +8,7 @@
 //! This abstraction supports push (refine) and pull (assemble) of data
 //! across mesh hierarchy levels, as described in Knepley & Karpeev (2009).
 
-use crate::data::constrained_section::{apply_constraints_to_section, ConstraintSet};
+use crate::data::constrained_section::{ConstraintSet, apply_constraints_to_section};
 #[allow(unused_imports)]
 use crate::data::refine::delta::SliceDelta;
 use crate::data::section::Section;

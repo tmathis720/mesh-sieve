@@ -17,11 +17,11 @@ use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
 #[cfg(feature = "mpi-support")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use mesh_sieve::algs::communicator::{Communicator, MpiComm};
-    use mesh_sieve::algs::distribute::{DistributionConfig, ProvidedPartition, distribute_with_overlap};
-    use mesh_sieve::io::gmsh::{GmshReader, GmshWriter};
-    use mesh_sieve::io::{
-        GatherPolicy, MeshData, read_partitioned_mesh, write_partitioned_mesh,
+    use mesh_sieve::algs::distribute::{
+        DistributionConfig, ProvidedPartition, distribute_with_overlap,
     };
+    use mesh_sieve::io::gmsh::{GmshReader, GmshWriter};
+    use mesh_sieve::io::{GatherPolicy, MeshData, read_partitioned_mesh, write_partitioned_mesh};
     use std::fs;
     use std::path::PathBuf;
 
@@ -103,8 +103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[cfg(feature = "mpi-support")]
-fn build_global_mesh(
-) -> Result<
+fn build_global_mesh() -> Result<
     (
         mesh_sieve::io::MeshData<
             InMemorySieve<PointId, ()>,
@@ -156,14 +155,16 @@ fn build_global_mesh(
 }
 
 #[cfg(feature = "mpi-support")]
-fn print_overlap_summary(label: &str, rank: usize, overlap: &Option<mesh_sieve::overlap::overlap::Overlap>) {
+fn print_overlap_summary(
+    label: &str,
+    rank: usize,
+    overlap: &Option<mesh_sieve::overlap::overlap::Overlap>,
+) {
     if let Some(overlap) = overlap {
         let neighbors: Vec<_> = overlap.neighbor_ranks().collect();
         for neighbor in neighbors {
             let link_count = overlap.links_to(neighbor).count();
-            println!(
-                "[{label}] rank {rank} neighbor {neighbor} has {link_count} links",
-            );
+            println!("[{label}] rank {rank} neighbor {neighbor} has {link_count} links",);
         }
     } else {
         println!("[{label}] rank {rank} has no overlap metadata");

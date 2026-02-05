@@ -19,6 +19,7 @@ use crate::overlap::overlap::Overlap;
 use crate::overlap::overlap::local;
 use crate::topology::ownership::PointOwnership;
 use crate::topology::point::PointId;
+use crate::topology::sieve::sieve_trait::Sieve;
 
 /// Mapping from local point/DOF pairs to unique global indices.
 #[derive(Clone, Debug, Default)]
@@ -359,8 +360,10 @@ impl LocalToGlobalMap {
         I: IntoIterator<Item = PointId>,
         C: Communicator + Sync,
     {
-        let mut owned_points: Vec<PointId> =
-            points.into_iter().filter(|&p| ownership.is_owned_by(p, my_rank)).collect();
+        let mut owned_points: Vec<PointId> = points
+            .into_iter()
+            .filter(|&p| ownership.is_owned_by(p, my_rank))
+            .collect();
         owned_points.sort_unstable();
 
         let mut local_total = 0u64;
@@ -435,8 +438,7 @@ fn build_send_counts(
     atlas: &crate::data::atlas::Atlas,
     ownership: &PointOwnership,
     my_rank: usize,
-) -> Result<HashMap<usize, u32>, MeshSieveError>
-{
+) -> Result<HashMap<usize, u32>, MeshSieveError> {
     let mut counts = HashMap::with_capacity(links.len());
     for (nbr, link_vec) in links {
         let mut count = 0usize;

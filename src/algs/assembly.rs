@@ -7,7 +7,7 @@
 
 use crate::algs::communicator::{CommTag, Communicator, SectionCommTags};
 use crate::algs::completion::section_completion::complete_section_with_tags_and_ownership;
-use crate::data::constrained_section::{apply_constraints_to_section, ConstraintSet};
+use crate::data::constrained_section::{ConstraintSet, apply_constraints_to_section};
 use crate::data::section::Section;
 use crate::data::storage::Storage;
 use crate::mesh_error::MeshSieveError;
@@ -59,13 +59,23 @@ where
     Con: ConstraintSet<V>,
 {
     complete_section_with_tags_and_ownership::<V, S, D, C>(
-        section, overlap, ownership, comm, my_rank, tags.reduce,
+        section,
+        overlap,
+        ownership,
+        comm,
+        my_rank,
+        tags.reduce,
     )?;
 
     apply_constraints_to_section(section, constraints)?;
 
     complete_section_with_tags_and_ownership::<V, S, CopyDelta, C>(
-        section, overlap, ownership, comm, my_rank, tags.complete,
+        section,
+        overlap,
+        ownership,
+        comm,
+        my_rank,
+        tags.complete,
     )?;
 
     Ok(())
@@ -90,6 +100,12 @@ where
 {
     let tags = AssemblyCommTags::from_base(CommTag::new(0xBEEF));
     assemble_section_with_tags_and_ownership::<V, S, D, C, Con>(
-        section, overlap, ownership, comm, my_rank, tags, constraints,
+        section,
+        overlap,
+        ownership,
+        comm,
+        my_rank,
+        tags,
+        constraints,
     )
 }

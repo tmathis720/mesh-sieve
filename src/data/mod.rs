@@ -25,18 +25,16 @@ pub mod refine;
 #[allow(deprecated)]
 pub use crate::debug_invariants::DebugInvariants;
 
-pub use constrained_section::{
-    ConstrainedSection, ConstraintSet, DofConstraint, apply_constraints_to_section,
-};
 pub use bc::{
     FieldDofIndices, LabelQuery, apply_dirichlet_to_constrained_section,
     apply_dirichlet_to_constrained_section_fields, apply_dirichlet_to_section,
     apply_dirichlet_to_section_fields,
 };
-pub use coordinate_dm::{CoordinateDM, CoordinateNumbering};
-pub use discretization::{
-    Discretization, DiscretizationMetadata, FieldDiscretization, RegionKey,
+pub use constrained_section::{
+    ConstrainedSection, ConstraintSet, DofConstraint, apply_constraints_to_section,
 };
+pub use coordinate_dm::{CoordinateDM, CoordinateNumbering};
+pub use discretization::{Discretization, DiscretizationMetadata, FieldDiscretization, RegionKey};
 pub use global_map::{LocalToGlobalMap, global_vector_for_map};
 pub use hanging_node_constraints::{
     HangingDofConstraint, HangingNodeConstraints, LinearConstraintTerm,
@@ -62,10 +60,10 @@ pub type CpuSection<V> = section::Section<V, VecStorage<V>>;
 
 /// Coordinate storage wrapper with an attached dimension.
 pub use coordinates::Coordinates;
-/// Velocity storage wrapper aligned with coordinate dimensions.
-pub use coordinates::MeshVelocity;
 /// Higher-order coordinate storage wrapper.
 pub use coordinates::HighOrderCoordinates;
+/// Velocity storage wrapper aligned with coordinate dimensions.
+pub use coordinates::MeshVelocity;
 
 /// Alias for the common Vec-backed coordinates bundle.
 pub type CpuCoordinates<V> = coordinates::Coordinates<V, VecStorage<V>>;

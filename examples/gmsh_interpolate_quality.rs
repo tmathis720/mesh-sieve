@@ -1,8 +1,8 @@
 // cargo run --example gmsh_interpolate_quality
 use mesh_sieve::algs::interpolate::interpolate_edges_faces;
 use mesh_sieve::geometry::quality::cell_quality_from_section;
-use mesh_sieve::io::gmsh::GmshReader;
 use mesh_sieve::io::SieveSectionReader;
+use mesh_sieve::io::gmsh::GmshReader;
 use mesh_sieve::mesh_error::MeshSieveError;
 use mesh_sieve::topology::cell_type::CellType;
 use mesh_sieve::topology::sieve::Sieve;
@@ -39,7 +39,10 @@ $EndElements
     assert_eq!(labels.get_label(cell_1, "gmsh:physical"), Some(7));
     assert_eq!(labels.get_label(cell_2, "gmsh:physical"), Some(8));
 
-    let cell_types = mesh.cell_types.as_ref().expect("Gmsh reader sets cell types");
+    let cell_types = mesh
+        .cell_types
+        .as_ref()
+        .expect("Gmsh reader sets cell types");
     assert_eq!(cell_types.try_restrict(cell_1)?, &[CellType::Triangle]);
     assert_eq!(cell_types.try_restrict(cell_2)?, &[CellType::Triangle]);
 

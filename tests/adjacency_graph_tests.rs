@@ -5,7 +5,9 @@ use mesh_sieve::algs::adjacency_graph::{
     build_vertex_adjacency_graph_with_vertices,
 };
 use mesh_sieve::algs::interpolate::interpolate_edges_faces;
-use mesh_sieve::algs::meshgen::{MeshGenOptions, StructuredCellType, structured_box_2d, structured_box_3d};
+use mesh_sieve::algs::meshgen::{
+    MeshGenOptions, StructuredCellType, structured_box_2d, structured_box_3d,
+};
 use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::section::Section;
 use mesh_sieve::data::storage::VecStorage;
@@ -52,10 +54,16 @@ fn assert_two_cell_directed_adjacency(order: &[PointId], neighbors: &[Vec<PointI
 }
 
 fn assert_two_cell_undirected_edge(order: &[PointId], edges: &[(PointId, PointId)]) {
-    assert_eq!(edges, &vec![(order[0].min(order[1]), order[0].max(order[1]))]);
+    assert_eq!(
+        edges,
+        &vec![(order[0].min(order[1]), order[0].max(order[1]))]
+    );
 }
 
-fn tet_pair_mesh() -> (InMemorySieve<PointId, ()>, Section<CellType, VecStorage<CellType>>) {
+fn tet_pair_mesh() -> (
+    InMemorySieve<PointId, ()>,
+    Section<CellType, VecStorage<CellType>>,
+) {
     let (c0, c1) = (v(100), v(101));
     let (v0, v1, v2, v3, v4) = (v(1), v(2), v(3), v(4), v(5));
     let mut sieve = InMemorySieve::<PointId, ()>::default();

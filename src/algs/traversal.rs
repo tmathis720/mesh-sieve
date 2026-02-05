@@ -130,7 +130,7 @@ fn normalize_seeds<P: Ord>(mut seeds: Vec<P>) -> Vec<P> {
 }
 
 /// Builder for unordered traversals over a [`Sieve`].
-/// 
+///
 /// - **Determinism:** returns the visited set sorted ascending.
 /// - **Complexity:** O(V + E) time and O(V) memory.
 pub struct TraversalBuilder<'a, S: Sieve> {
@@ -472,7 +472,13 @@ where
         .seeds(seeds_vec)
         .deterministic(deterministic)
         .run();
-    out.retain(|p| strata.height.get(p).copied().is_some_and(|h| h <= max_height));
+    out.retain(|p| {
+        strata
+            .height
+            .get(p)
+            .copied()
+            .is_some_and(|h| h <= max_height)
+    });
     if matches!(order, Some(TraversalOrder::Chart)) {
         out.sort_by_key(|p| strata.chart_index.get(p).copied().unwrap_or(usize::MAX));
     }
@@ -501,15 +507,8 @@ where
     C: crate::algs::communicator::Communicator + Sync,
 {
     let deterministic = matches!(order, Some(TraversalOrder::Sorted));
-    let mut out = closure_completed_with(
-        sieve,
-        seeds,
-        overlap,
-        comm,
-        my_rank,
-        policy,
-        deterministic,
-    );
+    let mut out =
+        closure_completed_with(sieve, seeds, overlap, comm, my_rank, policy, deterministic);
     let strata = compute_strata(sieve)?;
     out.retain(|p| strata.depth.get(p).copied().is_some_and(|d| d <= max_depth));
     if matches!(order, Some(TraversalOrder::Chart)) {
@@ -540,17 +539,16 @@ where
     C: crate::algs::communicator::Communicator + Sync,
 {
     let deterministic = matches!(order, Some(TraversalOrder::Sorted));
-    let mut out = closure_completed_with(
-        sieve,
-        seeds,
-        overlap,
-        comm,
-        my_rank,
-        policy,
-        deterministic,
-    );
+    let mut out =
+        closure_completed_with(sieve, seeds, overlap, comm, my_rank, policy, deterministic);
     let strata = compute_strata(sieve)?;
-    out.retain(|p| strata.height.get(p).copied().is_some_and(|h| h <= max_height));
+    out.retain(|p| {
+        strata
+            .height
+            .get(p)
+            .copied()
+            .is_some_and(|h| h <= max_height)
+    });
     if matches!(order, Some(TraversalOrder::Chart)) {
         out.sort_by_key(|p| strata.chart_index.get(p).copied().unwrap_or(usize::MAX));
     }
@@ -756,15 +754,7 @@ where
     I: IntoIterator<Item = Point>,
     C: crate::algs::communicator::Communicator + Sync,
 {
-    closure_completed_with(
-        sieve,
-        seeds,
-        overlap,
-        comm,
-        my_rank,
-        policy,
-        true,
-    )
+    closure_completed_with(sieve, seeds, overlap, comm, my_rank, policy, true)
 }
 
 /// Completed transitive closure on a partitioned mesh with ordering control.

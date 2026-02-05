@@ -4,8 +4,8 @@ use crate::data::coordinates::Coordinates;
 use crate::data::discretization::DiscretizationMetadata;
 use crate::data::storage::Storage;
 use crate::discretization::runtime::{
-    Basis, BasisTabulation, QuadratureRule, local_load_vector,
-    local_stiffness_matrix, runtime_from_metadata, tabulate_element,
+    Basis, BasisTabulation, QuadratureRule, local_load_vector, local_stiffness_matrix,
+    runtime_from_metadata, tabulate_element,
 };
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cell_type::CellType;

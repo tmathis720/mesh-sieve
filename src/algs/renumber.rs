@@ -85,14 +85,11 @@ where
     for &old in &new_to_old {
         let new_src = old_to_new[&old];
         for (dst, payload) in mesh.sieve.cone(old) {
-            let new_dst = old_to_new
-                .get(&dst)
-                .copied()
-                .ok_or_else(|| {
-                    MeshSieveError::InvalidPermutation(format!(
-                        "missing destination {dst:?} for source {old:?}"
-                    ))
-                })?;
+            let new_dst = old_to_new.get(&dst).copied().ok_or_else(|| {
+                MeshSieveError::InvalidPermutation(format!(
+                    "missing destination {dst:?} for source {old:?}"
+                ))
+            })?;
             sieve.add_arrow(new_src, new_dst, payload.clone());
         }
     }

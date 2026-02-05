@@ -14,7 +14,12 @@ use mesh_sieve::topology::sieve::{InMemorySieve, MutableSieve, Sieve};
 fn main() -> Result<(), MeshSieveError> {
     let mut surface = InMemorySieve::<PointId, ()>::default();
     let cell = PointId::new(10)?;
-    let vertices = [PointId::new(1)?, PointId::new(2)?, PointId::new(3)?, PointId::new(4)?];
+    let vertices = [
+        PointId::new(1)?,
+        PointId::new(2)?,
+        PointId::new(3)?,
+        PointId::new(4)?,
+    ];
 
     MutableSieve::add_point(&mut surface, cell);
     for v in vertices {

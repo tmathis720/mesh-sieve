@@ -128,12 +128,7 @@ impl LabelSet {
     }
 
     /// Returns the intersection of two label strata, sorted deterministically.
-    pub fn stratum_intersection(
-        &self,
-        other: &LabelSet,
-        name: &str,
-        value: i32,
-    ) -> Vec<PointId> {
+    pub fn stratum_intersection(&self, other: &LabelSet, name: &str, value: i32) -> Vec<PointId> {
         let other_points: HashSet<PointId> = other.points_with_label(name, value).collect();
         let mut points: Vec<_> = self
             .points_with_label(name, value)

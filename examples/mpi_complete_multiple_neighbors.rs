@@ -1,6 +1,6 @@
 // --- MPI test: complete_section_multiple_neighbors ---
 // cargo mpirun -n 3 --features mpi-support --example mpi_complete_multiple_neighbors
-// Version 1.3.0: passing
+// Version 3.2.0: passing
 //! This example tests the `complete_section` function with multiple neighbors.
 //! It ensures that a Section can be completed correctly when multiple ranks have neighbors
 //! that share the same point, and that the Section is correctly completed

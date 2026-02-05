@@ -8,8 +8,8 @@
 
 use once_cell::sync::Lazy;
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Condvar, Mutex};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 
 use crate::mesh_error::{CommError, MeshSieveError};
 
@@ -244,12 +244,7 @@ fn reserve_tag_range(n: u16) -> Result<CommTag, MeshSieveError> {
                 "tag allocation exhausted available user tag range".into(),
             )));
         }
-        match NEXT_TAG.compare_exchange(
-            current,
-            end + 1,
-            Ordering::SeqCst,
-            Ordering::Relaxed,
-        ) {
+        match NEXT_TAG.compare_exchange(current, end + 1, Ordering::SeqCst, Ordering::Relaxed) {
             Ok(_) => return Ok(CommTag::new(current as u16)),
             Err(next) => current = next,
         }

@@ -11,7 +11,7 @@ use crate::topology::labels::LabelSet;
 use crate::topology::point::PointId;
 use crate::topology::sieve::{InMemorySieve, Sieve};
 use hdf5::File;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -276,11 +276,7 @@ where
         let group = sections_group
             .create_group(name)
             .map_err(|err| MeshSieveError::MeshIoParse(format!("section {name}: {err}")))?;
-        let ids: Vec<i64> = section
-            .atlas()
-            .points()
-            .map(|p| p.get() as i64)
-            .collect();
+        let ids: Vec<i64> = section.atlas().points().map(|p| p.get() as i64).collect();
         let mut values = Vec::new();
         let mut num_components = 0usize;
         for (_point, data) in section.iter() {
@@ -391,14 +387,8 @@ pub(crate) fn read_mesh_from_hdf5(
 
     let mut sieve = InMemorySieve::<PointId, ()>::default();
     for (cell_idx, cell) in cell_ids.iter().enumerate() {
-        let start = offsets
-            .get(cell_idx)
-            .copied()
-            .unwrap_or(0) as usize;
-        let end = offsets
-            .get(cell_idx + 1)
-            .copied()
-            .unwrap_or(start as i64) as usize;
+        let start = offsets.get(cell_idx).copied().unwrap_or(0) as usize;
+        let end = offsets.get(cell_idx + 1).copied().unwrap_or(start as i64) as usize;
         for raw_id in &cells[start..end] {
             let point = PointId::new(*raw_id as u64)?;
             sieve.add_arrow(*cell, point, ());
@@ -461,7 +451,11 @@ pub(crate) fn read_mesh_from_hdf5(
         }
     }
 
-    let labels = if labels.is_empty() { None } else { Some(labels) };
+    let labels = if labels.is_empty() {
+        None
+    } else {
+        Some(labels)
+    };
 
     Ok(MeshData {
         sieve,

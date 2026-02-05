@@ -2,8 +2,8 @@ use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_ma
 
 use mesh_sieve::algs::traversal::{TraversalCache, closure, closure_cached, star, star_cached};
 use mesh_sieve::topology::point::PointId;
-use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
 use mesh_sieve::topology::sieve::Sieve;
+use mesh_sieve::topology::sieve::in_memory::InMemorySieve;
 
 fn pid(raw: u32) -> PointId {
     PointId::new(u64::from(raw)).expect("nonzero PointId")
@@ -68,17 +68,13 @@ fn bench_traversal_cache(c: &mut Criterion) {
             },
         );
 
-        group.bench_with_input(
-            BenchmarkId::new("star_cached", levels),
-            &levels,
-            |b, _| {
-                let mut cache = TraversalCache::new();
-                b.iter(|| {
-                    let out = star_cached(&sieve, [leaf], Some(&mut cache));
-                    black_box(out);
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("star_cached", levels), &levels, |b, _| {
+            let mut cache = TraversalCache::new();
+            b.iter(|| {
+                let out = star_cached(&sieve, [leaf], Some(&mut cache));
+                black_box(out);
+            });
+        });
     }
 
     group.finish();

@@ -1,4 +1,4 @@
-use mesh_sieve::algs::assembly::{assemble_section_with_tags_and_ownership, AssemblyCommTags};
+use mesh_sieve::algs::assembly::{AssemblyCommTags, assemble_section_with_tags_and_ownership};
 use mesh_sieve::algs::communicator::{CommTag, RayonComm};
 use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::constrained_section::DofConstraint;

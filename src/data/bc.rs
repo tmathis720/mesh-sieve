@@ -115,15 +115,16 @@ where
         let len = slice.len();
         for field_spec in field_indices {
             let field = field_spec.field;
-            let field_len = *field_dofs.get(field).ok_or_else(|| {
-                MeshSieveError::SectionAccess {
-                    point,
-                    source: Box::new(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        "field index out of bounds",
-                    )),
-                }
-            })?;
+            let field_len =
+                *field_dofs
+                    .get(field)
+                    .ok_or_else(|| MeshSieveError::SectionAccess {
+                        point,
+                        source: Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "field index out of bounds",
+                        )),
+                    })?;
             let base = offsets[field];
             for &dof in &field_spec.dof_indices {
                 if dof >= field_len {
@@ -185,15 +186,16 @@ where
     for point in label_points(labels, query) {
         for field_spec in field_indices {
             let field = field_spec.field;
-            let field_len = *field_dofs.get(field).ok_or_else(|| {
-                MeshSieveError::SectionAccess {
-                    point,
-                    source: Box::new(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        "field index out of bounds",
-                    )),
-                }
-            })?;
+            let field_len =
+                *field_dofs
+                    .get(field)
+                    .ok_or_else(|| MeshSieveError::SectionAccess {
+                        point,
+                        source: Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "field index out of bounds",
+                        )),
+                    })?;
             let base = offsets[field];
             for &dof in &field_spec.dof_indices {
                 if dof >= field_len {

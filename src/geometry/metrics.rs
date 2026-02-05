@@ -37,30 +37,36 @@ pub fn cell_volume(cell_type: CellType, vertices: &[[f64; 3]]) -> Result<f64, Me
     match cell_type {
         CellType::Vertex => Ok(0.0),
         CellType::Segment => Ok(norm(sub(vertices[1], vertices[0]))),
-        CellType::Triangle => Ok(0.5 * norm(cross(sub(vertices[1], vertices[0]), sub(vertices[2], vertices[0])))),
-        CellType::Quadrilateral => Ok(
-            0.5 * norm(cross(sub(vertices[1], vertices[0]), sub(vertices[2], vertices[0])))
-                + 0.5 * norm(cross(sub(vertices[2], vertices[0]), sub(vertices[3], vertices[0]))),
-        ),
-        CellType::Tetrahedron => Ok(signed_volume(
-            vertices[0],
-            vertices[1],
-            vertices[2],
-            vertices[3],
-        )
-        .abs()),
+        CellType::Triangle => Ok(0.5
+            * norm(cross(
+                sub(vertices[1], vertices[0]),
+                sub(vertices[2], vertices[0]),
+            ))),
+        CellType::Quadrilateral => Ok(0.5
+            * norm(cross(
+                sub(vertices[1], vertices[0]),
+                sub(vertices[2], vertices[0]),
+            ))
+            + 0.5
+                * norm(cross(
+                    sub(vertices[2], vertices[0]),
+                    sub(vertices[3], vertices[0]),
+                ))),
+        CellType::Tetrahedron => {
+            Ok(signed_volume(vertices[0], vertices[1], vertices[2], vertices[3]).abs())
+        }
         CellType::Hexahedron => Ok(hex_volume(vertices).abs()),
         CellType::Prism => Ok(prism_volume(vertices).abs()),
         CellType::Pyramid => Ok(pyramid_volume(vertices).abs()),
         CellType::Simplex(1) => Ok(norm(sub(vertices[1], vertices[0]))),
-        CellType::Simplex(2) => Ok(0.5 * norm(cross(sub(vertices[1], vertices[0]), sub(vertices[2], vertices[0])))),
-        CellType::Simplex(3) => Ok(signed_volume(
-            vertices[0],
-            vertices[1],
-            vertices[2],
-            vertices[3],
-        )
-        .abs()),
+        CellType::Simplex(2) => Ok(0.5
+            * norm(cross(
+                sub(vertices[1], vertices[0]),
+                sub(vertices[2], vertices[0]),
+            ))),
+        CellType::Simplex(3) => {
+            Ok(signed_volume(vertices[0], vertices[1], vertices[2], vertices[3]).abs())
+        }
         _ => Err(MeshSieveError::InvalidGeometry(format!(
             "unsupported cell type: {cell_type:?}"
         ))),
@@ -100,14 +106,9 @@ pub fn cell_normals(
     match cell_type {
         CellType::Triangle => Ok(vec![unit_normal(vertices[0], vertices[1], vertices[2])?]),
         CellType::Quadrilateral => Ok(vec![unit_normal(vertices[0], vertices[1], vertices[2])?]),
-        CellType::Tetrahedron
-        | CellType::Hexahedron
-        | CellType::Prism
-        | CellType::Pyramid => {
+        CellType::Tetrahedron | CellType::Hexahedron | CellType::Prism | CellType::Pyramid => {
             let faces = faces_for_cell(cell_type).ok_or_else(|| {
-                MeshSieveError::InvalidGeometry(format!(
-                    "unsupported cell type: {cell_type:?}"
-                ))
+                MeshSieveError::InvalidGeometry(format!("unsupported cell type: {cell_type:?}"))
             })?;
             let mut normals = Vec::with_capacity(faces.len());
             for face in faces {
@@ -194,10 +195,7 @@ pub fn jacobian(
             vertices.len()
         )));
     }
-    let dim = grads
-        .get(0)
-        .map(|g| g.len())
-        .unwrap_or(0);
+    let dim = grads.get(0).map(|g| g.len()).unwrap_or(0);
     let mut out = vec![0.0; 3 * dim];
     for (vertex, grad) in vertices.iter().zip(grads.iter()) {
         for ref_dim in 0..dim {
@@ -377,12 +375,7 @@ fn shape_functions(
             }
             let r = reference_point[0];
             let s = reference_point[1];
-            let weights = vec![
-                (1.0 - r) * (1.0 - s),
-                r * (1.0 - s),
-                r * s,
-                (1.0 - r) * s,
-            ];
+            let weights = vec![(1.0 - r) * (1.0 - s), r * (1.0 - s), r * s, (1.0 - r) * s];
             let grads = vec![
                 vec![-(1.0 - s), -(1.0 - r)],
                 vec![1.0 - s, -r],
@@ -477,13 +470,7 @@ fn shape_functions(
             let tm = 1.0 - t;
             let rm = 1.0 - r;
             let sm = 1.0 - s;
-            let weights = vec![
-                tm * rm * sm,
-                tm * r * sm,
-                tm * r * s,
-                tm * rm * s,
-                t,
-            ];
+            let weights = vec![tm * rm * sm, tm * r * sm, tm * r * s, tm * rm * s, t];
             let grads = vec![
                 vec![-tm * sm, -tm * rm, -rm * sm],
                 vec![tm * sm, -tm * r, -r * sm],
@@ -581,9 +568,7 @@ fn unit_normal(a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> Result<[f64; 3], MeshSi
     let n = cross(sub(b, a), sub(c, a));
     let len = norm(n);
     if len <= EPS {
-        return Err(MeshSieveError::InvalidGeometry(
-            "degenerate normal".into(),
-        ));
+        return Err(MeshSieveError::InvalidGeometry("degenerate normal".into()));
     }
     Ok([n[0] / len, n[1] / len, n[2] / len])
 }
@@ -737,7 +722,8 @@ mod tests {
         ];
         let area = cell_volume(CellType::Quadrilateral, &vertices).unwrap();
         assert!(approx(area, 1.0));
-        let mapped = reference_to_physical(CellType::Quadrilateral, &vertices, &[0.5, 0.5]).unwrap();
+        let mapped =
+            reference_to_physical(CellType::Quadrilateral, &vertices, &[0.5, 0.5]).unwrap();
         assert!(approx(mapped[0], 0.5));
         assert!(approx(mapped[1], 0.5));
     }
@@ -752,7 +738,8 @@ mod tests {
         ];
         let vol = cell_volume(CellType::Tetrahedron, &vertices).unwrap();
         assert!(approx(vol, 1.0 / 6.0));
-        let ref_point = physical_to_reference(CellType::Tetrahedron, &vertices, &[0.25, 0.25, 0.25]).unwrap();
+        let ref_point =
+            physical_to_reference(CellType::Tetrahedron, &vertices, &[0.25, 0.25, 0.25]).unwrap();
         assert!(approx(ref_point[0], 0.25));
         assert!(approx(ref_point[1], 0.25));
         assert!(approx(ref_point[2], 0.25));

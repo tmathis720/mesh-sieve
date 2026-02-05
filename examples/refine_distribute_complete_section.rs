@@ -1,7 +1,9 @@
 // cargo run --example refine_distribute_complete_section
 use mesh_sieve::algs::communicator::RayonComm;
 use mesh_sieve::algs::completion::complete_section_with_ownership;
-use mesh_sieve::algs::distribute::{distribute_with_overlap, DistributionConfig, ProvidedPartition};
+use mesh_sieve::algs::distribute::{
+    DistributionConfig, ProvidedPartition, distribute_with_overlap,
+};
 use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::constrained_section::ConstrainedSection;
 use mesh_sieve::data::section::Section;
@@ -81,9 +83,7 @@ fn build_refined_mesh_data() -> Result<
     constrained.insert_constraint(constrained_point, 0, constrained_value)?;
     constrained.apply_constraints()?;
     assert_eq!(
-        constrained
-            .section()
-            .try_restrict(constrained_point)?[0],
+        constrained.section().try_restrict(constrained_point)?[0],
         constrained_value
     );
 

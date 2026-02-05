@@ -70,9 +70,18 @@ fn transfer_scalar_by_cell_centroid_between_coarse_and_refined_meshes() {
     }
     let mut coarse_coords = Coordinates::<f64, VecStorage<f64>>::try_new(2, 2, coord_atlas)
         .expect("coordinate atlas should be valid");
-    coarse_coords.try_restrict_mut(vertices[0]).unwrap().copy_from_slice(&[0.0, 0.0]);
-    coarse_coords.try_restrict_mut(vertices[1]).unwrap().copy_from_slice(&[1.0, 0.0]);
-    coarse_coords.try_restrict_mut(vertices[2]).unwrap().copy_from_slice(&[0.0, 1.0]);
+    coarse_coords
+        .try_restrict_mut(vertices[0])
+        .unwrap()
+        .copy_from_slice(&[0.0, 0.0]);
+    coarse_coords
+        .try_restrict_mut(vertices[1])
+        .unwrap()
+        .copy_from_slice(&[1.0, 0.0]);
+    coarse_coords
+        .try_restrict_mut(vertices[2])
+        .unwrap()
+        .copy_from_slice(&[0.0, 1.0]);
 
     let refined = refine_mesh_with_options(
         &mut sieve,

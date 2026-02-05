@@ -382,18 +382,11 @@ mod tests {
         atlas.try_insert(p1, 3).unwrap();
         atlas.try_insert(p2, 3).unwrap();
 
-        let mut coords =
-            Coordinates::<f64, VecStorage<f64>>::try_new(3, 3, atlas.clone()).unwrap();
+        let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(3, 3, atlas.clone()).unwrap();
         let mut velocity = MeshVelocity::<f64, VecStorage<f64>>::try_new(3, atlas).unwrap();
 
-        coords
-            .section_mut()
-            .try_set(p1, &[0.0, 0.0, 0.0])
-            .unwrap();
-        coords
-            .section_mut()
-            .try_set(p2, &[1.0, 1.0, 1.0])
-            .unwrap();
+        coords.section_mut().try_set(p1, &[0.0, 0.0, 0.0]).unwrap();
+        coords.section_mut().try_set(p2, &[1.0, 1.0, 1.0]).unwrap();
         velocity
             .section_mut()
             .try_set(p1, &[1.0, 0.0, -1.0])
