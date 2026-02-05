@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "rank": 1,
+  "size": 2,
+  "overlap": {
+    "neighbors": [
+      {
+        "rank": 0,
+        "links": [
+          {
+            "local": 2,
+            "remote": 2
+          },
+          {
+            "local": 3,
+            "remote": 3
+          },
+          {
+            "local": 4,
+            "remote": 4
+          },
+          {
+            "local": 101,
+            "remote": 101
+          }
+        ]
+      }
+    ]
+  }
+}

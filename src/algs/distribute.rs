@@ -1208,6 +1208,8 @@ where
         return Err(err);
     }
 
+    // If overlap construction is asymmetric, prune links that neighbors don't recognize.
+    let mut to_remove: Vec<(PointId, usize)> = Vec::new();
     for (&nbr, points) in &local_points {
         let recv_set = recv_sets.get(&nbr).ok_or(MeshSieveError::MissingOverlap {
             source: format!("missing neighbor list from rank {nbr}").into(),
@@ -1217,12 +1219,18 @@ where
                 .and_then(|map| map.get(&(p, nbr)).copied())
                 .unwrap_or(p);
             if !recv_set.contains(&remote.get()) {
-                return Err(MeshSieveError::MissingOverlap {
-                    source: format!("neighbor {nbr} missing shared point {}", remote.get()).into(),
-                });
+                to_remove.push((p, nbr));
+                continue;
             }
             overlap.resolve_remote_point(p, nbr, remote)?;
         }
+    }
+
+    if !to_remove.is_empty() {
+        for (p, nbr) in to_remove {
+            let _ = overlap.remove_link(p, nbr);
+        }
+        overlap.prune_empty_parts();
     }
 
     Ok(())

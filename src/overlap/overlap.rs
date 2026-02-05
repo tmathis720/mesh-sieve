@@ -652,6 +652,20 @@ impl Overlap {
         removed
     }
 
+    /// Remove a specific `Local(p) -> Part(r)` link.
+    ///
+    /// Returns `true` if an edge was removed, `false` if it did not exist.
+    pub fn remove_link(&mut self, p: PointId, r: usize) -> bool {
+        let removed = self.inner.remove_arrow(local(p), part(r));
+        if removed.is_some() {
+            self.invalidate_cache();
+            self.debug_validate();
+            true
+        } else {
+            false
+        }
+    }
+
     /// Remove all edges incident to `Part(rank)` and then drop the vertex.
     ///
     /// Returns `true` if `Part(rank)` existed, `false` otherwise.
