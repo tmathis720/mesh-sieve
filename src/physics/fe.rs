@@ -1,5 +1,6 @@
 //! Finite-element utilities for evaluation and assembly.
 
+use crate::data::closure::{ClosureOrder, IdentitySectionSym, build_closure_index_unoriented};
 use crate::data::coordinates::Coordinates;
 use crate::data::discretization::DiscretizationMetadata;
 use crate::data::storage::Storage;
@@ -10,6 +11,7 @@ use crate::discretization::runtime::{
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cell_type::CellType;
 use crate::topology::point::PointId;
+use crate::topology::sieve::Sieve;
 
 /// Basis and quadrature evaluation on the reference element.
 #[derive(Clone, Debug)]
@@ -101,4 +103,41 @@ fn gather_node_coordinates<S: Storage<f64>>(
         node_coords.push(slice.to_vec());
     }
     Ok(node_coords)
+}
+
+/// Assemble element matrices using vertices selected from a DMPlex-style closure.
+///
+/// This is the closure-aware counterpart to [`assemble_element_matrices`].  The
+/// closure order is explicit, so high-order and tensor-product callers can share
+/// the same predictable ordering used for solution-vector closure access.
+pub fn assemble_element_matrices_from_closure<T, S, F>(
+    topology: &T,
+    coordinates: &Coordinates<f64, S>,
+    cell_type: CellType,
+    cell: PointId,
+    topology_version: u64,
+    order: &ClosureOrder,
+    metadata: &DiscretizationMetadata,
+    rhs: F,
+) -> Result<ElementMatrices, MeshSieveError>
+where
+    T: Sieve<Point = PointId>,
+    S: Storage<f64>,
+    F: Fn(&[f64]) -> f64,
+{
+    let index = build_closure_index_unoriented(
+        topology,
+        coordinates.section(),
+        cell,
+        topology_version,
+        order,
+        &IdentitySectionSym,
+    )?;
+    let mut cell_nodes = Vec::new();
+    for point in index.point_order() {
+        if topology.cone_points(point).next().is_none() {
+            cell_nodes.push(point);
+        }
+    }
+    assemble_element_matrices(coordinates, cell_type, &cell_nodes, metadata, rhs)
 }

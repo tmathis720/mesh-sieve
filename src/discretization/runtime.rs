@@ -1,5 +1,8 @@
 //! Runtime basis/quadrature lookup and element assembly utilities.
 
+use crate::data::closure::{
+    ClosureIndex, ClosureOrder, IdentitySectionSym, build_closure_index_unoriented,
+};
 use crate::data::discretization::DiscretizationMetadata;
 use crate::data::section::Section;
 use crate::data::storage::Storage;
@@ -352,6 +355,43 @@ impl DofMap {
     pub fn index(&self, point: PointId) -> Option<usize> {
         self.indices.get(&point).copied()
     }
+}
+
+/// Build an assembly DOF map from a cached/un-cached DMPlex-style closure order.
+///
+/// Only points with section DOFs are included, and multi-DOF points appear once
+/// per scalar DOF in the flattened closure order.
+pub fn closure_dof_map<T, V, Sct>(
+    topology: &T,
+    section: &Section<V, Sct>,
+    cell: PointId,
+    topology_version: u64,
+    order: &ClosureOrder,
+) -> Result<DofMap, MeshSieveError>
+where
+    T: Sieve<Point = PointId>,
+    Sct: Storage<V>,
+{
+    let index = build_closure_index_unoriented(
+        topology,
+        section,
+        cell,
+        topology_version,
+        order,
+        &IdentitySectionSym,
+    )?;
+    Ok(dof_map_from_closure_index(&index))
+}
+
+/// Convert a closure index to the point-level DOF map used by scalar assembly.
+pub fn dof_map_from_closure_index<O>(index: &ClosureIndex<O>) -> DofMap {
+    let mut dofs = Vec::with_capacity(index.len);
+    for entry in &index.points {
+        for _ in 0..entry.len {
+            dofs.push(entry.point);
+        }
+    }
+    DofMap::new(dofs)
 }
 
 /// Add a local vector contribution into a global section.
