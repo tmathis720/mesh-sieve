@@ -7,7 +7,7 @@ use mesh_sieve::topology::Sieve;
 use mesh_sieve::topology::cell_type::CellType;
 use mesh_sieve::topology::point::PointId;
 use mesh_sieve::topology::refine::refine_mesh;
-use mesh_sieve::topology::sieve::InMemorySieve;
+use mesh_sieve::topology::sieve::MeshSieve;
 
 fn pid(i: u64) -> PointId {
     PointId::new(i).unwrap()
@@ -15,7 +15,7 @@ fn pid(i: u64) -> PointId {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Coarse mesh: single triangle cell 10 -> vertices 1,2,3.
-    let mut coarse = InMemorySieve::<PointId, ()>::default();
+    let mut coarse = MeshSieve::default();
     coarse.add_arrow(pid(10), pid(1), ());
     coarse.add_arrow(pid(10), pid(2), ());
     coarse.add_arrow(pid(10), pid(3), ());

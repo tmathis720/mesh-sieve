@@ -21,7 +21,7 @@ use crate::topology::labels::LabelSet;
 use crate::topology::ownership::PointOwnership;
 use crate::topology::periodic::PointEquivalence;
 use crate::topology::point::PointId;
-use crate::topology::sieve::{InMemorySieve, Sieve};
+use crate::topology::sieve::{MeshSieve, OrientedSieve, Sieve};
 use crate::topology::validation::debug_validate_overlap_ownership_topology;
 use bytemuck::Zeroable;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -76,9 +76,9 @@ pub fn distribute_mesh<M, C>(
     mesh: &M,
     parts: &[usize],
     comm: &C,
-) -> Result<(InMemorySieve<PointId, ()>, Overlap), MeshSieveError>
+) -> Result<(MeshSieve, Overlap), MeshSieveError>
 where
-    M: Sieve<Point = PointId, Payload = ()>,
+    M: OrientedSieve<Point = PointId, Payload = (), Orient = i32>,
     C: Communicator + Sync,
 {
     let my_rank = comm.rank();
@@ -116,12 +116,12 @@ where
     overlap.validate_invariants()?;
 
     // ---------- Build local submesh ----------
-    let mut local = InMemorySieve::<PointId, ()>::default();
+    let mut local = MeshSieve::default();
     for src in &pts {
         if owner_of(parts, *src)? == my_rank {
-            for (dst, _) in mesh.cone(*src) {
+            for (dst, orient) in mesh.cone_o(*src) {
                 if owner_of(parts, dst)? == my_rank {
-                    local.add_arrow(*src, dst, ());
+                    local.add_arrow_o(*src, dst, (), orient);
                 }
             }
         }
@@ -176,7 +176,7 @@ where
     CtSt: Storage<CellType> + Clone,
 {
     /// Local topology with ghost layers included.
-    pub sieve: InMemorySieve<PointId, ()>,
+    pub sieve: MeshSieve,
     /// Overlap graph with resolved remote IDs.
     pub overlap: Overlap,
     /// Point owners derived from the cell partition.
@@ -395,7 +395,7 @@ pub fn distribute_with_overlap<M, V, St, CtSt, C, P>(
     comm: &C,
 ) -> Result<DistributedMeshData<V, St, CtSt>, MeshSieveError>
 where
-    M: Sieve<Point = PointId, Payload = ()>,
+    M: OrientedSieve<Point = PointId, Payload = (), Orient = i32>,
     V: Clone + Default + Send + PartialEq + bytemuck::Pod + 'static,
     St: Storage<V> + Clone,
     CtSt: Storage<CellType> + Clone,
@@ -419,7 +419,7 @@ pub fn distribute_with_overlap_periodic<M, V, St, CtSt, C, P>(
     periodic: Option<&PointEquivalence>,
 ) -> Result<DistributedMeshData<V, St, CtSt>, MeshSieveError>
 where
-    M: Sieve<Point = PointId, Payload = ()>,
+    M: OrientedSieve<Point = PointId, Payload = (), Orient = i32>,
     V: Clone + Default + Send + PartialEq + bytemuck::Pod + 'static,
     St: Storage<V> + Clone,
     CtSt: Storage<CellType> + Clone,
@@ -666,7 +666,7 @@ fn assign_point_owners<M, V, St, CtSt>(
     max_id: usize,
 ) -> Result<Vec<usize>, MeshSieveError>
 where
-    M: Sieve<Point = PointId, Payload = ()>,
+    M: OrientedSieve<Point = PointId, Payload = (), Orient = i32>,
     St: Storage<V> + Clone,
     CtSt: Storage<CellType> + Clone,
 {
@@ -815,13 +815,13 @@ fn ensure_periodic_remote_links(overlap: &mut Overlap) -> Result<(), MeshSieveEr
 fn build_local_sieve<M, V, St, CtSt>(
     mesh_data: &MeshData<M, V, St, CtSt>,
     local_set: &BTreeSet<PointId>,
-) -> InMemorySieve<PointId, ()>
+) -> MeshSieve
 where
-    M: Sieve<Point = PointId, Payload = ()>,
+    M: OrientedSieve<Point = PointId, Payload = (), Orient = i32>,
     St: Storage<V> + Clone,
     CtSt: Storage<CellType> + Clone,
 {
-    let mut local = InMemorySieve::<PointId, ()>::default();
+    let mut local = MeshSieve::default();
     for &point in local_set {
         local.add_point(point);
     }
@@ -830,9 +830,9 @@ where
         if !local_set.contains(src) {
             continue;
         }
-        for (dst, _) in mesh_data.sieve.cone(*src) {
+        for (dst, orient) in mesh_data.sieve.cone_o(*src) {
             if local_set.contains(&dst) {
-                local.add_arrow(*src, dst, ());
+                local.add_arrow_o(*src, dst, (), orient);
             }
         }
     }

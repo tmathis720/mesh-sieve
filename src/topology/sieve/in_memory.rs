@@ -992,3 +992,31 @@ mod covering_api_tests {
         let _ = s.diameter(); // should not panic
     }
 }
+
+impl<P, T> super::oriented::OrientedSieve for InMemorySieve<P, T>
+where
+    P: PointLike,
+    T: PayloadLike,
+{
+    type Orient = i32;
+    type ConeOIter<'a>
+        = Box<dyn Iterator<Item = (P, i32)> + 'a>
+    where
+        Self: 'a;
+    type SupportOIter<'a>
+        = Box<dyn Iterator<Item = (P, i32)> + 'a>
+    where
+        Self: 'a;
+
+    fn cone_o<'a>(&'a self, p: P) -> Self::ConeOIter<'a> {
+        Box::new(self.cone(p).map(|(dst, _)| (dst, 0)))
+    }
+
+    fn support_o<'a>(&'a self, p: P) -> Self::SupportOIter<'a> {
+        Box::new(self.support(p).map(|(src, _)| (src, 0)))
+    }
+
+    fn add_arrow_o(&mut self, src: P, dst: P, payload: T, _orient: i32) {
+        self.add_arrow(src, dst, payload);
+    }
+}

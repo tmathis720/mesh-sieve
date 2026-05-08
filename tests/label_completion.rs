@@ -10,7 +10,7 @@ use std::io::Cursor;
 fn read_gmsh(
     contents: &str,
 ) -> mesh_sieve::io::MeshData<
-    mesh_sieve::topology::sieve::InMemorySieve<PointId, ()>,
+    mesh_sieve::topology::sieve::MeshSieve,
     f64,
     mesh_sieve::data::storage::VecStorage<f64>,
     mesh_sieve::data::storage::VecStorage<CellType>,

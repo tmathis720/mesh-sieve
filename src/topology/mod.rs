@@ -40,7 +40,7 @@ pub use ownership::{OwnershipEntry, PointOwnership};
 pub use sieve::*;
 pub use validation::{
     NonManifoldHandling, TopologyValidationOptions, debug_validate_overlap_ownership_topology,
-    validate_overlap_ownership_topology, validate_sieve_topology,
+    validate_oriented_sieve_topology, validate_overlap_ownership_topology, validate_sieve_topology,
 };
 
 #[cfg(test)]

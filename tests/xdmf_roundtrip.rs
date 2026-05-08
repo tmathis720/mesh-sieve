@@ -7,15 +7,14 @@ use mesh_sieve::io::{MeshData, SieveSectionReader, SieveSectionWriter};
 use mesh_sieve::topology::cell_type::CellType;
 use mesh_sieve::topology::labels::LabelSet;
 use mesh_sieve::topology::point::PointId;
-use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
+use mesh_sieve::topology::sieve::{MeshSieve, Sieve};
 
 fn pid(id: u64) -> PointId {
     PointId::new(id).unwrap()
 }
 
-fn build_mesh() -> MeshData<InMemorySieve<PointId, ()>, f64, VecStorage<f64>, VecStorage<CellType>>
-{
-    let mut sieve = InMemorySieve::<PointId, ()>::default();
+fn build_mesh() -> MeshData<MeshSieve, f64, VecStorage<f64>, VecStorage<CellType>> {
+    let mut sieve = MeshSieve::default();
     let cell = pid(20);
     for v in [pid(4), pid(5), pid(6)] {
         sieve.add_arrow(cell, v, ());

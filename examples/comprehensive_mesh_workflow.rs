@@ -35,7 +35,7 @@ fn main() {
     use mesh_sieve::prelude::*;
     use mesh_sieve::topology::arrow::Polarity;
     use mesh_sieve::topology::point::PointId;
-    use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
+    use mesh_sieve::topology::sieve::{MeshSieve, Sieve};
     use mesh_sieve::topology::stack::{InMemoryStack, Stack};
     use std::marker::PhantomData;
 
@@ -60,9 +60,9 @@ fn main() {
         build_hierarchical_tetrahedral_mesh()
     } else {
         (
-            InMemorySieve::default(),
+            MeshSieve::default(),
             Vec::new(),
-            InMemorySieve::default(),
+            MeshSieve::default(),
             Bundle {
                 stack: InMemoryStack::new(),
                 section: Section::<f64, VecStorage<f64>>::new(Atlas::default()),
@@ -148,12 +148,7 @@ fn main() {
 
 /// Build a complex tetrahedral mesh with refinement hierarchy
 #[cfg(feature = "mpi-support")]
-fn build_hierarchical_tetrahedral_mesh() -> (
-    InMemorySieve<PointId, ()>,
-    Vec<PointId>,
-    InMemorySieve<PointId, ()>,
-    Bundle<f64>,
-) {
+fn build_hierarchical_tetrahedral_mesh() -> (MeshSieve, Vec<PointId>, MeshSieve, Bundle<f64>) {
     use mesh_sieve::data::storage::VecStorage;
     use mesh_sieve::prelude::Stack;
     use mesh_sieve::prelude::*;
@@ -163,7 +158,7 @@ fn build_hierarchical_tetrahedral_mesh() -> (
 
     println!("[rank 0] Building hierarchical tetrahedral mesh...");
 
-    let mut mesh = InMemorySieve::<PointId, ()>::default();
+    let mut mesh = MeshSieve::default();
     let mut atlas = Atlas::default();
 
     // Create two tetrahedra sharing a face
@@ -266,7 +261,7 @@ fn build_hierarchical_tetrahedral_mesh() -> (
 
 /// Test lattice operations (meet, join) and adjacency
 #[cfg(feature = "mpi-support")]
-fn test_lattice_operations(mesh: &InMemorySieve<PointId, ()>, cells: &[PointId]) {
+fn test_lattice_operations(mesh: &MeshSieve, cells: &[PointId]) {
     println!("[rank 0] Testing lattice operations...");
     use mesh_sieve::prelude::*;
 
@@ -308,10 +303,7 @@ fn test_lattice_operations(mesh: &InMemorySieve<PointId, ()>, cells: &[PointId])
 
 /// Test refinement helpers (restrict_closure, restrict_star)
 #[cfg(feature = "mpi-support")]
-fn test_refinement_helpers(
-    mesh: &InMemorySieve<PointId, ()>,
-    _section: &Section<f64, VecStorage<f64>>,
-) {
+fn test_refinement_helpers(mesh: &MeshSieve, _section: &Section<f64, VecStorage<f64>>) {
     use mesh_sieve::data::refine::{
         try_restrict_closure, try_restrict_closure_vec, try_restrict_star, try_restrict_star_vec,
     };
@@ -373,7 +365,7 @@ fn test_refinement_helpers(
 
 /// Test stratum computation and validation
 #[cfg(feature = "mpi-support")]
-fn test_stratum_computation(mesh: &InMemorySieve<PointId, ()>) {
+fn test_stratum_computation(mesh: &MeshSieve) {
     println!("[rank 0] Testing stratum computation...");
     use mesh_sieve::prelude::*;
 
@@ -415,11 +407,7 @@ fn test_stratum_computation(mesh: &InMemorySieve<PointId, ()>) {
 
 /// Test METIS partitioning integration
 #[cfg(feature = "metis-support")]
-fn test_metis_partitioning(
-    mesh: &InMemorySieve<PointId, ()>,
-    cells: &[PointId],
-    n_parts: usize,
-) -> Vec<usize> {
+fn test_metis_partitioning(mesh: &MeshSieve, cells: &[PointId], n_parts: usize) -> Vec<usize> {
     println!("[rank 0] Testing METIS partitioning...");
 
     // METIS requires at least as many cells as partitions
@@ -452,11 +440,7 @@ fn test_metis_partitioning(
 
 #[cfg(not(feature = "metis-support"))]
 #[cfg(feature = "mpi-support")]
-fn test_metis_partitioning(
-    _mesh: &InMemorySieve<PointId, ()>,
-    cells: &[PointId],
-    n_parts: usize,
-) -> Vec<usize> {
+fn test_metis_partitioning(_mesh: &MeshSieve, cells: &[PointId], n_parts: usize) -> Vec<usize> {
     println!("[rank 0] METIS not available, using round-robin partitioning...");
     (0..cells.len()).map(|i| i % n_parts).collect()
 }
@@ -464,7 +448,7 @@ fn test_metis_partitioning(
 /// Test distributed mesh completion with complex overlaps
 #[cfg(feature = "mpi-support")]
 fn test_distributed_completion(
-    global_mesh: &InMemorySieve<PointId, ()>,
+    global_mesh: &MeshSieve,
     cells: &[PointId],
     cell_partition: &[usize],
     comm: &MpiComm,
@@ -692,7 +676,7 @@ fn test_error_handling_robustness(rank: usize) {
     }
 
     // 3. Empty sieve operations
-    let empty_sieve = InMemorySieve::<PointId, ()>::default();
+    let empty_sieve = MeshSieve::default();
     let non_existent_pt = PointId::new(99999).unwrap(); // Use a point not in the sieve
     let closure_empty: Vec<_> = empty_sieve.closure([non_existent_pt]).collect();
     // Note: closure may include the point itself even if not in sieve, so check if it's minimal
@@ -702,7 +686,7 @@ fn test_error_handling_robustness(rank: usize) {
     );
 
     // 4. Cycle detection in stratum computation
-    let mut cyclic_sieve = InMemorySieve::<PointId, ()>::default();
+    let mut cyclic_sieve = MeshSieve::default();
     let p1 = PointId::new(1).unwrap();
     let p2 = PointId::new(2).unwrap();
     cyclic_sieve.add_arrow(p1, p2, ());

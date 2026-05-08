@@ -9,10 +9,10 @@ use mesh_sieve::data::storage::VecStorage;
 use mesh_sieve::mesh_error::MeshSieveError;
 use mesh_sieve::topology::cell_type::CellType;
 use mesh_sieve::topology::point::PointId;
-use mesh_sieve::topology::sieve::{InMemorySieve, MutableSieve, Sieve};
+use mesh_sieve::topology::sieve::{MeshSieve, MutableSieve, Sieve};
 
 fn main() -> Result<(), MeshSieveError> {
-    let mut surface = InMemorySieve::<PointId, ()>::default();
+    let mut surface = MeshSieve::default();
     let cell = PointId::new(10)?;
     let vertices = [
         PointId::new(1)?,

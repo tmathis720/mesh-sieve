@@ -2,7 +2,7 @@
 use mesh_sieve::io::SieveSectionReader;
 use mesh_sieve::io::gmsh::GmshReader;
 use mesh_sieve::mesh_error::MeshSieveError;
-use mesh_sieve::topology::sieve::InMemorySieve;
+use mesh_sieve::topology::sieve::MeshSieve;
 
 fn main() -> Result<(), MeshSieveError> {
     let msh = r#"
@@ -25,7 +25,7 @@ $EndElements
     let reader = GmshReader::default();
     let mesh = reader.read(msh.as_bytes())?;
 
-    let _sieve: InMemorySieve<_, _> = mesh.sieve;
+    let _sieve: MeshSieve = mesh.sieve;
     let mut coordinates = mesh.coordinates.expect("Gmsh reader populates coordinates");
 
     for (point, values) in coordinates.section().iter() {

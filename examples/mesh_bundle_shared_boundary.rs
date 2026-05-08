@@ -6,10 +6,10 @@ use mesh_sieve::prelude::Atlas;
 use mesh_sieve::topology::cell_type::CellType;
 use mesh_sieve::topology::labels::LabelSet;
 use mesh_sieve::topology::point::PointId;
-use mesh_sieve::topology::sieve::{InMemorySieve, MutableSieve, Sieve};
+use mesh_sieve::topology::sieve::{MeshSieve, MutableSieve, Sieve};
 
-fn build_sieve(points: &[PointId], arrows: &[(PointId, PointId)]) -> InMemorySieve<PointId, ()> {
-    let mut sieve = InMemorySieve::default();
+fn build_sieve(points: &[PointId], arrows: &[(PointId, PointId)]) -> MeshSieve {
+    let mut sieve = MeshSieve::default();
     for point in points {
         MutableSieve::add_point(&mut sieve, *point);
     }

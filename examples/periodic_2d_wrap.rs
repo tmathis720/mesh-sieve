@@ -2,10 +2,10 @@
 use mesh_sieve::mesh_error::MeshSieveError;
 use mesh_sieve::topology::periodic::{PeriodicMap, collapse_points, quotient_sieve};
 use mesh_sieve::topology::point::PointId;
-use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
+use mesh_sieve::topology::sieve::{MeshSieve, Sieve};
 
 fn main() -> Result<(), MeshSieveError> {
-    let mut sieve = InMemorySieve::<PointId, ()>::default();
+    let mut sieve = MeshSieve::default();
 
     let v = |i| PointId::new(i).unwrap();
     let c = |i| PointId::new(100_u64 + i).unwrap();

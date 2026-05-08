@@ -39,8 +39,8 @@ fn find_points_by_coords(
         .collect()
 }
 
-fn refined_cell_vertices(
-    refined: &InMemorySieve<PointId, ()>,
+fn refined_cell_vertices<S: Sieve<Point = PointId>>(
+    refined: &S,
     fine_cells: &[PointId],
 ) -> HashSet<PointId> {
     let mut vertices = HashSet::new();

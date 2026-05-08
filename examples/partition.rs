@@ -4,12 +4,12 @@ use mesh_sieve::algs::dual_graph::{DualGraph, build_dual};
 #[cfg(feature = "metis-support")]
 use mesh_sieve::algs::metis_partition::MetisPartition;
 use mesh_sieve::topology::point::PointId;
-use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
+use mesh_sieve::topology::sieve::{MeshSieve, Sieve};
 
 fn main() {
     // 1) Build a tiny mesh & extract its cells
     let (mesh, cells) = {
-        let mut s = InMemorySieve::<PointId, ()>::default();
+        let mut s = MeshSieve::default();
         // Build a small test mesh
         s.add_arrow(PointId::new(10).unwrap(), PointId::new(1).unwrap(), ());
         s.add_arrow(PointId::new(10).unwrap(), PointId::new(2).unwrap(), ());

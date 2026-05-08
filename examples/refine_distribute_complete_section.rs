@@ -15,7 +15,7 @@ use mesh_sieve::topology::cell_type::CellType;
 use mesh_sieve::topology::ownership::PointOwnership;
 use mesh_sieve::topology::point::PointId;
 use mesh_sieve::topology::refine::refine_mesh_with_ownership;
-use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
+use mesh_sieve::topology::sieve::{MeshSieve, Sieve};
 
 fn pid(id: u64) -> PointId {
     PointId::new(id).expect("valid point id")
@@ -23,7 +23,7 @@ fn pid(id: u64) -> PointId {
 
 fn build_refined_mesh_data() -> Result<
     (
-        MeshData<InMemorySieve<PointId, ()>, f64, VecStorage<f64>, VecStorage<CellType>>,
+        MeshData<MeshSieve, f64, VecStorage<f64>, VecStorage<CellType>>,
         Vec<PointId>,
         Vec<usize>,
         PointId,
@@ -31,7 +31,7 @@ fn build_refined_mesh_data() -> Result<
     ),
     MeshSieveError,
 > {
-    let mut coarse = InMemorySieve::<PointId, ()>::default();
+    let mut coarse = MeshSieve::default();
     let (c0, c1) = (pid(10), pid(11));
     let (v1, v2, v3, v4) = (pid(1), pid(2), pid(3), pid(4));
 

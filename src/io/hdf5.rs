@@ -9,7 +9,7 @@ use crate::mesh_error::MeshSieveError;
 use crate::topology::cell_type::CellType;
 use crate::topology::labels::LabelSet;
 use crate::topology::point::PointId;
-use crate::topology::sieve::{InMemorySieve, Sieve};
+use crate::topology::sieve::{MeshSieve, Sieve};
 use hdf5::File;
 use std::collections::BTreeMap;
 use std::fs;
@@ -44,7 +44,7 @@ pub struct Hdf5Reader;
 pub struct Hdf5Writer;
 
 impl SieveSectionReader for Hdf5Reader {
-    type Sieve = InMemorySieve<PointId, ()>;
+    type Sieve = MeshSieve;
     type Value = f64;
     type Storage = VecStorage<f64>;
     type CellStorage = VecStorage<CellType>;
@@ -66,7 +66,7 @@ impl SieveSectionReader for Hdf5Reader {
 }
 
 impl SieveSectionWriter for Hdf5Writer {
-    type Sieve = InMemorySieve<PointId, ()>;
+    type Sieve = MeshSieve;
     type Value = f64;
     type Storage = VecStorage<f64>;
     type CellStorage = VecStorage<CellType>;
@@ -339,10 +339,7 @@ where
 
 pub(crate) fn read_mesh_from_hdf5(
     file: &File,
-) -> Result<
-    MeshData<InMemorySieve<PointId, ()>, f64, VecStorage<f64>, VecStorage<CellType>>,
-    MeshSieveError,
-> {
+) -> Result<MeshData<MeshSieve, f64, VecStorage<f64>, VecStorage<CellType>>, MeshSieveError> {
     let topo_group = file.group(GROUP_TOPOLOGY).map_err(|err| {
         MeshSieveError::MeshIoParse(format!("HDF5 missing topology group: {err}"))
     })?;
@@ -385,7 +382,7 @@ pub(crate) fn read_mesh_from_hdf5(
     let cells: Vec<i64> = topo_group.dataset(DATASET_CELLS)?.read_raw()?;
     let cell_type_codes: Vec<i32> = topo_group.dataset(DATASET_CELL_TYPES)?.read_raw()?;
 
-    let mut sieve = InMemorySieve::<PointId, ()>::default();
+    let mut sieve = MeshSieve::default();
     for (cell_idx, cell) in cell_ids.iter().enumerate() {
         let start = offsets.get(cell_idx).copied().unwrap_or(0) as usize;
         let end = offsets.get(cell_idx + 1).copied().unwrap_or(start as i64) as usize;

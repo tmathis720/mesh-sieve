@@ -13,7 +13,7 @@ use crate::mesh_error::MeshSieveError;
 use crate::topology::cell_type::CellType;
 use crate::topology::labels::LabelSet;
 use crate::topology::point::PointId;
-use crate::topology::sieve::{InMemorySieve, Sieve};
+use crate::topology::sieve::{MeshSieve, Sieve};
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 
@@ -73,7 +73,7 @@ impl VtkWriter {
 }
 
 impl SieveSectionWriter for VtkWriter {
-    type Sieve = InMemorySieve<PointId, ()>;
+    type Sieve = MeshSieve;
     type Value = f64;
     type Storage = VecStorage<f64>;
     type CellStorage = VecStorage<CellType>;
@@ -427,7 +427,7 @@ impl VtkReader {
 }
 
 impl SieveSectionReader for VtkReader {
-    type Sieve = InMemorySieve<PointId, ()>;
+    type Sieve = MeshSieve;
     type Value = f64;
     type Storage = VecStorage<f64>;
     type CellStorage = VecStorage<CellType>;
@@ -605,7 +605,7 @@ impl SieveSectionReader for VtkReader {
                 .copy_from_slice(&slice[..embed_dim.min(3)]);
         }
 
-        let mut sieve = InMemorySieve::<PointId, ()>::default();
+        let mut sieve = MeshSieve::default();
         for (cell_idx, cell) in cell_ids.iter().enumerate() {
             let conn = &connectivity[cell_idx];
             for &point_idx in conn {

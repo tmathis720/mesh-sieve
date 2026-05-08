@@ -18,7 +18,7 @@ use crate::mesh_error::MeshSieveError;
 use crate::topology::cell_type::CellType;
 use crate::topology::labels::LabelSet;
 use crate::topology::point::PointId;
-use crate::topology::sieve::{InMemorySieve, Sieve};
+use crate::topology::sieve::{MeshSieve, Sieve};
 use hdf5::File;
 use roxmltree::Document;
 use std::collections::{BTreeMap, HashMap};
@@ -135,7 +135,7 @@ impl XdmfWriter {
 }
 
 impl SieveSectionWriter for XdmfWriter {
-    type Sieve = InMemorySieve<PointId, ()>;
+    type Sieve = MeshSieve;
     type Value = f64;
     type Storage = VecStorage<f64>;
     type CellStorage = VecStorage<CellType>;
@@ -684,7 +684,7 @@ impl XdmfReader {
 }
 
 impl SieveSectionReader for XdmfReader {
-    type Sieve = InMemorySieve<PointId, ()>;
+    type Sieve = MeshSieve;
     type Value = f64;
     type Storage = VecStorage<f64>;
     type CellStorage = VecStorage<CellType>;
@@ -788,7 +788,7 @@ impl SieveSectionReader for XdmfReader {
                 .copy_from_slice(&slice[..embed_dim.min(3)]);
         }
 
-        let mut sieve = InMemorySieve::<PointId, ()>::default();
+        let mut sieve = MeshSieve::default();
         let mixed_values = topology_item.values_as_i64()?;
         let mut idx = 0usize;
         let mut cell_types = Vec::new();
