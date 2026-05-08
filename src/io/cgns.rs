@@ -4,8 +4,7 @@ use crate::data::storage::VecStorage;
 use crate::io::{MeshData, SieveSectionReader};
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cell_type::CellType;
-use crate::topology::point::PointId;
-use crate::topology::sieve::InMemorySieve;
+use crate::topology::sieve::MeshSieve;
 use std::io::Read;
 
 /// Placeholder CGNS reader.
@@ -13,7 +12,7 @@ use std::io::Read;
 pub struct CgnsReader;
 
 impl SieveSectionReader for CgnsReader {
-    type Sieve = InMemorySieve<PointId, ()>;
+    type Sieve = MeshSieve;
     type Value = f64;
     type Storage = VecStorage<f64>;
     type CellStorage = VecStorage<CellType>;

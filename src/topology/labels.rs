@@ -13,7 +13,7 @@ use crate::io::MeshData;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cell_type::CellType;
 use crate::topology::point::PointId;
-use crate::topology::sieve::{InMemorySieve, Sieve};
+use crate::topology::sieve::{OrientedMeshSieve, OrientedSieve, Sieve};
 
 /// Named integer labels for mesh points.
 #[derive(Clone, Debug, Default)]
@@ -329,13 +329,13 @@ pub fn extract_submesh_from_label<S, V, St, CtSt>(
     label_value: i32,
 ) -> Result<
     (
-        MeshData<InMemorySieve<PointId, S::Payload>, V, St, CtSt>,
+        MeshData<OrientedMeshSieve<PointId, S::Payload>, V, St, CtSt>,
         SubmeshMaps,
     ),
     MeshSieveError,
 >
 where
-    S: Sieve<Point = PointId>,
+    S: OrientedSieve<Point = PointId, Orient = i32>,
     S::Payload: Clone,
     V: Clone + Default,
     St: Storage<V> + Clone,

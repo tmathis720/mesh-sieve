@@ -10,14 +10,14 @@ use mesh_sieve::io::{
 };
 use mesh_sieve::topology::cell_type::CellType;
 use mesh_sieve::topology::point::PointId;
-use mesh_sieve::topology::sieve::{InMemorySieve, MutableSieve, Sieve};
+use mesh_sieve::topology::sieve::{MeshSieve, MutableSieve, Sieve};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let p1 = PointId::new(1)?;
     let p2 = PointId::new(2)?;
     let elem = PointId::new(3)?;
 
-    let mut sieve = InMemorySieve::default();
+    let mut sieve = MeshSieve::default();
     MutableSieve::add_point(&mut sieve, p1);
     MutableSieve::add_point(&mut sieve, p2);
     MutableSieve::add_point(&mut sieve, elem);

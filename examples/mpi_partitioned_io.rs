@@ -13,7 +13,7 @@ use mesh_sieve::topology::cell_type::CellType;
 #[cfg(feature = "mpi-support")]
 use mesh_sieve::topology::point::PointId;
 #[cfg(feature = "mpi-support")]
-use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
+use mesh_sieve::topology::sieve::{MeshSieve, Sieve};
 #[cfg(feature = "mpi-support")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use mesh_sieve::algs::communicator::{Communicator, MpiComm};
@@ -105,17 +105,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(feature = "mpi-support")]
 fn build_global_mesh() -> Result<
     (
-        mesh_sieve::io::MeshData<
-            InMemorySieve<PointId, ()>,
-            f64,
-            VecStorage<f64>,
-            VecStorage<CellType>,
-        >,
+        mesh_sieve::io::MeshData<MeshSieve, f64, VecStorage<f64>, VecStorage<CellType>>,
         Vec<PointId>,
     ),
     Box<dyn std::error::Error>,
 > {
-    let mut sieve = InMemorySieve::<PointId, ()>::default();
+    let mut sieve = MeshSieve::default();
     let cell0 = PointId::new(100)?;
     let cell1 = PointId::new(101)?;
     let v1 = PointId::new(1)?;

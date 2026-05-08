@@ -9,7 +9,7 @@ use crate::mesh_error::MeshSieveError;
 use crate::topology::cell_type::CellType;
 use crate::topology::labels::LabelSet;
 use crate::topology::point::PointId;
-use crate::topology::sieve::{InMemorySieve, MutableSieve, Sieve};
+use crate::topology::sieve::{MeshSieve, MutableSieve, Sieve};
 use crate::topology::validation::{TopologyValidationOptions, validate_sieve_topology};
 use hdf5::File;
 use hdf5::types::{VarLenAscii, VarLenUnicode};
@@ -203,7 +203,7 @@ fn write_temp_exodus(bytes: &[u8]) -> Result<PathBuf, MeshSieveError> {
 }
 
 impl SieveSectionReader for ExodusReader {
-    type Sieve = InMemorySieve<PointId, ()>;
+    type Sieve = MeshSieve;
     type Value = f64;
     type Storage = VecStorage<f64>;
     type CellStorage = VecStorage<CellType>;
@@ -218,7 +218,7 @@ impl SieveSectionReader for ExodusReader {
 }
 
 impl SieveSectionReader for ExodusIiReader {
-    type Sieve = InMemorySieve<PointId, ()>;
+    type Sieve = MeshSieve;
     type Value = f64;
     type Storage = VecStorage<f64>;
     type CellStorage = VecStorage<CellType>;
@@ -245,10 +245,8 @@ impl ExodusReader {
         &self,
         mut reader: R,
         options: ExodusReadOptions,
-    ) -> Result<
-        MeshData<InMemorySieve<PointId, ()>, f64, VecStorage<f64>, VecStorage<CellType>>,
-        MeshSieveError,
-    > {
+    ) -> Result<MeshData<MeshSieve, f64, VecStorage<f64>, VecStorage<CellType>>, MeshSieveError>
+    {
         let mut contents = String::new();
         reader.read_to_string(&mut contents)?;
         let mut lines = contents.lines();
@@ -337,7 +335,7 @@ impl ExodusReader {
             .parse()
             .map_err(|_| MeshSieveError::MeshIoParse("invalid element count".into()))?;
 
-        let mut sieve = InMemorySieve::default();
+        let mut sieve = MeshSieve::default();
         let mut seen_arrows = if options.validate_topology {
             Some(HashSet::new())
         } else {
@@ -463,10 +461,7 @@ impl ExodusReader {
 
 fn read_exodus_ii_from_hdf5(
     file: &File,
-) -> Result<
-    MeshData<InMemorySieve<PointId, ()>, f64, VecStorage<f64>, VecStorage<CellType>>,
-    MeshSieveError,
-> {
+) -> Result<MeshData<MeshSieve, f64, VecStorage<f64>, VecStorage<CellType>>, MeshSieveError> {
     let coord_dim_hint = read_i32_scalar_optional(file, "num_dim").map(|value| value as usize);
     let coord_dataset = file.dataset("coord");
 
@@ -570,7 +565,7 @@ fn read_exodus_ii_from_hdf5(
         coords.section_mut().try_set(*point, &values)?;
     }
 
-    let mut sieve = InMemorySieve::default();
+    let mut sieve = MeshSieve::default();
     for point in &node_ids {
         MutableSieve::add_point(&mut sieve, *point);
     }
@@ -732,7 +727,7 @@ fn read_exodus_ii_from_hdf5(
 }
 
 impl SieveSectionWriter for ExodusWriter {
-    type Sieve = InMemorySieve<PointId, ()>;
+    type Sieve = MeshSieve;
     type Value = f64;
     type Storage = VecStorage<f64>;
     type CellStorage = VecStorage<CellType>;
@@ -800,7 +795,7 @@ impl SieveSectionWriter for ExodusWriter {
 }
 
 impl SieveSectionWriter for ExodusIiWriter {
-    type Sieve = InMemorySieve<PointId, ()>;
+    type Sieve = MeshSieve;
     type Value = f64;
     type Storage = VecStorage<f64>;
     type CellStorage = VecStorage<CellType>;

@@ -7,8 +7,8 @@ use crate::overlap::overlap::{Overlap, OvlId};
 use crate::topology::cell_type::CellType;
 use crate::topology::ownership::PointOwnership;
 use crate::topology::point::PointId;
-use crate::topology::sieve::Sieve;
 use crate::topology::sieve::strata::compute_strata;
+use crate::topology::sieve::{OrientedSieve, Sieve};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// Optional validation toggles for sieve topology checks.
@@ -108,6 +108,61 @@ where
     }
 
     validate_non_manifold(sieve, options.non_manifold)?;
+
+    Ok(())
+}
+
+/// Validate topology invariants for orientation-preserving mesh sieves.
+///
+/// This extends [`validate_sieve_topology`] with DMPlex-style checks that every
+/// cone arrow has a support mirror carrying the same forward orientation, every
+/// support arrow has a cone mirror, and adjacent cells across height-1 faces use
+/// inverse face orientations.
+pub fn validate_oriented_sieve_topology<S, CtSt>(
+    sieve: &mut S,
+    cell_types: &Section<CellType, CtSt>,
+    options: TopologyValidationOptions,
+) -> Result<(), MeshSieveError>
+where
+    S: OrientedSieve<Point = PointId>,
+    S::Orient: PartialEq,
+    CtSt: Storage<CellType>,
+{
+    validate_sieve_topology(sieve, cell_types, options)?;
+
+    for src in sieve.points() {
+        for (dst, orient) in sieve.cone_o(src) {
+            let mirrored = sieve.support_o(dst).any(|(support_src, support_orient)| {
+                support_src == src && support_orient == orient
+            });
+            if !mirrored {
+                return Err(MeshSieveError::MeshIoParse(format!(
+                    "orientation mirror missing for cone arrow {src:?} -> {dst:?}"
+                )));
+            }
+        }
+    }
+
+    for dst in sieve.points() {
+        for (src, orient) in sieve.support_o(dst) {
+            let mirrored = sieve
+                .cone_o(src)
+                .any(|(cone_dst, cone_orient)| cone_dst == dst && cone_orient == orient);
+            if !mirrored {
+                return Err(MeshSieveError::MeshIoParse(format!(
+                    "orientation mirror missing for support arrow {src:?} -> {dst:?}"
+                )));
+            }
+        }
+    }
+
+    let mismatches = crate::topology::sieve::oriented::validate_adjacent_face_orientations(sieve)?;
+    if let Some(mismatch) = mismatches.first() {
+        return Err(MeshSieveError::MeshIoParse(format!(
+            "adjacent face orientation mismatch at face {:?} between {:?} and {:?}",
+            mismatch.face, mismatch.cell_a, mismatch.cell_b
+        )));
+    }
 
     Ok(())
 }

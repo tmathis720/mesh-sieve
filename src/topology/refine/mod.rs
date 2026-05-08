@@ -27,7 +27,7 @@ use crate::topology::arrow::Polarity;
 use crate::topology::cell_type::CellType;
 use crate::topology::ownership::PointOwnership;
 use crate::topology::point::PointId;
-use crate::topology::sieve::{InMemorySieve, Sieve};
+use crate::topology::sieve::{MeshSieve, OrientedSieve, Sieve};
 use crate::topology::validation::debug_validate_overlap_ownership_topology;
 use std::collections::{HashMap, HashSet};
 
@@ -38,7 +38,7 @@ pub type RefinementMap = Vec<(PointId, Vec<(PointId, Polarity)>)>;
 #[derive(Clone, Debug)]
 pub struct RefinedMesh {
     /// Refined topology (cells → vertices).
-    pub sieve: InMemorySieve<PointId, ()>,
+    pub sieve: MeshSieve,
     /// Mapping from coarse cell to refined cells (all `Polarity::Forward`).
     pub cell_refinement: RefinementMap,
     /// Optional coordinates for the refined mesh vertices.
@@ -49,7 +49,7 @@ pub struct RefinedMesh {
 #[derive(Clone, Debug)]
 pub struct RefinedMeshWithOwnership {
     /// Refined topology (cells → vertices).
-    pub sieve: InMemorySieve<PointId, ()>,
+    pub sieve: MeshSieve,
     /// Mapping from coarse cell to refined cells (all `Polarity::Forward`).
     pub cell_refinement: RefinementMap,
     /// Updated ownership metadata including new points.
@@ -62,7 +62,7 @@ pub struct RefinedMeshWithOwnership {
 #[derive(Clone, Debug)]
 pub struct RefinedMeshWithTopology {
     /// Refined topology (cells → faces → edges → vertices).
-    pub sieve: InMemorySieve<PointId, ()>,
+    pub sieve: MeshSieve,
     /// Mapping from coarse cell to refined cells (all `Polarity::Forward`).
     pub cell_refinement: RefinementMap,
     /// Cell types for the refined topology (cells, edges, faces, vertices).
@@ -102,7 +102,7 @@ pub fn pre_interpolate_topology<S, CtSt>(
     cell_types: &mut Section<CellType, CtSt>,
 ) -> Result<InterpolationResult, MeshSieveError>
 where
-    S: crate::topology::sieve::MutableSieve<Point = PointId>,
+    S: crate::topology::sieve::MutableSieve<Point = PointId> + OrientedSieve<Orient = i32>,
     S::Payload: Default,
     CtSt: Storage<CellType> + Clone,
 {
@@ -113,13 +113,13 @@ where
 pub fn collapse_to_cell_vertices<CtSt>(
     sieve: &mut impl Sieve<Point = PointId>,
     cell_types: &Section<CellType, CtSt>,
-) -> Result<InMemorySieve<PointId, ()>, MeshSieveError>
+) -> Result<MeshSieve, MeshSieveError>
 where
     CtSt: Storage<CellType>,
 {
     let mesh_dimension = crate::topology::utils::dimension(sieve)?;
     let cells = collect_top_cells(cell_types, Some(mesh_dimension))?;
-    let mut collapsed = InMemorySieve::<PointId, ()>::default();
+    let mut collapsed = MeshSieve::default();
 
     for (cell, cell_type) in cells {
         let vertices = match cell_type {
@@ -422,7 +422,7 @@ where
         .checked_add(1)
         .ok_or(MeshSieveError::InvalidPointId)?;
 
-    let mut refined = InMemorySieve::<PointId, ()>::default();
+    let mut refined = MeshSieve::default();
     let mut refinement_map: RefinementMap = Vec::new();
     let mut edge_midpoints: HashMap<(PointId, PointId), PointId> = HashMap::new();
     let mut face_centers: HashMap<Vec<PointId>, PointId> = HashMap::new();
@@ -1344,7 +1344,7 @@ where
 }
 
 fn build_refined_coordinates<Cs>(
-    refined: &InMemorySieve<PointId, ()>,
+    refined: &MeshSieve,
     coarse_coords: &Coordinates<f64, Cs>,
     point_sources: &HashMap<PointId, Vec<PointId>>,
     refinement_map: &RefinementMap,

@@ -48,6 +48,22 @@ pub use query_ext::SieveQueryExt;
 pub use reserve::SieveReserveExt;
 pub use sieve_ref::SieveRef;
 pub use sieve_trait::Sieve;
+
+/// DMPlex-style cone orientation payload used by the default mesh topology.
+///
+/// `0` is the identity orientation. Negative values encode reversed/flipped
+/// incidences, matching the legacy integer-orientation convention supported by
+/// [`Orientation`].
+pub type ConeOrientation = i32;
+
+/// Default orientation-preserving topology for mesh I/O and algorithms.
+pub type MeshSieve =
+    in_memory_oriented::InMemoryOrientedSieve<crate::topology::point::PointId, (), ConeOrientation>;
+
+/// Generic default topology alias with an orientation payload.
+pub type OrientedMeshSieve<P = crate::topology::point::PointId, T = (), O = ConeOrientation> =
+    in_memory_oriented::InMemoryOrientedSieve<P, T, O>;
+
 pub use traversal_iter::{
     ClosureBothIter, ClosureBothIterRef, ClosureIter, ClosureIterRef, StarIter, StarIterRef,
 };

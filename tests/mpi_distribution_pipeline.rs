@@ -14,10 +14,10 @@ use mesh_sieve::topology::point::PointId;
 use mesh_sieve::topology::sieve::InMemorySieve;
 
 fn build_mesh() -> (
-    MeshData<InMemorySieve<PointId, ()>, f64, VecStorage<f64>, VecStorage<CellType>>,
+    MeshData<MeshSieve, f64, VecStorage<f64>, VecStorage<CellType>>,
     Vec<PointId>,
 ) {
-    let mut sieve = InMemorySieve::<PointId, ()>::default();
+    let mut sieve = MeshSieve::default();
     let p = |x| PointId::new(x).unwrap();
     let (c0, c1) = (p(1), p(2));
     let (v0, v1, v2) = (p(3), p(4), p(5));

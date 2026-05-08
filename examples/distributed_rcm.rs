@@ -23,7 +23,7 @@ fn main() {
     use mesh_sieve::algs::communicator::{Communicator, MpiComm};
     use mesh_sieve::algs::rcm::distributed_rcm;
     use mesh_sieve::topology::point::PointId;
-    use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
+    use mesh_sieve::topology::sieve::{MeshSieve, Sieve};
     let comm = MpiComm::new().expect("MPI initialization failed");
     let rank = comm.rank();
     let size = comm.size();
@@ -31,7 +31,7 @@ fn main() {
     // Build a 4x4 grid graph as a Sieve
     let nx = 4;
     let ny = 4;
-    let mut sieve = InMemorySieve::<PointId, ()>::default();
+    let mut sieve = MeshSieve::default();
     for y in 0..ny {
         for x in 0..nx {
             let v = PointId::new((y * nx + x + 1) as u64).unwrap();
@@ -56,7 +56,7 @@ fn main() {
         .filter(|&i| parts[i] == rank)
         .map(|i| PointId::new((i + 1) as u64).unwrap())
         .collect();
-    let mut local_sieve = InMemorySieve::<PointId, ()>::default();
+    let mut local_sieve = MeshSieve::default();
     // Build local sieve: add all local vertices and their local edges
     for &v in &local_vertices {
         for (tgt, _) in sieve.cone(v) {

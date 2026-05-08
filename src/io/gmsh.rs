@@ -67,7 +67,7 @@ use crate::mesh_error::MeshSieveError;
 use crate::topology::cell_type::CellType;
 use crate::topology::labels::LabelSet;
 use crate::topology::point::PointId;
-use crate::topology::sieve::{InMemorySieve, MutableSieve, Sieve};
+use crate::topology::sieve::{MeshSieve, MutableSieve, Sieve};
 use crate::topology::validation::{TopologyValidationOptions, validate_sieve_topology};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{Read, Write};
@@ -446,10 +446,8 @@ impl GmshReader {
         &self,
         reader: R,
         options: GmshReadOptions,
-    ) -> Result<
-        MeshData<InMemorySieve<PointId, ()>, f64, VecStorage<f64>, VecStorage<CellType>>,
-        MeshSieveError,
-    > {
+    ) -> Result<MeshData<MeshSieve, f64, VecStorage<f64>, VecStorage<CellType>>, MeshSieveError>
+    {
         let mut reader = reader;
         let mut contents = String::new();
         reader.read_to_string(&mut contents)?;
@@ -649,7 +647,7 @@ impl GmshReader {
             }
         }
 
-        let mut sieve = InMemorySieve::default();
+        let mut sieve = MeshSieve::default();
         let mut seen_arrows = if options.validate_topology {
             Some(HashSet::new())
         } else {
@@ -1089,7 +1087,7 @@ fn format_slice<T: std::fmt::Display>(values: &[T]) -> String {
 }
 
 impl SieveSectionReader for GmshReader {
-    type Sieve = InMemorySieve<PointId, ()>;
+    type Sieve = MeshSieve;
     type Value = f64;
     type Storage = VecStorage<f64>;
     type CellStorage = VecStorage<CellType>;
@@ -1104,7 +1102,7 @@ impl SieveSectionReader for GmshReader {
 }
 
 impl SieveSectionWriter for GmshWriter {
-    type Sieve = InMemorySieve<PointId, ()>;
+    type Sieve = MeshSieve;
     type Value = f64;
     type Storage = VecStorage<f64>;
     type CellStorage = VecStorage<CellType>;

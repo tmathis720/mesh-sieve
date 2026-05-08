@@ -58,7 +58,7 @@ use crate::data::storage::Storage;
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cell_type::CellType;
 use crate::topology::point::PointId;
-use crate::topology::sieve::{MutableSieve, Sieve};
+use crate::topology::sieve::{MutableSieve, OrientedSieve, Sieve};
 use std::collections::BTreeMap;
 
 /// Edge/face bookkeeping produced during interpolation.
@@ -85,7 +85,7 @@ pub fn interpolate_edges_faces<S, CtSt>(
     cell_types: &mut Section<CellType, CtSt>,
 ) -> Result<InterpolationResult, MeshSieveError>
 where
-    S: MutableSieve<Point = PointId>,
+    S: MutableSieve<Point = PointId> + OrientedSieve<Orient = i32>,
     S::Payload: Default,
     CtSt: Storage<CellType> + Clone,
 {
@@ -99,7 +99,7 @@ pub fn interpolate_edges_faces_with_ordering<S, CtSt>(
     ordering: Option<&InterpolationOrdering>,
 ) -> Result<InterpolationResult, MeshSieveError>
 where
-    S: MutableSieve<Point = PointId>,
+    S: MutableSieve<Point = PointId> + OrientedSieve<Orient = i32>,
     S::Payload: Default,
     CtSt: Storage<CellType> + Clone,
 {
@@ -138,7 +138,7 @@ where
                 a,
                 b,
             )?;
-            sieve.add_arrow(cell, edge, S::Payload::default());
+            sieve.add_arrow_o(cell, edge, S::Payload::default(), edge_orientation(a, b));
         }
 
         for (face_vertices, face_type) in cell_faces(cell_type, &vertices, poly_faces)? {
@@ -159,13 +159,30 @@ where
                     a,
                     b,
                 )?;
-                sieve.add_arrow(face, edge, S::Payload::default());
+                sieve.add_arrow_o(face, edge, S::Payload::default(), edge_orientation(a, b));
             }
-            sieve.add_arrow(cell, face, S::Payload::default());
+            sieve.add_arrow_o(
+                cell,
+                face,
+                S::Payload::default(),
+                face_orientation(&face_vertices),
+            );
         }
     }
 
     Ok(result)
+}
+
+fn edge_orientation(a: PointId, b: PointId) -> i32 {
+    if a <= b { 0 } else { -1 }
+}
+
+fn face_orientation(vertices: &[PointId]) -> i32 {
+    if vertices.windows(2).all(|w| w[0] <= w[1]) {
+        0
+    } else {
+        -1
+    }
 }
 
 fn collect_cells<CtSt>(
@@ -412,7 +429,7 @@ fn edge_point<S, CtSt>(
     b: PointId,
 ) -> Result<PointId, MeshSieveError>
 where
-    S: MutableSieve<Point = PointId>,
+    S: MutableSieve<Point = PointId> + OrientedSieve<Orient = i32>,
     S::Payload: Default,
     CtSt: Storage<CellType> + Clone,
 {
@@ -423,8 +440,8 @@ where
     let edge = alloc_point(next_id)?;
     edges.insert(key, edge);
     MutableSieve::add_point(sieve, edge);
-    sieve.add_arrow(edge, a, S::Payload::default());
-    sieve.add_arrow(edge, b, S::Payload::default());
+    sieve.add_arrow_o(edge, a, S::Payload::default(), 0);
+    sieve.add_arrow_o(edge, b, S::Payload::default(), 0);
     cell_types.try_add_point(edge, 1)?;
     cell_types.try_set(edge, &[CellType::Segment])?;
     Ok(edge)
@@ -439,7 +456,7 @@ fn face_point<S, CtSt>(
     face_type: CellType,
 ) -> Result<PointId, MeshSieveError>
 where
-    S: MutableSieve<Point = PointId>,
+    S: MutableSieve<Point = PointId> + OrientedSieve<Orient = i32>,
     S::Payload: Default,
     CtSt: Storage<CellType> + Clone,
 {

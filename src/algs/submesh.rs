@@ -12,7 +12,7 @@ use crate::topology::cell_type::CellType;
 use crate::topology::labels::LabelSet;
 use crate::topology::point::PointId;
 use crate::topology::sieve::strata::{StratumAxis, compute_strata};
-use crate::topology::sieve::{InMemorySieve, MutableSieve, Sieve};
+use crate::topology::sieve::{MutableSieve, OrientedMeshSieve, OrientedSieve, Sieve};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Bidirectional mapping between parent and submesh point IDs.
@@ -51,13 +51,13 @@ pub fn extract_by_label<S, V, St, CtSt>(
     selection: SubmeshSelection,
 ) -> Result<
     (
-        MeshData<InMemorySieve<PointId, S::Payload>, V, St, CtSt>,
+        MeshData<OrientedMeshSieve<PointId, S::Payload>, V, St, CtSt>,
         SubmeshMaps,
     ),
     MeshSieveError,
 >
 where
-    S: Sieve<Point = PointId>,
+    S: OrientedSieve<Point = PointId, Orient = i32>,
     S::Payload: Clone,
     V: Clone + Default,
     St: Storage<V> + Clone,
@@ -81,16 +81,25 @@ where
         sub_to_parent.push(*parent);
     }
 
-    let mut sieve = InMemorySieve::default();
+    let mut sieve = OrientedMeshSieve::<PointId, S::Payload>::default();
     for parent in &parent_points {
         let sub = parent_to_sub[parent];
         MutableSieve::add_point(&mut sieve, sub);
     }
     for parent in &parent_points {
         let sub_src = parent_to_sub[parent];
-        for (dst, payload) in mesh.sieve.cone(*parent) {
+        for (dst, orient) in mesh.sieve.cone_o(*parent) {
             if let Some(&sub_dst) = parent_to_sub.get(&dst) {
-                sieve.add_arrow(sub_src, sub_dst, payload.clone());
+                let payload = mesh
+                    .sieve
+                    .cone(*parent)
+                    .find_map(|(q, p)| (q == dst).then_some(p))
+                    .ok_or_else(|| {
+                        MeshSieveError::MissingPointInCone(format!(
+                            "missing arrow ({parent:?} -> {dst:?})"
+                        ))
+                    })?;
+                sieve.add_arrow_o(sub_src, sub_dst, payload.clone(), orient);
             }
         }
     }

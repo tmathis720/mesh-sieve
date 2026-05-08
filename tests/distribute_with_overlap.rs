@@ -12,13 +12,13 @@ use mesh_sieve::topology::cell_type::CellType;
 use mesh_sieve::topology::labels::LabelSet;
 use mesh_sieve::topology::periodic::PeriodicMap;
 use mesh_sieve::topology::point::PointId;
-use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
+use mesh_sieve::topology::sieve::{MeshSieve, Sieve};
 
 fn build_mesh_data() -> (
-    MeshData<InMemorySieve<PointId, ()>, f64, VecStorage<f64>, VecStorage<CellType>>,
+    MeshData<MeshSieve, f64, VecStorage<f64>, VecStorage<CellType>>,
     Vec<PointId>,
 ) {
-    let mut sieve = InMemorySieve::<PointId, ()>::default();
+    let mut sieve = MeshSieve::default();
     let p = |x| PointId::new(x).unwrap();
     let (c0, c1) = (p(10), p(11));
     let (v1, v2, v3) = (p(1), p(2), p(3));

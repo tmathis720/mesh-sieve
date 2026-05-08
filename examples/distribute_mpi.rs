@@ -10,7 +10,7 @@ fn main() {
     use mesh_sieve::algs::communicator::{Communicator, MpiComm};
     use mesh_sieve::algs::distribute_mesh;
     use mesh_sieve::topology::point::PointId;
-    use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
+    use mesh_sieve::topology::sieve::{MeshSieve, Sieve};
     // 1. Initialize MPI
     let comm = MpiComm::new().expect("MPI initialization failed");
     if comm.size() != 2 {
@@ -18,7 +18,7 @@ fn main() {
         return;
     }
     // Build a simple mesh: 1->2, 2->3
-    let mut global = InMemorySieve::<PointId, ()>::default();
+    let mut global = MeshSieve::default();
     global.add_arrow(PointId::new(1).unwrap(), PointId::new(2).unwrap(), ());
     global.add_arrow(PointId::new(2).unwrap(), PointId::new(3).unwrap(), ());
     // Partition map: 1→0, 2→1, 3→1

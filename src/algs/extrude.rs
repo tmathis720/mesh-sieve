@@ -67,7 +67,9 @@ use crate::mesh_error::MeshSieveError;
 use crate::topology::cell_type::CellType;
 use crate::topology::labels::LabelSet;
 use crate::topology::point::PointId;
-use crate::topology::sieve::{InMemorySieve, MutableSieve, Sieve};
+#[cfg(test)]
+use crate::topology::sieve::InMemorySieve;
+use crate::topology::sieve::{MeshSieve, MutableSieve, Sieve};
 use std::collections::BTreeMap;
 
 /// Options controlling extrusion output.
@@ -83,10 +85,7 @@ pub fn extrude_surface_layers<S, CtSt, Cs>(
     cell_types: &Section<CellType, CtSt>,
     coordinates: &Coordinates<f64, Cs>,
     layer_offsets: &[f64],
-) -> Result<
-    MeshData<InMemorySieve<PointId, ()>, f64, VecStorage<f64>, VecStorage<CellType>>,
-    MeshSieveError,
->
+) -> Result<MeshData<MeshSieve, f64, VecStorage<f64>, VecStorage<CellType>>, MeshSieveError>
 where
     S: Sieve<Point = PointId>,
     CtSt: Storage<CellType>,
@@ -108,10 +107,7 @@ pub fn extrude_surface_layers_with_options<S, CtSt, Cs>(
     coordinates: &Coordinates<f64, Cs>,
     layer_offsets: &[f64],
     options: ExtrudeOptions,
-) -> Result<
-    MeshData<InMemorySieve<PointId, ()>, f64, VecStorage<f64>, VecStorage<CellType>>,
-    MeshSieveError,
->
+) -> Result<MeshData<MeshSieve, f64, VecStorage<f64>, VecStorage<CellType>>, MeshSieveError>
 where
     S: Sieve<Point = PointId>,
     CtSt: Storage<CellType>,
@@ -134,10 +130,7 @@ pub fn extrude_surface_mesh_layers<S, St, CtSt>(
     mesh: &MeshData<S, f64, St, CtSt>,
     layer_offsets: &[f64],
     options: ExtrudeOptions,
-) -> Result<
-    MeshData<InMemorySieve<PointId, ()>, f64, VecStorage<f64>, VecStorage<CellType>>,
-    MeshSieveError,
->
+) -> Result<MeshData<MeshSieve, f64, VecStorage<f64>, VecStorage<CellType>>, MeshSieveError>
 where
     S: Sieve<Point = PointId>,
     St: Storage<f64>,
@@ -171,10 +164,7 @@ fn extrude_surface_layers_inner<S, CtSt, Cs, St>(
     labels: Option<&LabelSet>,
     sections: Option<&BTreeMap<String, Section<f64, St>>>,
     discretization: Option<&Discretization>,
-) -> Result<
-    MeshData<InMemorySieve<PointId, ()>, f64, VecStorage<f64>, VecStorage<CellType>>,
-    MeshSieveError,
->
+) -> Result<MeshData<MeshSieve, f64, VecStorage<f64>, VecStorage<CellType>>, MeshSieveError>
 where
     S: Sieve<Point = PointId>,
     CtSt: Storage<CellType>,
@@ -199,7 +189,7 @@ where
         .checked_add(1)
         .ok_or(MeshSieveError::InvalidPointId)?;
 
-    let mut sieve = InMemorySieve::<PointId, ()>::default();
+    let mut sieve = MeshSieve::default();
     let mut coord_atlas = Atlas::default();
     let mut cell_atlas = Atlas::default();
     let mut point_map: BTreeMap<PointId, Vec<PointId>> = BTreeMap::new();

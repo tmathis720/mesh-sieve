@@ -12,18 +12,17 @@ use mesh_sieve::io::MeshData;
 use mesh_sieve::topology::cell_type::CellType;
 use mesh_sieve::topology::labels::LabelSet;
 use mesh_sieve::topology::point::PointId;
-use mesh_sieve::topology::sieve::{InMemorySieve, MutableSieve, Sieve};
+use mesh_sieve::topology::sieve::{MeshSieve, MutableSieve, Sieve};
 
 fn pid(id: u64) -> PointId {
     PointId::new(id).unwrap()
 }
 
-fn build_mesh() -> MeshData<InMemorySieve<PointId, ()>, f64, VecStorage<f64>, VecStorage<CellType>>
-{
+fn build_mesh() -> MeshData<MeshSieve, f64, VecStorage<f64>, VecStorage<CellType>> {
     let vertices = [pid(1), pid(2), pid(3), pid(4)];
     let cells = [pid(10), pid(11)];
 
-    let mut sieve = InMemorySieve::default();
+    let mut sieve = MeshSieve::default();
     for p in vertices.iter().chain(cells.iter()) {
         MutableSieve::add_point(&mut sieve, *p);
     }

@@ -13,7 +13,7 @@ fn main() {
     use mesh_sieve::algs::distribute::distribute_mesh;
     use mesh_sieve::overlap::overlap::{Overlap as OvlGraph, OvlId};
     use mesh_sieve::topology::point::PointId;
-    use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
+    use mesh_sieve::topology::sieve::{MeshSieve, Sieve};
     let comm = MpiComm::new().expect("MPI initialization failed");
     let size = Communicator::size(&comm);
     let rank = Communicator::rank(&comm);
@@ -26,7 +26,7 @@ fn main() {
     }
 
     // 1) Build a toy global mesh: two arrows 1→2 and 3→4
-    let mut global = InMemorySieve::<PointId, ()>::default();
+    let mut global = MeshSieve::default();
     global.add_arrow(PointId::new(1).unwrap(), PointId::new(2).unwrap(), ());
     global.add_arrow(PointId::new(3).unwrap(), PointId::new(4).unwrap(), ());
 

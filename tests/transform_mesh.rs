@@ -7,11 +7,11 @@ use mesh_sieve::geometry::quality::cell_quality_from_section;
 use mesh_sieve::io::MeshData;
 use mesh_sieve::topology::cell_type::CellType;
 use mesh_sieve::topology::point::PointId;
-use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
+use mesh_sieve::topology::sieve::{MeshSieve, Sieve};
 use std::collections::BTreeSet;
 
 fn build_triangle_mesh() -> (
-    MeshData<InMemorySieve<PointId, ()>, f64, VecStorage<f64>, VecStorage<CellType>>,
+    MeshData<MeshSieve, f64, VecStorage<f64>, VecStorage<CellType>>,
     [PointId; 3],
 ) {
     let cell = PointId::new(10).unwrap();
@@ -19,7 +19,7 @@ fn build_triangle_mesh() -> (
     let v1 = PointId::new(2).unwrap();
     let v2 = PointId::new(3).unwrap();
 
-    let mut sieve = InMemorySieve::<PointId, ()>::default();
+    let mut sieve = MeshSieve::default();
     Sieve::add_arrow(&mut sieve, cell, v0, ());
     Sieve::add_arrow(&mut sieve, cell, v1, ());
     Sieve::add_arrow(&mut sieve, cell, v2, ());

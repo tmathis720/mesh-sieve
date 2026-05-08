@@ -2,7 +2,7 @@ use mesh_sieve::algs::communicator::NoComm;
 use mesh_sieve::algs::distribute::distribute_mesh;
 use mesh_sieve::topology::InvalidateCache;
 use mesh_sieve::topology::point::PointId;
-use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
+use mesh_sieve::topology::sieve::{InMemorySieve, OrientedSieve, Sieve};
 
 #[derive(Default)]
 struct NonBaseOriginSieve {
@@ -53,6 +53,30 @@ impl Sieve for NonBaseOriginSieve {
 
     fn points<'a>(&'a self) -> Box<dyn Iterator<Item = Self::Point> + 'a> {
         self.inner.points()
+    }
+}
+
+impl OrientedSieve for NonBaseOriginSieve {
+    type Orient = i32;
+    type ConeOIter<'a>
+        = Box<dyn Iterator<Item = (PointId, i32)> + 'a>
+    where
+        Self: 'a;
+    type SupportOIter<'a>
+        = Box<dyn Iterator<Item = (PointId, i32)> + 'a>
+    where
+        Self: 'a;
+
+    fn cone_o<'a>(&'a self, p: PointId) -> Self::ConeOIter<'a> {
+        Box::new(self.inner.cone(p).map(|(dst, _)| (dst, 0)))
+    }
+
+    fn support_o<'a>(&'a self, p: PointId) -> Self::SupportOIter<'a> {
+        Box::new(self.inner.support(p).map(|(src, _)| (src, 0)))
+    }
+
+    fn add_arrow_o(&mut self, src: PointId, dst: PointId, payload: (), _orient: i32) {
+        self.inner.add_arrow(src, dst, payload);
     }
 }
 

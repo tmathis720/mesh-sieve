@@ -12,7 +12,7 @@ use mesh_sieve::data::storage::VecStorage;
 #[cfg(feature = "mpi-support")]
 use mesh_sieve::topology::point::PointId;
 #[cfg(feature = "mpi-support")]
-use mesh_sieve::topology::sieve::{InMemorySieve, Sieve};
+use mesh_sieve::topology::sieve::{MeshSieve, Sieve};
 #[cfg(feature = "mpi-support")]
 use mpi::traits::*;
 #[cfg(feature = "mpi-support")]
@@ -27,13 +27,9 @@ use mesh_sieve::partitioning::{PartitionerConfig, partition};
 
 /// Build a 2×2 structured grid of points (IDs 0..8).
 #[cfg(feature = "mpi-support")]
-fn build_grid() -> (
-    InMemorySieve<PointId, ()>,
-    Atlas,
-    Section<f64, VecStorage<f64>>,
-) {
+fn build_grid() -> (MeshSieve, Atlas, Section<f64, VecStorage<f64>>) {
     // 9 points laid out in a 3×3 mesh (4 cells)
-    let mut sieve = InMemorySieve::new();
+    let mut sieve = MeshSieve::default();
     let mut atlas = Atlas::default();
     for id in 0u64..9 {
         sieve.add_point(PointId::new(id + 1).unwrap());
@@ -50,7 +46,7 @@ fn build_grid() -> (
 // For partitioning, use a minimal wrapper that implements PartitionableGraph
 #[cfg(feature = "mpi-support")]
 struct GridGraph<'a> {
-    sieve: &'a InMemorySieve<PointId>,
+    sieve: &'a MeshSieve,
 }
 
 #[cfg(feature = "mpi-support")]
@@ -157,7 +153,7 @@ fn main() {
         }
         (s, a, sec)
     } else {
-        let mut s = InMemorySieve::new();
+        let mut s = MeshSieve::default();
         let mut a = Atlas::default();
         let mut sec = Section::<f64, VecStorage<f64>>::new(a.clone());
         // 1) receive the number of points rank 0 will send

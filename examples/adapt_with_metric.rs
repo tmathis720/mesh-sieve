@@ -10,14 +10,14 @@ use mesh_sieve::topology::Sieve;
 use mesh_sieve::topology::cell_type::CellType;
 use mesh_sieve::topology::coarsen::CoarsenEntity;
 use mesh_sieve::topology::point::PointId;
-use mesh_sieve::topology::sieve::InMemorySieve;
+use mesh_sieve::topology::sieve::MeshSieve;
 
 fn pt(id: u64) -> PointId {
     PointId::new(id).unwrap()
 }
 
 fn main() {
-    let mut sieve = InMemorySieve::<PointId, ()>::default();
+    let mut sieve = MeshSieve::default();
     let cell = pt(10);
     let vertices = [pt(1), pt(2), pt(3)];
     for v in vertices {
