@@ -4,6 +4,7 @@
 pub mod atlas;
 pub mod bc;
 pub mod bundle;
+pub mod closure;
 pub mod constrained_section;
 pub mod coordinate_dm;
 pub mod coordinates;
@@ -29,6 +30,12 @@ pub use bc::{
     FieldDofIndices, LabelQuery, apply_dirichlet_to_constrained_section,
     apply_dirichlet_to_constrained_section_fields, apply_dirichlet_to_section,
     apply_dirichlet_to_section_fields,
+};
+pub use closure::{
+    ClosureIndex, ClosureIndexCache, ClosureIndexKey, ClosureOrder, ClosurePointIndex,
+    FnSectionSym, IdentitySectionSym, SectionSym, TableSectionSym, TopologyVersion, add_closure,
+    build_closure_index, build_closure_index_unoriented, get_closure, get_closure_oriented,
+    set_closure,
 };
 pub use constrained_section::{
     ConstrainedSection, ConstraintSet, DofConstraint, apply_constraints_to_section,
