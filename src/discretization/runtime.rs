@@ -327,33 +327,95 @@ where
     vector
 }
 
-/// Mapping from mesh points to contiguous DOF indices.
+/// One scalar degree of freedom in an element closure.
+///
+/// `point` identifies the mesh point that owns the DOF, while
+/// `local_dof` is the section-local slot after any orientation-dependent
+/// [`SectionSym`](crate::data::closure::SectionSym) permutation has been
+/// applied.  This is the unit consumed by high-order and tensor-product
+/// element kernels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ClosureDof {
+    /// Mesh point that owns this scalar DOF.
+    pub point: PointId,
+    /// Section-local DOF slot on `point`.
+    pub local_dof: usize,
+}
+
+/// Mapping from closure-local scalar DOFs to contiguous assembly indices.
 #[derive(Clone, Debug)]
 pub struct DofMap {
     dofs: Vec<PointId>,
-    indices: HashMap<PointId, usize>,
+    closure_dofs: Vec<ClosureDof>,
+    indices: HashMap<ClosureDof, usize>,
+    first_point_indices: HashMap<PointId, usize>,
 }
 
 impl DofMap {
-    /// Build a DOF map from an ordered list of points.
+    /// Build a scalar DOF map from an ordered list of points.
+    ///
+    /// This constructor preserves the historical scalar API where each point
+    /// owns one DOF.  Use [`from_closure_dofs`](Self::from_closure_dofs) when
+    /// point-local DOF slots matter.
     pub fn new(dofs: Vec<PointId>) -> Self {
-        let indices = dofs.iter().enumerate().map(|(idx, &p)| (p, idx)).collect();
-        Self { dofs, indices }
+        let closure_dofs: Vec<_> = dofs
+            .iter()
+            .map(|&point| ClosureDof {
+                point,
+                local_dof: 0,
+            })
+            .collect();
+        Self::from_closure_dofs(closure_dofs)
     }
 
-    /// Return the ordered DOF points.
+    /// Build a DOF map from orientation-correct closure DOF slots.
+    pub fn from_closure_dofs(closure_dofs: Vec<ClosureDof>) -> Self {
+        let dofs = closure_dofs.iter().map(|dof| dof.point).collect();
+        let mut indices = HashMap::with_capacity(closure_dofs.len());
+        let mut first_point_indices = HashMap::new();
+        for (idx, &dof) in closure_dofs.iter().enumerate() {
+            indices.insert(dof, idx);
+            first_point_indices.entry(dof.point).or_insert(idx);
+        }
+        Self {
+            dofs,
+            closure_dofs,
+            indices,
+            first_point_indices,
+        }
+    }
+
+    /// Return the ordered DOF owner points.
     pub fn dofs(&self) -> &[PointId] {
         &self.dofs
     }
 
-    /// Total number of DOFs.
-    pub fn len(&self) -> usize {
-        self.dofs.len()
+    /// Return the ordered point/local-slot DOFs consumed by closure kernels.
+    pub fn closure_dofs(&self) -> &[ClosureDof] {
+        &self.closure_dofs
     }
 
-    /// Lookup the index for a point.
+    /// Total number of scalar DOFs.
+    pub fn len(&self) -> usize {
+        self.closure_dofs.len()
+    }
+
+    /// Returns true when this map has no DOFs.
+    pub fn is_empty(&self) -> bool {
+        self.closure_dofs.is_empty()
+    }
+
+    /// Lookup the first index for a point.
+    ///
+    /// This method is kept for scalar assembly compatibility.  For high-order
+    /// sections with multiple DOFs per point, use [`slot_index`](Self::slot_index).
     pub fn index(&self, point: PointId) -> Option<usize> {
-        self.indices.get(&point).copied()
+        self.first_point_indices.get(&point).copied()
+    }
+
+    /// Lookup the assembly index for a point-local DOF slot.
+    pub fn slot_index(&self, point: PointId, local_dof: usize) -> Option<usize> {
+        self.indices.get(&ClosureDof { point, local_dof }).copied()
     }
 }
 
@@ -387,11 +449,14 @@ where
 pub fn dof_map_from_closure_index<O>(index: &ClosureIndex<O>) -> DofMap {
     let mut dofs = Vec::with_capacity(index.len);
     for entry in &index.points {
-        for _ in 0..entry.len {
-            dofs.push(entry.point);
+        for &local_dof in &entry.permutation {
+            dofs.push(ClosureDof {
+                point: entry.point,
+                local_dof,
+            });
         }
     }
-    DofMap::new(dofs)
+    DofMap::from_closure_dofs(dofs)
 }
 
 /// Add a local vector contribution into a global section.
