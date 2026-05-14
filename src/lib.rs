@@ -5,6 +5,7 @@
 //!
 //! ## Features
 //! - Mesh topology and Sieve data structures for flexible mesh connectivity
+//! - DMPLEX-like [`dm::MeshDM`] facade for topology, coordinates, labels, sections, distribution, and solver numbering
 //! - Atlas and Section types for mapping mesh points to data arrays
 //! - Pluggable communication backends (serial, Rayon, MPI) for ghost exchange and mesh distribution
 //! - Built-in support for graph partitioning (Metis, custom algorithms)
@@ -55,6 +56,7 @@ pub mod algs;
 pub mod data;
 pub mod debug_invariants;
 pub mod discretization;
+pub mod dm;
 pub mod forest;
 pub mod geometry;
 pub mod io;
@@ -130,6 +132,9 @@ pub mod prelude {
         Basis, DofMap, ElementRuntime, ElementTabulation, QuadratureRule, assemble_local_matrix,
         assemble_local_vector, cell_vertices, local_load_vector, local_stiffness_matrix,
         runtime_from_metadata, tabulate_element,
+    };
+    pub use crate::dm::{
+        MeshDM, MeshDMBuilder, MeshDMDistribution, MeshDMOptions, MeshVector, PreallocationGraph,
     };
     pub use crate::io::MeshBundle;
     pub use crate::overlap::delta::{AddDelta, CopyDelta, ValueDelta};
