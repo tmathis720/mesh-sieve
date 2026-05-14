@@ -116,6 +116,7 @@ fn main() -> Result<(), MeshSieveError> {
             let config = DistributionConfig {
                 overlap_depth: 1,
                 synchronize_sections: false,
+                balance_boundary_ownership: false,
             };
 
             let dist = distribute_with_overlap(

@@ -50,7 +50,12 @@ pub use field_transfer::{
     transfer_section_by_refinement_map, transfer_section_by_shared_labels,
 };
 pub use lattice::adjacent;
-pub use point_sf::PointSF;
+pub use point_sf::{
+    PointSF, PointSfLeaf, RemotePoint, SfDistribution, balance_partition_boundary_ownership,
+    create_migration_sf, create_overlap_migration_sf, create_point_sf, create_process_sf,
+    create_two_sided_process_sf, distribute_field, distribute_labels, distribute_section,
+    distribute_topology,
+};
 pub use renumber::{
     StratifiedOrdering, renumber_coordinate_dm, renumber_points, renumber_points_stratified,
     stratified_permutation,

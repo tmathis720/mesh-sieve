@@ -42,6 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         DistributionConfig {
             overlap_depth: 1,
             synchronize_sections: true,
+            balance_boundary_ownership: false,
         },
         &comm,
     )?;

@@ -78,6 +78,7 @@ fn main() {
     let config = DistributionConfig {
         overlap_depth: 1,
         synchronize_sections: true,
+        balance_boundary_ownership: false,
     };
 
     for rank in 0..2 {
