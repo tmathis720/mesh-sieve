@@ -2,7 +2,7 @@
 
 use crate::algs::communicator::{CommTag, Communicator, Wait};
 use crate::algs::completion::{complete_section_with_ownership, complete_sieve};
-use crate::algs::point_sf::PointSF;
+use crate::algs::point_sf::{PointSF, balance_partition_boundary_ownership};
 use crate::algs::wire::{WirePointRepr, cast_slice, cast_slice_mut};
 use crate::data::atlas::Atlas;
 use crate::data::coordinates::{Coordinates, HighOrderCoordinates};
@@ -157,6 +157,8 @@ pub struct DistributionConfig {
     pub overlap_depth: usize,
     /// Whether to copy global section-like data onto ghost points.
     pub synchronize_sections: bool,
+    /// Balance ownership of partition-boundary points across sharing ranks.
+    pub balance_boundary_ownership: bool,
 }
 
 impl Default for DistributionConfig {
@@ -164,6 +166,7 @@ impl Default for DistributionConfig {
         Self {
             overlap_depth: 1,
             synchronize_sections: true,
+            balance_boundary_ownership: false,
         }
     }
 }
@@ -439,7 +442,11 @@ where
 
     let points: Vec<PointId> = mesh_data.sieve.points().collect();
     let max_id = points.iter().map(|p| p.get()).max().unwrap_or(0) as usize;
-    let point_owners = assign_point_owners(mesh_data, cells, &cell_parts, max_id)?;
+    let mut point_owners = assign_point_owners(mesh_data, cells, &cell_parts, max_id)?;
+    if config.balance_boundary_ownership {
+        let sharing = build_point_sharing(mesh_data, cells, &cell_parts)?;
+        balance_partition_boundary_ownership(&mut point_owners, &sharing, n_ranks)?;
+    }
 
     let periodic_classes = periodic
         .map(|eq| build_periodic_classes(&points, eq))
@@ -689,6 +696,25 @@ where
         }
     }
     Ok(owners)
+}
+
+fn build_point_sharing<M, V, St, CtSt>(
+    mesh_data: &MeshData<M, V, St, CtSt>,
+    cells: &[PointId],
+    cell_parts: &[usize],
+) -> Result<BTreeMap<PointId, BTreeSet<usize>>, MeshSieveError>
+where
+    M: OrientedSieve<Point = PointId, Payload = (), Orient = i32>,
+    St: Storage<V> + Clone,
+    CtSt: Storage<CellType> + Clone,
+{
+    let mut sharing: BTreeMap<PointId, BTreeSet<usize>> = BTreeMap::new();
+    for (cell, &part) in cells.iter().zip(cell_parts.iter()) {
+        for p in mesh_data.sieve.closure_iter(std::iter::once(*cell)) {
+            sharing.entry(p).or_default().insert(part);
+        }
+    }
+    Ok(sharing)
 }
 
 fn build_adjacency<M>(

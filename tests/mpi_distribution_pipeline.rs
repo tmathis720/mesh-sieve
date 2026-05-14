@@ -61,6 +61,7 @@ fn mpi_distribution_pipeline_resolves_and_maps() {
     let config = DistributionConfig {
         overlap_depth: 1,
         synchronize_sections: true,
+        balance_boundary_ownership: false,
     };
 
     let dist = distribute_with_overlap(

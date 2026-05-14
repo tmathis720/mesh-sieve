@@ -91,7 +91,12 @@ pub mod prelude {
         CustomPartitioner, DistributionConfig, ProvidedPartition, distribute_with_overlap,
         distribute_with_overlap_periodic,
     };
-    pub use crate::algs::point_sf::PointSF;
+    pub use crate::algs::point_sf::{
+        PointSF, PointSfLeaf, RemotePoint, SfDistribution, balance_partition_boundary_ownership,
+        create_migration_sf, create_overlap_migration_sf, create_point_sf, create_process_sf,
+        create_two_sided_process_sf, distribute_field, distribute_labels, distribute_section,
+        distribute_topology,
+    };
     pub use crate::algs::rcm::distributed_rcm;
     pub use crate::algs::renumber::{
         StratifiedOrdering, renumber_coordinate_dm, renumber_points, renumber_points_stratified,

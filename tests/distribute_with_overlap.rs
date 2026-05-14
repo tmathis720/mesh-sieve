@@ -80,6 +80,7 @@ fn distribute_with_overlap_syncs_ghosts() {
     let config = DistributionConfig {
         overlap_depth: 1,
         synchronize_sections: true,
+        balance_boundary_ownership: false,
     };
 
     let comm0 = RayonComm::new(0, 2);
@@ -126,6 +127,7 @@ fn distribute_with_overlap_periodic_links_points() {
     let config = DistributionConfig {
         overlap_depth: 1,
         synchronize_sections: true,
+        balance_boundary_ownership: false,
     };
 
     let mut periodic = PeriodicMap::new();
