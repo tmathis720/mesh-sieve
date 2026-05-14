@@ -76,6 +76,10 @@ mem-snapshot = []
 rayon = ["dep:rayon"]
 sparse-bitset = []
 wgpu = ["dep:wgpu", "dep:pollster", "dep:futures-intrusive"]
+# Enables the experimental CGNS/HDF5 reader. Without this feature the CGNS
+# entry point is deliberately compiled as an unsupported reader with a clear
+# diagnostic instead of pretending CGNS is implemented.
+cgns = []
 
 
 [build-dependencies]
