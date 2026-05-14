@@ -1,13 +1,13 @@
 //! Gmsh `.msh` reader.
 //!
 //! # Supported format
-//! - ASCII `.msh` version **2.2**.
+//! - ASCII `.msh` version **2.2** and block-based Gmsh **4.x**.
 //! - Element types: linear and common higher-order variants for lines,
 //!   triangles, quads, tets, hexes, prisms, pyramids, and points.
 //!
 //! # Limitations
-//! - Binary files are not supported.
-//! - `.msh` v4.x (block-based) is not supported.
+//! - Gmsh **4.x binary** files using 32-bit integers, 64-bit sizes, and 64-bit floats are supported.
+//! - Gmsh 4.x physical names and entity physical tags are captured as labels.
 //! - Higher-order elements are supported, stored as base cell types with
 //!   higher-order geometry stored in the coordinates.
 //! - Element tags are captured as labels (`gmsh:physical`, `gmsh:entity`,
@@ -73,7 +73,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{Read, Write};
 use std::str::FromStr;
 
-/// Gmsh `.msh` reader for ASCII v2.2 meshes.
+/// Gmsh `.msh` reader for ASCII v2.2 and ASCII/binary v4.x meshes.
 #[derive(Debug, Default, Clone)]
 pub struct GmshReader;
 
@@ -83,6 +83,9 @@ struct ElementRecord {
     conn: Vec<PointId>,
     cell_type: CellType,
     tags: Vec<i32>,
+    entity_dim: Option<u8>,
+    entity_tag: Option<i32>,
+    element_type: u32,
 }
 
 /// Optional settings for Gmsh import.
@@ -97,20 +100,23 @@ pub struct GmshReadOptions {
 }
 
 impl GmshReader {
-    fn parse_version(line: &str) -> Result<&str, MeshSieveError> {
+    fn parse_format(line: &str) -> Result<(String, u32, usize), MeshSieveError> {
         let mut parts = line.split_whitespace();
         let version = parts
             .next()
-            .ok_or_else(|| MeshSieveError::MeshIoParse("missing mesh format version".into()))?;
+            .ok_or_else(|| MeshSieveError::MeshIoParse("missing mesh format version".into()))?
+            .to_string();
         let file_type = parts
             .next()
-            .ok_or_else(|| MeshSieveError::MeshIoParse("missing mesh format type".into()))?;
-        if file_type != "0" {
-            return Err(MeshSieveError::MeshIoParse(
-                "binary .msh files are not supported".into(),
-            ));
-        }
-        Ok(version)
+            .ok_or_else(|| MeshSieveError::MeshIoParse("missing mesh format type".into()))?
+            .parse::<u32>()
+            .map_err(|_| MeshSieveError::MeshIoParse("invalid mesh format type".into()))?;
+        let data_size = parts
+            .next()
+            .ok_or_else(|| MeshSieveError::MeshIoParse("missing mesh format data size".into()))?
+            .parse::<usize>()
+            .map_err(|_| MeshSieveError::MeshIoParse("invalid mesh format data size".into()))?;
+        Ok((version, file_type, data_size))
     }
 
     fn element_node_count(elem_type: u32) -> Option<usize> {
@@ -441,6 +447,434 @@ impl GmshReader {
         }
     }
 
+    fn is_v4_version(version: &str) -> bool {
+        version.starts_with("4.")
+    }
+
+    fn is_binary_v4(bytes: &[u8]) -> Result<bool, MeshSieveError> {
+        let text =
+            std::str::from_utf8(bytes.get(..bytes.len().min(256)).unwrap_or(bytes)).unwrap_or("");
+        let mut lines = text.lines();
+        while let Some(line) = lines.next() {
+            if line.trim() == "$MeshFormat" {
+                let format = lines
+                    .next()
+                    .ok_or_else(|| MeshSieveError::MeshIoParse("missing MeshFormat line".into()))?;
+                let (version, file_type, _) = Self::parse_format(format)?;
+                return Ok(Self::is_v4_version(&version) && file_type == 1);
+            }
+        }
+        Ok(false)
+    }
+
+    fn parse_u64_token(raw: &str, what: &str) -> Result<u64, MeshSieveError> {
+        raw.parse::<u64>()
+            .map_err(|_| MeshSieveError::MeshIoParse(format!("invalid {what}: {raw}")))
+    }
+
+    fn parse_i32_token(raw: &str, what: &str) -> Result<i32, MeshSieveError> {
+        raw.parse::<i32>()
+            .map_err(|_| MeshSieveError::MeshIoParse(format!("invalid {what}: {raw}")))
+    }
+
+    fn skip_physical_names<'a>(
+        lines: &mut std::iter::Peekable<std::str::Lines<'a>>,
+    ) -> Result<(), MeshSieveError> {
+        let count = lines
+            .next()
+            .ok_or_else(|| MeshSieveError::MeshIoParse("missing PhysicalNames count".into()))?
+            .trim()
+            .parse::<usize>()
+            .map_err(|_| MeshSieveError::MeshIoParse("invalid PhysicalNames count".into()))?;
+        for _ in 0..count {
+            lines.next().ok_or_else(|| {
+                MeshSieveError::MeshIoParse("unexpected end of PhysicalNames".into())
+            })?;
+        }
+        let end = lines
+            .next()
+            .ok_or_else(|| MeshSieveError::MeshIoParse("missing EndPhysicalNames".into()))?;
+        if end.trim() != "$EndPhysicalNames" {
+            return Err(MeshSieveError::MeshIoParse(
+                "missing $EndPhysicalNames".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn parse_entities_ascii<'a>(
+        lines: &mut std::iter::Peekable<std::str::Lines<'a>>,
+    ) -> Result<HashMap<(u8, i32), Vec<i32>>, MeshSieveError> {
+        let header = lines
+            .next()
+            .ok_or_else(|| MeshSieveError::MeshIoParse("missing Entities header".into()))?;
+        let counts = header
+            .split_whitespace()
+            .map(|v| v.parse::<usize>())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| MeshSieveError::MeshIoParse("invalid Entities header".into()))?;
+        if counts.len() != 4 {
+            return Err(MeshSieveError::MeshIoParse(
+                "invalid Entities header".into(),
+            ));
+        }
+        let mut out = HashMap::new();
+        for (dim, count) in counts.into_iter().enumerate() {
+            for _ in 0..count {
+                let line = lines.next().ok_or_else(|| {
+                    MeshSieveError::MeshIoParse("unexpected end of Entities".into())
+                })?;
+                let parts: Vec<_> = line.split_whitespace().collect();
+                let base = if dim == 0 { 4 } else { 7 };
+                if parts.len() <= base {
+                    return Err(MeshSieveError::MeshIoParse("invalid Entities entry".into()));
+                }
+                let tag = Self::parse_i32_token(parts[0], "entity tag")?;
+                let nphys = parts[base].parse::<usize>().map_err(|_| {
+                    MeshSieveError::MeshIoParse("invalid entity physical count".into())
+                })?;
+                if parts.len() < base + 1 + nphys {
+                    return Err(MeshSieveError::MeshIoParse(
+                        "truncated entity physical tags".into(),
+                    ));
+                }
+                let physical = parts[base + 1..base + 1 + nphys]
+                    .iter()
+                    .map(|v| Self::parse_i32_token(v, "entity physical tag"))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if !physical.is_empty() {
+                    out.insert((dim as u8, tag), physical);
+                }
+            }
+        }
+        let end = lines
+            .next()
+            .ok_or_else(|| MeshSieveError::MeshIoParse("missing EndEntities".into()))?;
+        if end.trim() != "$EndEntities" {
+            return Err(MeshSieveError::MeshIoParse("missing $EndEntities".into()));
+        }
+        Ok(out)
+    }
+
+    fn parse_v4_nodes_ascii<'a>(
+        header_line: &str,
+        lines: &mut std::iter::Peekable<std::str::Lines<'a>>,
+        nodes: &mut Vec<(PointId, [f64; 3])>,
+    ) -> Result<(), MeshSieveError> {
+        let header: Vec<_> = header_line.split_whitespace().collect();
+        if header.len() < 2 {
+            return Err(MeshSieveError::MeshIoParse(
+                "invalid v4 Nodes header".into(),
+            ));
+        }
+        let num_blocks = header[0]
+            .parse::<usize>()
+            .map_err(|_| MeshSieveError::MeshIoParse("invalid node block count".into()))?;
+        for _ in 0..num_blocks {
+            let block = lines.next().ok_or_else(|| {
+                MeshSieveError::MeshIoParse("unexpected end of node blocks".into())
+            })?;
+            let parts: Vec<_> = block.split_whitespace().collect();
+            if parts.len() != 4 {
+                return Err(MeshSieveError::MeshIoParse(
+                    "invalid node block header".into(),
+                ));
+            }
+            let parametric = parts[2] != "0";
+            let count = parts[3]
+                .parse::<usize>()
+                .map_err(|_| MeshSieveError::MeshIoParse("invalid node block size".into()))?;
+            let mut ids = Vec::with_capacity(count);
+            while ids.len() < count {
+                let line = lines.next().ok_or_else(|| {
+                    MeshSieveError::MeshIoParse("unexpected end of node tags".into())
+                })?;
+                for raw in line.split_whitespace() {
+                    ids.push(PointId::new(Self::parse_u64_token(raw, "node tag")?)?);
+                    if ids.len() == count {
+                        break;
+                    }
+                }
+            }
+            for id in ids {
+                let line = lines.next().ok_or_else(|| {
+                    MeshSieveError::MeshIoParse("unexpected end of node coordinates".into())
+                })?;
+                let vals: Vec<_> = line.split_whitespace().collect();
+                if vals.len() < 3 {
+                    return Err(MeshSieveError::MeshIoParse(
+                        "invalid node coordinate".into(),
+                    ));
+                }
+                nodes.push((
+                    id,
+                    [
+                        Self::parse_coord(vals[0])?,
+                        Self::parse_coord(vals[1])?,
+                        Self::parse_coord(vals[2])?,
+                    ],
+                ));
+                if parametric {
+                    // Parametric coordinates are intentionally skipped; geometric coordinates are canonical.
+                }
+            }
+        }
+        let end = lines
+            .next()
+            .ok_or_else(|| MeshSieveError::MeshIoParse("missing EndNodes".into()))?;
+        if end.trim() != "$EndNodes" {
+            return Err(MeshSieveError::MeshIoParse("missing $EndNodes".into()));
+        }
+        Ok(())
+    }
+
+    fn parse_v4_elements_ascii<'a>(
+        header_line: &str,
+        lines: &mut std::iter::Peekable<std::str::Lines<'a>>,
+        entity_physical: &HashMap<(u8, i32), Vec<i32>>,
+        elements: &mut Vec<ElementRecord>,
+    ) -> Result<(), MeshSieveError> {
+        let header: Vec<_> = header_line.split_whitespace().collect();
+        if header.len() < 2 {
+            return Err(MeshSieveError::MeshIoParse(
+                "invalid v4 Elements header".into(),
+            ));
+        }
+        let num_blocks = header[0]
+            .parse::<usize>()
+            .map_err(|_| MeshSieveError::MeshIoParse("invalid element block count".into()))?;
+        for _ in 0..num_blocks {
+            let block = lines.next().ok_or_else(|| {
+                MeshSieveError::MeshIoParse("unexpected end of element blocks".into())
+            })?;
+            let parts: Vec<_> = block.split_whitespace().collect();
+            if parts.len() != 4 {
+                return Err(MeshSieveError::MeshIoParse(
+                    "invalid element block header".into(),
+                ));
+            }
+            let entity_dim = parts[0].parse::<u8>().map_err(|_| {
+                MeshSieveError::MeshIoParse("invalid element entity dimension".into())
+            })?;
+            let entity_tag = Self::parse_i32_token(parts[1], "element entity tag")?;
+            let elem_type = parts[2]
+                .parse::<u32>()
+                .map_err(|_| MeshSieveError::MeshIoParse("invalid element type".into()))?;
+            let count = parts[3]
+                .parse::<usize>()
+                .map_err(|_| MeshSieveError::MeshIoParse("invalid element block size".into()))?;
+            let cell_type = Self::element_cell_type(elem_type).ok_or_else(|| {
+                MeshSieveError::MeshIoParse(format!("unsupported element type: {elem_type}"))
+            })?;
+            let expected = Self::element_node_count(elem_type).ok_or_else(|| {
+                MeshSieveError::MeshIoParse(format!(
+                    "unknown node count for element type: {elem_type}"
+                ))
+            })?;
+            for _ in 0..count {
+                let line = lines.next().ok_or_else(|| {
+                    MeshSieveError::MeshIoParse("unexpected end of elements".into())
+                })?;
+                let parts: Vec<_> = line.split_whitespace().collect();
+                if parts.len() != expected + 1 {
+                    return Err(MeshSieveError::MeshIoParse(
+                        "invalid v4 element entry".into(),
+                    ));
+                }
+                let elem_id = PointId::new(Self::parse_u64_token(parts[0], "element tag")?)?;
+                let conn = parts[1..]
+                    .iter()
+                    .map(|raw| PointId::new(Self::parse_u64_token(raw, "element node tag")?))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let physical = entity_physical
+                    .get(&(entity_dim, entity_tag))
+                    .cloned()
+                    .unwrap_or_default();
+                let mut tags = vec![physical.first().copied().unwrap_or(0), entity_tag];
+                tags.extend(physical.into_iter().skip(1));
+                elements.push(ElementRecord {
+                    id: elem_id,
+                    conn,
+                    cell_type,
+                    tags,
+                    entity_dim: Some(entity_dim),
+                    entity_tag: Some(entity_tag),
+                    element_type: elem_type,
+                });
+            }
+        }
+        let end = lines
+            .next()
+            .ok_or_else(|| MeshSieveError::MeshIoParse("missing EndElements".into()))?;
+        if end.trim() != "$EndElements" {
+            return Err(MeshSieveError::MeshIoParse("missing $EndElements".into()));
+        }
+        Ok(())
+    }
+
+    fn parse_v4_binary(
+        bytes: &[u8],
+    ) -> Result<
+        (
+            Vec<(PointId, [f64; 3])>,
+            Vec<ElementRecord>,
+            MixedSectionStore,
+            HashSet<String>,
+        ),
+        MeshSieveError,
+    > {
+        let mut cursor = BinaryCursor::new(bytes);
+        let mut nodes = Vec::new();
+        let mut elements = Vec::new();
+        let mut entity_physical: HashMap<(u8, i32), Vec<i32>> = HashMap::new();
+
+        while let Some(line) = cursor.next_line_opt()? {
+            match line.trim() {
+                "$MeshFormat" => {
+                    let format = cursor.next_line()?;
+                    let (version, file_type, data_size) = Self::parse_format(&format)?;
+                    if !Self::is_v4_version(&version) || file_type != 1 || data_size != 8 {
+                        return Err(MeshSieveError::MeshIoParse(
+                            "only Gmsh v4 binary files with 8-byte data are supported".into(),
+                        ));
+                    }
+                    let one = cursor.read_i32()?;
+                    if one != 1 {
+                        return Err(MeshSieveError::MeshIoParse(
+                            "big-endian Gmsh binary files are not supported".into(),
+                        ));
+                    }
+                    cursor.consume_line_end();
+                    cursor.expect_line("$EndMeshFormat")?;
+                }
+                "$Entities" => {
+                    entity_physical = Self::parse_entities_binary(&mut cursor)?;
+                }
+                "$PhysicalNames" => {
+                    cursor.skip_ascii_section("$EndPhysicalNames")?;
+                }
+                "$Nodes" => {
+                    let num_blocks = cursor.read_u64()? as usize;
+                    let _num_nodes = cursor.read_u64()?;
+                    let _min_tag = cursor.read_u64()?;
+                    let _max_tag = cursor.read_u64()?;
+                    for _ in 0..num_blocks {
+                        let entity_dim = cursor.read_i32()?;
+                        let _entity_tag = cursor.read_i32()?;
+                        let parametric = cursor.read_i32()? != 0;
+                        let count = cursor.read_u64()? as usize;
+                        let mut ids = Vec::with_capacity(count);
+                        for _ in 0..count {
+                            ids.push(PointId::new(cursor.read_u64()?)?);
+                        }
+                        for id in ids {
+                            let x = cursor.read_f64()?;
+                            let y = cursor.read_f64()?;
+                            let z = cursor.read_f64()?;
+                            if parametric {
+                                for _ in 0..entity_dim.max(0) {
+                                    let _ = cursor.read_f64()?;
+                                }
+                            }
+                            nodes.push((id, [x, y, z]));
+                        }
+                    }
+                    cursor.consume_line_end();
+                    cursor.expect_line("$EndNodes")?;
+                }
+                "$Elements" => {
+                    let num_blocks = cursor.read_u64()? as usize;
+                    let _num_elements = cursor.read_u64()?;
+                    let _min_tag = cursor.read_u64()?;
+                    let _max_tag = cursor.read_u64()?;
+                    for _ in 0..num_blocks {
+                        let entity_dim = cursor.read_i32()? as u8;
+                        let entity_tag = cursor.read_i32()?;
+                        let elem_type = cursor.read_i32()? as u32;
+                        let count = cursor.read_u64()? as usize;
+                        let cell_type = Self::element_cell_type(elem_type).ok_or_else(|| {
+                            MeshSieveError::MeshIoParse(format!(
+                                "unsupported element type: {elem_type}"
+                            ))
+                        })?;
+                        let expected = Self::element_node_count(elem_type).ok_or_else(|| {
+                            MeshSieveError::MeshIoParse(format!(
+                                "unknown node count for element type: {elem_type}"
+                            ))
+                        })?;
+                        for _ in 0..count {
+                            let elem_id = PointId::new(cursor.read_u64()?)?;
+                            let mut conn = Vec::with_capacity(expected);
+                            for _ in 0..expected {
+                                conn.push(PointId::new(cursor.read_u64()?)?);
+                            }
+                            let physical = entity_physical
+                                .get(&(entity_dim, entity_tag))
+                                .cloned()
+                                .unwrap_or_default();
+                            let mut tags = vec![physical.first().copied().unwrap_or(0), entity_tag];
+                            tags.extend(physical.into_iter().skip(1));
+                            elements.push(ElementRecord {
+                                id: elem_id,
+                                conn,
+                                cell_type,
+                                tags,
+                                entity_dim: Some(entity_dim),
+                                entity_tag: Some(entity_tag),
+                                element_type: elem_type,
+                            });
+                        }
+                    }
+                    cursor.consume_line_end();
+                    cursor.expect_line("$EndElements")?;
+                }
+                _ => {}
+            }
+        }
+        Ok((
+            nodes,
+            elements,
+            MixedSectionStore::default(),
+            HashSet::new(),
+        ))
+    }
+
+    fn parse_entities_binary(
+        cursor: &mut BinaryCursor<'_>,
+    ) -> Result<HashMap<(u8, i32), Vec<i32>>, MeshSieveError> {
+        let counts = [
+            cursor.read_u64()? as usize,
+            cursor.read_u64()? as usize,
+            cursor.read_u64()? as usize,
+            cursor.read_u64()? as usize,
+        ];
+        let mut out = HashMap::new();
+        for (dim, count) in counts.into_iter().enumerate() {
+            for _ in 0..count {
+                let tag = cursor.read_i32()?;
+                let bounds = if dim == 0 { 3 } else { 6 };
+                for _ in 0..bounds {
+                    let _ = cursor.read_f64()?;
+                }
+                let nphys = cursor.read_u64()? as usize;
+                let mut physical = Vec::with_capacity(nphys);
+                for _ in 0..nphys {
+                    physical.push(cursor.read_i32()?);
+                }
+                let nbound = cursor.read_u64()? as usize;
+                for _ in 0..nbound {
+                    let _ = cursor.read_i32()?;
+                }
+                if !physical.is_empty() {
+                    out.insert((dim as u8, tag), physical);
+                }
+            }
+        }
+        cursor.consume_line_end();
+        cursor.expect_line("$EndEntities")?;
+        Ok(out)
+    }
+
     /// Read mesh data with explicit import options.
     pub fn read_with_options<R: Read>(
         &self,
@@ -449,8 +883,16 @@ impl GmshReader {
     ) -> Result<MeshData<MeshSieve, f64, VecStorage<f64>, VecStorage<CellType>>, MeshSieveError>
     {
         let mut reader = reader;
-        let mut contents = String::new();
-        reader.read_to_string(&mut contents)?;
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes)?;
+        if Self::is_binary_v4(&bytes)? {
+            let (nodes, elements, mixed_sections, element_data_names) =
+                Self::parse_v4_binary(&bytes)?;
+            return Self::build_mesh(nodes, elements, mixed_sections, element_data_names, options);
+        }
+        let contents = String::from_utf8(bytes).map_err(|err| {
+            MeshSieveError::MeshIoParse(format!("Gmsh ASCII is not UTF-8: {err}"))
+        })?;
         let mut lines = contents.lines().peekable();
 
         let mut version: Option<String> = None;
@@ -458,6 +900,7 @@ impl GmshReader {
         let mut elements: Vec<ElementRecord> = Vec::new();
         let mut mixed_sections = MixedSectionStore::default();
         let mut element_data_names: HashSet<String> = HashSet::new();
+        let mut entity_physical: HashMap<(u8, i32), Vec<i32>> = HashMap::new();
 
         while let Some(line) = lines.next() {
             match line.trim() {
@@ -465,8 +908,13 @@ impl GmshReader {
                     let format_line = lines
                         .next()
                         .ok_or_else(|| MeshSieveError::MeshIoParse("missing MeshFormat".into()))?;
-                    let parsed = Self::parse_version(format_line)?;
-                    version = Some(parsed.to_string());
+                    let (parsed_version, file_type, _) = Self::parse_format(format_line)?;
+                    if file_type != 0 {
+                        return Err(MeshSieveError::MeshIoParse(
+                            "binary .msh files require Gmsh 4.x and must be read as bytes".into(),
+                        ));
+                    }
+                    version = Some(parsed_version);
                     let end = lines.next().ok_or_else(|| {
                         MeshSieveError::MeshIoParse("missing EndMeshFormat".into())
                     })?;
@@ -478,6 +926,10 @@ impl GmshReader {
                     let count_line = lines
                         .next()
                         .ok_or_else(|| MeshSieveError::MeshIoParse("missing node count".into()))?;
+                    if version.as_deref().is_some_and(Self::is_v4_version) {
+                        Self::parse_v4_nodes_ascii(count_line, &mut lines, &mut nodes)?;
+                        continue;
+                    }
                     let node_count = count_line.trim().parse::<usize>().map_err(|_| {
                         MeshSieveError::MeshIoParse(format!("invalid node count: {count_line}"))
                     })?;
@@ -512,6 +964,15 @@ impl GmshReader {
                     let count_line = lines.next().ok_or_else(|| {
                         MeshSieveError::MeshIoParse("missing element count".into())
                     })?;
+                    if version.as_deref().is_some_and(Self::is_v4_version) {
+                        Self::parse_v4_elements_ascii(
+                            count_line,
+                            &mut lines,
+                            &entity_physical,
+                            &mut elements,
+                        )?;
+                        continue;
+                    }
                     let elem_count = count_line.trim().parse::<usize>().map_err(|_| {
                         MeshSieveError::MeshIoParse(format!("invalid element count: {count_line}"))
                     })?;
@@ -580,6 +1041,9 @@ impl GmshReader {
                             conn,
                             cell_type,
                             tags,
+                            entity_dim: None,
+                            entity_tag: None,
+                            element_type: elem_type,
                         });
                     }
                     let end = lines
@@ -612,6 +1076,12 @@ impl GmshReader {
                     element_data_names.insert(name.clone());
                     mixed_sections.insert_tagged(name, tagged);
                 }
+                "$PhysicalNames" => {
+                    Self::skip_physical_names(&mut lines)?;
+                }
+                "$Entities" => {
+                    entity_physical = Self::parse_entities_ascii(&mut lines)?;
+                }
                 _ => {
                     // ignore other sections
                 }
@@ -619,12 +1089,23 @@ impl GmshReader {
         }
 
         let version = version.unwrap_or_else(|| "2.2".to_string());
-        if version != "2.2" {
+        if version != "2.2" && !Self::is_v4_version(&version) {
             return Err(MeshSieveError::MeshIoParse(format!(
                 "unsupported gmsh version: {version}"
             )));
         }
 
+        Self::build_mesh(nodes, elements, mixed_sections, element_data_names, options)
+    }
+
+    fn build_mesh(
+        nodes: Vec<(PointId, [f64; 3])>,
+        mut elements: Vec<ElementRecord>,
+        mut mixed_sections: MixedSectionStore,
+        element_data_names: HashSet<String>,
+        options: GmshReadOptions,
+    ) -> Result<MeshData<MeshSieve, f64, VecStorage<f64>, VecStorage<CellType>>, MeshSieveError>
+    {
         let mesh_dimension = Self::mesh_dimension(&elements, &nodes);
         let coord_dimension = mesh_dimension.max(1).min(3);
 
@@ -742,6 +1223,16 @@ impl GmshReader {
         let mut labels = LabelSet::new();
         let mut has_labels = false;
         for element in &elements {
+            labels.set_label(element.id, "gmsh:element_type", element.element_type as i32);
+            has_labels = true;
+            if let Some(dim) = element.entity_dim {
+                labels.set_label(element.id, "gmsh:entity_dim", i32::from(dim));
+                has_labels = true;
+            }
+            if let Some(tag) = element.entity_tag {
+                labels.set_label(element.id, "gmsh:entity", tag);
+                has_labels = true;
+            }
             if let Some(tag) = element.tags.get(0) {
                 labels.set_label(element.id, "gmsh:physical", *tag);
                 has_labels = true;
@@ -957,11 +1448,221 @@ impl GmshReader {
     }
 }
 
+struct BinaryCursor<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> BinaryCursor<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, pos: 0 }
+    }
+
+    fn next_line_opt(&mut self) -> Result<Option<String>, MeshSieveError> {
+        if self.pos >= self.bytes.len() {
+            return Ok(None);
+        }
+        Ok(Some(self.next_line()?))
+    }
+
+    fn next_line(&mut self) -> Result<String, MeshSieveError> {
+        if self.pos >= self.bytes.len() {
+            return Err(MeshSieveError::MeshIoParse("unexpected end of file".into()));
+        }
+        let start = self.pos;
+        while self.pos < self.bytes.len() && self.bytes[self.pos] != b'\n' {
+            self.pos += 1;
+        }
+        let end = self.pos;
+        if self.pos < self.bytes.len() && self.bytes[self.pos] == b'\n' {
+            self.pos += 1;
+        }
+        let line = &self.bytes[start..end];
+        let line = if line.ends_with(b"\r") {
+            &line[..line.len() - 1]
+        } else {
+            line
+        };
+        String::from_utf8(line.to_vec())
+            .map_err(|err| MeshSieveError::MeshIoParse(format!("invalid ASCII line: {err}")))
+    }
+
+    fn expect_line(&mut self, expected: &str) -> Result<(), MeshSieveError> {
+        let line = self.next_line()?;
+        if line.trim() != expected {
+            return Err(MeshSieveError::MeshIoParse(format!(
+                "expected {expected}, found {line}"
+            )));
+        }
+        Ok(())
+    }
+
+    fn consume_line_end(&mut self) {
+        while self.pos < self.bytes.len()
+            && (self.bytes[self.pos] == b'\n' || self.bytes[self.pos] == b'\r')
+        {
+            self.pos += 1;
+        }
+    }
+
+    fn read_exact<const N: usize>(&mut self) -> Result<[u8; N], MeshSieveError> {
+        if self.pos + N > self.bytes.len() {
+            return Err(MeshSieveError::MeshIoParse(
+                "unexpected end of binary data".into(),
+            ));
+        }
+        let mut out = [0u8; N];
+        out.copy_from_slice(&self.bytes[self.pos..self.pos + N]);
+        self.pos += N;
+        Ok(out)
+    }
+
+    fn read_i32(&mut self) -> Result<i32, MeshSieveError> {
+        Ok(i32::from_le_bytes(self.read_exact()?))
+    }
+
+    fn read_u64(&mut self) -> Result<u64, MeshSieveError> {
+        Ok(u64::from_le_bytes(self.read_exact()?))
+    }
+
+    fn read_f64(&mut self) -> Result<f64, MeshSieveError> {
+        Ok(f64::from_le_bytes(self.read_exact()?))
+    }
+
+    fn skip_ascii_section(&mut self, end: &str) -> Result<(), MeshSieveError> {
+        loop {
+            let line = self.next_line()?;
+            if line.trim() == end {
+                return Ok(());
+            }
+        }
+    }
+}
+
 /// Gmsh `.msh` writer for ASCII v2.2 meshes.
 #[derive(Debug, Default, Clone)]
 pub struct GmshWriter;
 
 impl GmshWriter {
+    /// Write a block-based ASCII Gmsh 4.1 file.
+    ///
+    /// The legacy [`SieveSectionWriter`] implementation intentionally remains
+    /// ASCII v2.2 for backwards compatibility; call this method when a modern
+    /// v4.x interchange file is desired.
+    pub fn write_v4_ascii<W>(
+        &self,
+        mut writer: W,
+        mesh: &MeshData<MeshSieve, f64, VecStorage<f64>, VecStorage<CellType>>,
+    ) -> Result<(), MeshSieveError>
+    where
+        W: Write,
+    {
+        let coords = mesh.coordinates.as_ref().ok_or_else(|| {
+            MeshSieveError::MeshIoParse("Gmsh writer requires coordinates".into())
+        })?;
+        let coord_dim = coords.embedding_dimension().max(1).min(3);
+        let cell_types = mesh
+            .cell_types
+            .as_ref()
+            .ok_or_else(|| MeshSieveError::MeshIoParse("Gmsh writer requires cell types".into()))?;
+        let labels = mesh.labels.as_ref();
+        let node_ids: Vec<PointId> = coords.section().atlas().points().collect();
+        let element_ids: Vec<PointId> = cell_types.atlas().points().collect();
+
+        writeln!(writer, "$MeshFormat")?;
+        writeln!(writer, "4.1 0 8")?;
+        writeln!(writer, "$EndMeshFormat")?;
+
+        let mut entity_physical: BTreeMap<(u8, i32), i32> = BTreeMap::new();
+        let mut element_blocks: BTreeMap<(u8, i32, u32), Vec<(PointId, Vec<PointId>)>> =
+            BTreeMap::new();
+        for element in &element_ids {
+            let cell_type = cell_types.try_restrict(*element)?[0];
+            let conn: Vec<PointId> = mesh.sieve.cone_points(*element).collect();
+            let elem_type = Self::gmsh_element_type(cell_type, conn.len()).ok_or_else(|| {
+                MeshSieveError::MeshIoParse(format!(
+                    "unsupported cell type {:?} with {} nodes",
+                    cell_type,
+                    conn.len()
+                ))
+            })?;
+            let dim = cell_type.dimension();
+            let entity = labels
+                .and_then(|l| l.get_label(*element, "gmsh:entity"))
+                .unwrap_or(i32::from(dim) + 1);
+            let physical = labels
+                .and_then(|l| l.get_label(*element, "gmsh:physical"))
+                .unwrap_or(0);
+            if physical != 0 {
+                entity_physical.entry((dim, entity)).or_insert(physical);
+            }
+            element_blocks
+                .entry((dim, entity, elem_type))
+                .or_default()
+                .push((*element, conn));
+        }
+
+        writeln!(writer, "$Entities")?;
+        let point_entities = 0usize;
+        let curve_entities = entity_physical.keys().filter(|(d, _)| *d == 1).count();
+        let surface_entities = entity_physical.keys().filter(|(d, _)| *d == 2).count();
+        let volume_entities = entity_physical.keys().filter(|(d, _)| *d == 3).count();
+        writeln!(
+            writer,
+            "{point_entities} {curve_entities} {surface_entities} {volume_entities}"
+        )?;
+        for dim in 1..=3u8 {
+            for ((entity_dim, entity), physical) in
+                entity_physical.iter().filter(|((d, _), _)| *d == dim)
+            {
+                let _ = entity_dim;
+                writeln!(writer, "{entity} 0 0 0 0 0 0 1 {physical} 0")?;
+            }
+        }
+        writeln!(writer, "$EndEntities")?;
+
+        writeln!(writer, "$Nodes")?;
+        let min_node = node_ids.iter().map(PointId::get).min().unwrap_or(0);
+        let max_node = node_ids.iter().map(PointId::get).max().unwrap_or(0);
+        writeln!(writer, "1 {} {min_node} {max_node}", node_ids.len())?;
+        writeln!(writer, "0 1 0 {}", node_ids.len())?;
+        for node in &node_ids {
+            writeln!(writer, "{}", node.get())?;
+        }
+        for node in &node_ids {
+            let xyz = coords.section().try_restrict(*node)?;
+            let (x, y, z) = match coord_dim {
+                1 => (xyz[0], 0.0, 0.0),
+                2 => (xyz[0], xyz[1], 0.0),
+                _ => (xyz[0], xyz[1], xyz[2]),
+            };
+            writeln!(writer, "{x} {y} {z}")?;
+        }
+        writeln!(writer, "$EndNodes")?;
+
+        writeln!(writer, "$Elements")?;
+        let min_elem = element_ids.iter().map(PointId::get).min().unwrap_or(0);
+        let max_elem = element_ids.iter().map(PointId::get).max().unwrap_or(0);
+        writeln!(
+            writer,
+            "{} {} {min_elem} {max_elem}",
+            element_blocks.len(),
+            element_ids.len()
+        )?;
+        for ((dim, entity, elem_type), entries) in element_blocks {
+            writeln!(writer, "{dim} {entity} {elem_type} {}", entries.len())?;
+            for (element, conn) in entries {
+                write!(writer, "{}", element.get())?;
+                for node in conn {
+                    write!(writer, " {}", node.get())?;
+                }
+                writeln!(writer)?;
+            }
+        }
+        writeln!(writer, "$EndElements")?;
+        Ok(())
+    }
+
     fn section_is_subset(tagged: &TaggedSection, atlas: &Atlas) -> bool {
         tagged.atlas().points().all(|point| atlas.contains(point))
     }
