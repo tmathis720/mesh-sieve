@@ -9,6 +9,7 @@ pub mod exodus;
 pub mod gmsh;
 pub mod hdf5;
 pub mod partitioned;
+pub mod petsc_hdf5;
 pub mod vtk;
 pub mod xdmf;
 
