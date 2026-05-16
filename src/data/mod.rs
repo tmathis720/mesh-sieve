@@ -45,7 +45,7 @@ pub use discretization::{Discretization, DiscretizationMetadata, FieldDiscretiza
 pub use global_map::{LocalToGlobalMap, global_vector_for_map};
 pub use hanging_node_constraints::{
     HangingDofConstraint, HangingNodeConstraints, LinearConstraintTerm,
-    apply_hanging_constraints_to_section,
+    apply_hanging_constraints_to_section, constraints_from_topological_anchors,
 };
 pub use mixed_section::{
     MixedScalar, MixedSectionStore, ScalarType, TaggedSection, TaggedSectionBuffer,

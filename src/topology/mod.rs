@@ -16,6 +16,7 @@
 
 mod _debug_invariants;
 pub mod adapt;
+pub mod anchors;
 pub mod arrow;
 pub mod bounds;
 pub mod cache;
@@ -32,6 +33,7 @@ pub mod stack;
 pub mod utils;
 pub mod validation;
 
+pub use anchors::{AnchorKind, PointAnchor, TopologicalAnchors};
 pub use cache::InvalidateCache;
 pub use cell_type::CellType;
 pub use labels::LabelSet;

@@ -8,9 +8,12 @@ use crate::data::section::Section;
 use crate::data::storage::{Storage, VecStorage};
 use crate::geometry::quality::{CellQuality, cell_quality_from_section};
 use crate::mesh_error::MeshSieveError;
+use crate::topology::anchors::TopologicalAnchors;
 use crate::topology::arrow::Polarity;
 use crate::topology::cell_type::CellType;
 use crate::topology::coarsen::{CoarsenEntity, CoarsenedTopology, coarsen_topology};
+use crate::topology::labels::LabelSet;
+use crate::topology::ownership::PointOwnership;
 use crate::topology::point::PointId;
 use crate::topology::refine::{
     AnisotropicSplitHints, RefineOptions, RefinedMesh, collapse_to_cell_vertices,
@@ -204,6 +207,43 @@ impl Default for MetricThresholds {
             check_geometry: false,
         }
     }
+}
+
+/// Boundary handling policy for adaptation.
+#[derive(Clone, Debug, Default)]
+pub enum BoundaryRemeshingPolicy {
+    /// Preserve all labeled boundary entities and suppress metric split hints on them.
+    #[default]
+    PreserveBoundary,
+    /// Allow split/coarsen decisions on boundary entities.
+    RemeshBoundary,
+    /// Preserve only the named label strata.
+    PreserveLabeled(Vec<(String, i32)>),
+}
+
+impl BoundaryRemeshingPolicy {
+    fn preserves(&self, labels: Option<&LabelSet>, cell: PointId) -> bool {
+        match self {
+            BoundaryRemeshingPolicy::RemeshBoundary => false,
+            BoundaryRemeshingPolicy::PreserveBoundary => labels.is_some_and(|labels| {
+                labels
+                    .iter()
+                    .any(|(name, point, value)| point == cell && name == "boundary" && value != 0)
+            }),
+            BoundaryRemeshingPolicy::PreserveLabeled(strata) => labels.is_some_and(|labels| {
+                strata
+                    .iter()
+                    .any(|(name, value)| labels.get_label(cell, name) == Some(*value))
+            }),
+        }
+    }
+}
+
+/// Metric-adaptation controls beyond numeric thresholds.
+#[derive(Clone, Debug, Default)]
+pub struct MetricAdaptationOptions {
+    /// Boundary remeshing policy.
+    pub boundary_policy: BoundaryRemeshingPolicy,
 }
 
 /// Edge/face split hints for anisotropic refinement.
@@ -737,6 +777,120 @@ where
     Ok(coarse)
 }
 
+/// Transfer a point/cell section through a refinement map by oriented copy.
+pub fn transfer_section_refinement<V>(
+    coarse: &SievedArray<PointId, V>,
+    refinement: &[(PointId, Vec<(PointId, Polarity)>)],
+) -> Result<SievedArray<PointId, V>, MeshSieveError>
+where
+    V: Clone + Default,
+{
+    refine_data_with_transfer(coarse, refinement)
+}
+
+/// Transfer a point/cell section through a coarsening map by averaging fine values.
+pub fn transfer_section_coarsening<V>(
+    fine: &SievedArray<PointId, V>,
+    transfer: &[(PointId, Vec<(PointId, Polarity)>)],
+) -> Result<SievedArray<PointId, V>, MeshSieveError>
+where
+    V: Clone
+        + Default
+        + num_traits::FromPrimitive
+        + core::ops::AddAssign
+        + core::ops::Div<Output = V>,
+{
+    coarsen_data_with_transfer(fine, transfer)
+}
+
+/// Transfer labels from coarse entities to refined entities and preserve unchanged labels.
+pub fn transfer_labels_refinement(
+    labels: &LabelSet,
+    refinement: &[(PointId, Vec<(PointId, Polarity)>)],
+) -> LabelSet {
+    let mut out = labels.clone();
+    for (coarse, fine_points) in refinement {
+        for (name, point, value) in labels.iter() {
+            if point == *coarse {
+                for (fine, _) in fine_points {
+                    out.set_label(*fine, name, value);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Transfer cell-type tags through refinement.
+pub fn transfer_cell_types_refinement<S>(
+    cell_types: &Section<CellType, S>,
+    refinement: &[(PointId, Vec<(PointId, Polarity)>)],
+) -> Result<Section<CellType, VecStorage<CellType>>, MeshSieveError>
+where
+    S: Storage<CellType>,
+{
+    let mut atlas = Atlas::default();
+    let mut entries = Vec::new();
+    for (coarse, fine_points) in refinement {
+        let slice = cell_types.try_restrict(*coarse)?;
+        if slice.len() != 1 {
+            return Err(MeshSieveError::SliceLengthMismatch {
+                point: *coarse,
+                expected: 1,
+                found: slice.len(),
+            });
+        }
+        for (fine, _) in fine_points {
+            atlas.try_insert(*fine, 1)?;
+            entries.push((*fine, slice[0]));
+        }
+    }
+    let mut out = Section::<CellType, VecStorage<CellType>>::new(atlas);
+    for (point, cell_type) in entries {
+        out.try_set(point, &[cell_type])?;
+    }
+    Ok(out)
+}
+
+/// Transfer ownership through refinement by inheriting the coarse owner.
+pub fn transfer_ownership_refinement(
+    ownership: &PointOwnership,
+    refined: &RefinedMesh,
+    my_rank: usize,
+) -> Result<PointOwnership, MeshSieveError> {
+    let mut out = ownership.clone();
+    for (coarse, fine_points) in &refined.cell_refinement {
+        let owner = ownership.owner_or_err(*coarse)?;
+        for (fine, _) in fine_points {
+            out.set_owner_min(*fine, owner, my_rank)?;
+            for point in refined.sieve.cone_points(*fine) {
+                if out.entry(point).is_none() {
+                    out.set_owner_min(point, owner, my_rank)?;
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Transfer anchor-derived hanging constraints for scalar sections.
+pub fn transfer_constraints_from_anchors(
+    anchors: &TopologicalAnchors,
+    dofs_per_point: usize,
+) -> crate::data::hanging_node_constraints::HangingNodeConstraints<f64> {
+    crate::data::hanging_node_constraints::constraints_from_topological_anchors(
+        anchors,
+        dofs_per_point,
+    )
+}
+
+/// Transfer coordinates produced by refinement, if available.
+pub fn transfer_coordinates_refinement(
+    refined: &RefinedMesh,
+) -> Option<Coordinates<f64, VecStorage<f64>>> {
+    refined.coordinates.clone()
+}
+
 /// Apply quality-driven refinement/coarsening with data transfer.
 ///
 /// When both refinement and coarsening are requested, refinement is applied
@@ -766,7 +920,7 @@ where
 
     if !refine_cells.is_empty() {
         let refined_section = subset_cell_types(cell_types, &refine_cells)?;
-        let refined = refine_mesh_with_options(
+        let mut refined = refine_mesh_with_options(
             sieve,
             &refined_section,
             Some(coordinates),
@@ -775,6 +929,7 @@ where
                 anisotropic_splits: None,
             },
         )?;
+        materialize_unmodified_cells(sieve, cell_types, &mut refined, &refine_cells)?;
         let refined_data = refine_data_with_transfer(cell_data, &refined.cell_refinement)?;
         return Ok(AdaptationResult {
             metrics,
@@ -818,6 +973,38 @@ where
     })
 }
 
+fn materialize_unmodified_cells<S>(
+    sieve: &mut impl Sieve<Point = PointId>,
+    cell_types: &Section<CellType, S>,
+    refined: &mut RefinedMesh,
+    refined_cells: &[PointId],
+) -> Result<(), MeshSieveError>
+where
+    S: Storage<CellType>,
+{
+    let refined_set: std::collections::HashSet<_> = refined_cells.iter().copied().collect();
+    let collapsed = collapse_to_cell_vertices(sieve, cell_types)?;
+    for (cell, cell_slice) in cell_types.iter() {
+        if cell_slice.len() != 1 {
+            return Err(MeshSieveError::SliceLengthMismatch {
+                point: cell,
+                expected: 1,
+                found: cell_slice.len(),
+            });
+        }
+        if refined_set.contains(&cell) {
+            continue;
+        }
+        for vertex in collapsed.cone_points(cell) {
+            refined.sieve.add_arrow(cell, vertex, ());
+        }
+        refined
+            .cell_refinement
+            .push((cell, vec![(cell, Polarity::Forward)]));
+    }
+    Ok(())
+}
+
 fn filter_split_hints(hints: &[MetricSplitHint], cells: &[PointId]) -> Vec<MetricSplitHint> {
     let cell_set: std::collections::HashSet<_> = cells.iter().copied().collect();
     hints
@@ -825,6 +1012,108 @@ fn filter_split_hints(hints: &[MetricSplitHint], cells: &[PointId]) -> Vec<Metri
         .filter(|hint| cell_set.contains(&hint.cell))
         .cloned()
         .collect()
+}
+
+fn apply_boundary_policy(
+    selection: &mut AdaptivitySelection,
+    split_hints: &mut Vec<MetricSplitHint>,
+    labels: Option<&LabelSet>,
+    policy: &BoundaryRemeshingPolicy,
+) {
+    selection
+        .refine_cells
+        .retain(|cell| !policy.preserves(labels, *cell));
+    selection
+        .coarsen_cells
+        .retain(|cell| !policy.preserves(labels, *cell));
+    split_hints.retain(|hint| !policy.preserves(labels, hint.cell));
+}
+
+/// Apply metric-driven refinement/coarsening with boundary-remeshing controls.
+pub fn adapt_with_metric_policy<S, Cs, Ms, C>(
+    sieve: &mut impl Sieve<Point = PointId>,
+    cell_types: &Section<CellType, S>,
+    coordinates: &Coordinates<f64, Cs>,
+    metric: &Section<MetricTensor, Ms>,
+    labels: Option<&LabelSet>,
+    coarsen_plan: C,
+    thresholds: MetricThresholds,
+    options: MetricAdaptationOptions,
+) -> Result<MetricAdaptationResult<()>, MeshSieveError>
+where
+    S: Storage<CellType>,
+    Cs: Storage<f64>,
+    Ms: Storage<MetricTensor>,
+    C: Fn(&[MetricSplitHint]) -> Vec<CoarsenEntity>,
+{
+    let evaluations = evaluate_metric_cells(sieve, cell_types, coordinates, metric)?;
+    let metrics: Vec<_> = evaluations
+        .iter()
+        .map(|eval| (eval.cell, eval.metrics))
+        .collect();
+    let mut split_hints = metric_split_hints(&evaluations, thresholds);
+    let mut selection = select_cells_for_metric_adaptation(&metrics, thresholds);
+    apply_boundary_policy(
+        &mut selection,
+        &mut split_hints,
+        labels,
+        &options.boundary_policy,
+    );
+    let refine_cells = selection.refine_cells.clone();
+    let coarsen_cells = selection.coarsen_cells.clone();
+
+    if !refine_cells.is_empty() {
+        let refined_section = subset_cell_types(cell_types, &refine_cells)?;
+        let refine_hints = filter_split_hints(&split_hints, &refine_cells);
+        let anisotropic = build_anisotropic_hints(&refine_hints);
+        let mut refined = refine_mesh_with_options(
+            sieve,
+            &refined_section,
+            Some(coordinates),
+            RefineOptions {
+                check_geometry: thresholds.check_geometry,
+                anisotropic_splits: if anisotropic.is_empty() {
+                    None
+                } else {
+                    Some(anisotropic)
+                },
+            },
+        )?;
+        materialize_unmodified_cells(sieve, cell_types, &mut refined, &refine_cells)?;
+        return Ok(MetricAdaptationResult {
+            metrics,
+            refine_cells,
+            coarsen_cells,
+            split_hints,
+            action: MetricAdaptationAction::Refined { mesh: refined },
+            data: None,
+        });
+    }
+
+    if !coarsen_cells.is_empty() {
+        let coarsen_hints = filter_split_hints(&split_hints, &coarsen_cells);
+        let entities = coarsen_plan(&coarsen_hints);
+        if !entities.is_empty() {
+            let coarsened = coarsen_topology(sieve, &entities)?;
+            return Ok(MetricAdaptationResult {
+                metrics,
+                refine_cells,
+                coarsen_cells,
+                split_hints,
+                action: MetricAdaptationAction::Coarsened { mesh: coarsened },
+                data: None,
+            });
+        }
+    }
+
+    Ok(MetricAdaptationResult {
+        metrics,
+        refine_cells,
+        coarsen_cells,
+        split_hints,
+        action: MetricAdaptationAction::NoChange,
+        data: None,
+    })
 }
 
 /// Apply metric-driven refinement/coarsening without data transfer.
@@ -859,7 +1148,7 @@ where
         let refined_section = subset_cell_types(cell_types, &refine_cells)?;
         let refine_hints = filter_split_hints(&split_hints, &refine_cells);
         let anisotropic = build_anisotropic_hints(&refine_hints);
-        let refined = refine_mesh_with_options(
+        let mut refined = refine_mesh_with_options(
             sieve,
             &refined_section,
             Some(coordinates),
@@ -872,6 +1161,7 @@ where
                 },
             },
         )?;
+        materialize_unmodified_cells(sieve, cell_types, &mut refined, &refine_cells)?;
         return Ok(MetricAdaptationResult {
             metrics,
             refine_cells,
@@ -954,7 +1244,7 @@ where
         let refined_section = subset_cell_types(cell_types, &refine_cells)?;
         let refine_hints = filter_split_hints(&split_hints, &refine_cells);
         let anisotropic = build_anisotropic_hints(&refine_hints);
-        let refined = refine_mesh_with_options(
+        let mut refined = refine_mesh_with_options(
             sieve,
             &refined_section,
             Some(coordinates),
@@ -967,6 +1257,7 @@ where
                 },
             },
         )?;
+        materialize_unmodified_cells(sieve, cell_types, &mut refined, &refine_cells)?;
         let refined_data = refine_data_with_transfer(cell_data, &refined.cell_refinement)?;
         return Ok(MetricAdaptationResult {
             metrics,

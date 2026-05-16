@@ -3,6 +3,7 @@
 use crate::data::section::Section;
 use crate::data::storage::Storage;
 use crate::mesh_error::MeshSieveError;
+use crate::topology::anchors::TopologicalAnchors;
 use crate::topology::cache::InvalidateCache;
 use crate::topology::point::PointId;
 use std::collections::BTreeMap;
@@ -94,6 +95,37 @@ impl<V> HangingNodeConstraints<V> {
     pub fn clear_constraints(&mut self) {
         self.constraints.clear();
     }
+}
+
+/// Generate point-wise hanging constraints from topology anchors.
+///
+/// Each constrained anchor point is written as the arithmetic average of its
+/// parent points for every requested DOF.  This is the standard linear
+/// constraint for midpoint anchors and a conservative default for higher-order
+/// face/cell anchors.
+pub fn constraints_from_topological_anchors(
+    anchors: &TopologicalAnchors,
+    dofs_per_point: usize,
+) -> HangingNodeConstraints<f64> {
+    let mut constraints = HangingNodeConstraints::default();
+    if dofs_per_point == 0 {
+        return constraints;
+    }
+    for (point, anchor) in anchors.iter() {
+        if !anchor.is_constrained() || anchor.parents.is_empty() {
+            continue;
+        }
+        let weight = 1.0 / anchor.parents.len() as f64;
+        for dof in 0..dofs_per_point {
+            let terms = anchor
+                .parents
+                .iter()
+                .map(|parent| LinearConstraintTerm::new(*parent, dof, weight))
+                .collect();
+            constraints.insert_constraint(point, dof, terms);
+        }
+    }
+    constraints
 }
 
 /// Apply hanging node constraints to a mutable section.

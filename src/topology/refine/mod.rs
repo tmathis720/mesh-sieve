@@ -19,10 +19,14 @@
 use crate::algs::interpolate::{InterpolationResult, interpolate_edges_faces};
 use crate::data::atlas::Atlas;
 use crate::data::coordinates::{Coordinates, HighOrderCoordinates};
+use crate::data::hanging_node_constraints::{
+    HangingNodeConstraints, constraints_from_topological_anchors,
+};
 use crate::data::section::Section;
 use crate::data::storage::{Storage, VecStorage};
 use crate::geometry::quality::validate_cell_geometry;
 use crate::mesh_error::MeshSieveError;
+use crate::topology::anchors::{AnchorKind, TopologicalAnchors};
 use crate::topology::arrow::Polarity;
 use crate::topology::cell_type::CellType;
 use crate::topology::ownership::PointOwnership;
@@ -43,6 +47,10 @@ pub struct RefinedMesh {
     pub cell_refinement: RefinementMap,
     /// Optional coordinates for the refined mesh vertices.
     pub coordinates: Option<Coordinates<f64, VecStorage<f64>>>,
+    /// Parent/constrained-point anchors produced by refinement.
+    pub anchors: TopologicalAnchors,
+    /// Automatically generated scalar hanging-node constraints from anchors.
+    pub hanging_constraints: HangingNodeConstraints<f64>,
 }
 
 /// Output of [`refine_mesh_with_ownership`], including ownership metadata updates.
@@ -56,6 +64,10 @@ pub struct RefinedMeshWithOwnership {
     pub ownership: PointOwnership,
     /// Optional coordinates for the refined mesh vertices.
     pub coordinates: Option<Coordinates<f64, VecStorage<f64>>>,
+    /// Parent/constrained-point anchors produced by refinement.
+    pub anchors: TopologicalAnchors,
+    /// Automatically generated scalar hanging-node constraints from anchors.
+    pub hanging_constraints: HangingNodeConstraints<f64>,
 }
 
 /// Output of [`refine_mesh_full_topology`], including a full topology and types.
@@ -69,6 +81,10 @@ pub struct RefinedMeshWithTopology {
     pub cell_types: Section<CellType, VecStorage<CellType>>,
     /// Optional coordinates for the refined mesh vertices.
     pub coordinates: Option<Coordinates<f64, VecStorage<f64>>>,
+    /// Parent/constrained-point anchors produced by refinement.
+    pub anchors: TopologicalAnchors,
+    /// Automatically generated scalar hanging-node constraints from anchors.
+    pub hanging_constraints: HangingNodeConstraints<f64>,
 }
 
 /// Optional anisotropic split hints for refinement.
@@ -427,6 +443,7 @@ where
     let mut edge_midpoints: HashMap<(PointId, PointId), PointId> = HashMap::new();
     let mut face_centers: HashMap<Vec<PointId>, PointId> = HashMap::new();
     let mut point_sources: HashMap<PointId, Vec<PointId>> = HashMap::new();
+    let hinted_edge_keys = collect_hinted_edge_keys(options.anisotropic_splits.as_ref());
 
     for (cell, cell_slice) in cell_types.iter() {
         if cell_slice.len() != 1 {
@@ -474,7 +491,11 @@ where
                         vertices[0],
                     )?,
                 ];
-                for verts in triangle_subdivision(vertices, midpoints) {
+                let split_indices =
+                    triangle_split_indices(cell, vertices, options.anisotropic_splits.as_ref());
+                let templates =
+                    anisotropic_triangle_subdivision(vertices, midpoints, &split_indices);
+                for verts in templates {
                     let fine_cell = alloc_point(&mut next_id)?;
                     for v in verts {
                         refined.add_arrow(fine_cell, v, ());
@@ -516,7 +537,18 @@ where
                 ];
                 let center = alloc_point(&mut next_id)?;
                 point_sources.insert(center, vertices.to_vec());
-                for verts in quadrilateral_subdivision(vertices, midpoints, center) {
+                let split_indices = quadrilateral_split_indices(
+                    cell,
+                    vertices,
+                    options.anisotropic_splits.as_ref(),
+                );
+                let templates = anisotropic_quadrilateral_subdivision(
+                    vertices,
+                    midpoints,
+                    center,
+                    &split_indices,
+                );
+                for verts in templates {
                     let fine_cell = alloc_point(&mut next_id)?;
                     for v in verts {
                         refined.add_arrow(fine_cell, v, ());
@@ -940,10 +972,24 @@ where
         None
     };
 
+    let mut anchors = TopologicalAnchors::default();
+    for (point, sources) in &point_sources {
+        let kind =
+            if sources.len() == 2 && hinted_edge_keys.contains(&edge_key(sources[0], sources[1])) {
+                AnchorKind::Hanging
+            } else {
+                AnchorKind::Refined
+            };
+        anchors.insert(*point, sources.iter().copied(), kind);
+    }
+    let hanging_constraints = constraints_from_topological_anchors(&anchors, 1);
+
     Ok(RefinedMesh {
         sieve: refined,
         cell_refinement: refinement_map,
         coordinates: refined_coordinates,
+        anchors,
+        hanging_constraints,
     })
 }
 
@@ -988,6 +1034,8 @@ where
         cell_refinement: refined.cell_refinement,
         cell_types: refined_cell_types,
         coordinates: refined.coordinates,
+        anchors: refined.anchors,
+        hanging_constraints: refined.hanging_constraints,
     })
 }
 
@@ -1034,6 +1082,8 @@ where
         cell_refinement: refined.cell_refinement,
         ownership: refined_ownership,
         coordinates: refined.coordinates,
+        anchors: refined.anchors,
+        hanging_constraints: refined.hanging_constraints,
     })
 }
 
@@ -1073,7 +1123,112 @@ where
         cell_refinement: refined.cell_refinement,
         ownership: refined_ownership,
         coordinates: refined.coordinates,
+        anchors: refined.anchors,
+        hanging_constraints: refined.hanging_constraints,
     })
+}
+
+fn edge_key(a: PointId, b: PointId) -> (PointId, PointId) {
+    if a < b { (a, b) } else { (b, a) }
+}
+
+fn collect_hinted_edge_keys(hints: Option<&AnisotropicSplitHints>) -> HashSet<(PointId, PointId)> {
+    let mut keys = HashSet::new();
+    if let Some(hints) = hints {
+        for edges in hints.edge_splits.values() {
+            for [a, b] in edges {
+                keys.insert(edge_key(*a, *b));
+            }
+        }
+    }
+    keys
+}
+
+fn triangle_split_indices(
+    cell: PointId,
+    vertices: [PointId; 3],
+    hints: Option<&AnisotropicSplitHints>,
+) -> Vec<usize> {
+    let Some(edges) = hints.and_then(|h| h.edge_splits.get(&cell)) else {
+        return vec![0, 1, 2];
+    };
+    let canonical = [
+        edge_key(vertices[0], vertices[1]),
+        edge_key(vertices[1], vertices[2]),
+        edge_key(vertices[2], vertices[0]),
+    ];
+    let requested: HashSet<_> = edges.iter().map(|[a, b]| edge_key(*a, *b)).collect();
+    let mut out = Vec::new();
+    for (idx, key) in canonical.iter().enumerate() {
+        if requested.contains(key) {
+            out.push(idx);
+        }
+    }
+    if out.is_empty() { vec![0, 1, 2] } else { out }
+}
+
+fn quadrilateral_split_indices(
+    cell: PointId,
+    vertices: [PointId; 4],
+    hints: Option<&AnisotropicSplitHints>,
+) -> Vec<usize> {
+    let Some(edges) = hints.and_then(|h| h.edge_splits.get(&cell)) else {
+        return vec![0, 1, 2, 3];
+    };
+    let canonical = [
+        edge_key(vertices[0], vertices[1]),
+        edge_key(vertices[1], vertices[2]),
+        edge_key(vertices[2], vertices[3]),
+        edge_key(vertices[3], vertices[0]),
+    ];
+    let requested: HashSet<_> = edges.iter().map(|[a, b]| edge_key(*a, *b)).collect();
+    let mut out = Vec::new();
+    for (idx, key) in canonical.iter().enumerate() {
+        if requested.contains(key) {
+            out.push(idx);
+        }
+    }
+    if out.is_empty() {
+        vec![0, 1, 2, 3]
+    } else {
+        out
+    }
+}
+
+fn anisotropic_triangle_subdivision(
+    vertices: [PointId; 3],
+    midpoints: [PointId; 3],
+    split_indices: &[usize],
+) -> Vec<[PointId; 3]> {
+    let [v0, v1, v2] = vertices;
+    let [m01, m12, m20] = midpoints;
+    if split_indices.len() == 1 {
+        match split_indices[0] {
+            0 => return vec![[v0, m01, v2], [m01, v1, v2]],
+            1 => return vec![[v1, m12, v0], [m12, v2, v0]],
+            2 => return vec![[v2, m20, v1], [m20, v0, v1]],
+            _ => {}
+        }
+    }
+    triangle_subdivision(vertices, midpoints).to_vec()
+}
+
+fn anisotropic_quadrilateral_subdivision(
+    vertices: [PointId; 4],
+    midpoints: [PointId; 4],
+    center: PointId,
+    split_indices: &[usize],
+) -> Vec<[PointId; 4]> {
+    let [v0, v1, v2, v3] = vertices;
+    let [m01, m12, m23, m30] = midpoints;
+    let splits: HashSet<_> = split_indices.iter().copied().collect();
+    if splits.len() == 2 && splits.contains(&0) && splits.contains(&2) {
+        return vec![[v0, m01, m23, v3], [m01, v1, v2, m23]];
+    }
+    if splits.len() == 2 && splits.contains(&1) && splits.contains(&3) {
+        return vec![[v0, v1, m12, m30], [m30, m12, v2, v3]];
+    }
+    quadrilateral_subdivision(vertices, midpoints, center).to_vec()
 }
 
 fn alloc_point(next_id: &mut u64) -> Result<PointId, MeshSieveError> {
