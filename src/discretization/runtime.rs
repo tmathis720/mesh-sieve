@@ -3,6 +3,7 @@
 use crate::data::closure::{
     ClosureIndex, ClosureOrder, IdentitySectionSym, build_closure_index_unoriented,
 };
+use crate::data::coordinates::Coordinates;
 use crate::data::discretization::DiscretizationMetadata;
 use crate::data::section::Section;
 use crate::data::storage::Storage;
@@ -10,38 +11,105 @@ use crate::mesh_error::MeshSieveError;
 use crate::topology::cell_type::CellType;
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
-/// Supported basis implementations.
-#[derive(Clone, Debug)]
+/// Supported finite-element basis implementations.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Basis {
-    /// Linear Lagrange basis on a segment.
+    /// Linear Lagrange basis on a segment (legacy spelling).
     LagrangeP1Segment,
-    /// Bilinear Lagrange basis on a quadrilateral.
+    /// Bilinear Lagrange basis on a quadrilateral (legacy spelling).
     LagrangeQ1Quadrilateral,
+    /// Runtime Lagrange basis on a supported reference cell.
+    Lagrange {
+        /// Reference cell shape.
+        cell_type: CellType,
+        /// Polynomial/interpolation degree.
+        degree: usize,
+        /// Shape family used to place nodes and choose interpolation monomials.
+        family: BasisFamily,
+    },
+}
+
+/// Lagrange basis family, mirroring PetscFE simplex/tensor-product setup choices.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BasisFamily {
+    /// Simplex-complete polynomial basis on segment/triangle/tetrahedron.
+    Simplex,
+    /// Tensor-product basis on segment/quadrilateral/hexahedron.
+    TensorProduct,
+    /// Tensor product of triangle and segment bases for prisms.
+    Prism,
+    /// Layered tensor-product basis for pyramids.
+    Pyramid,
 }
 
 impl Basis {
     /// Resolve a basis implementation from a metadata label and cell type.
     pub fn from_metadata(name: &str, cell_type: CellType) -> Result<Self, MeshSieveError> {
-        let normalized = name.to_lowercase();
-        match cell_type {
-            CellType::Segment => match normalized.as_str() {
-                "lagrange_p1" | "p1" | "lagrange1" | "linear" => Ok(Self::LagrangeP1Segment),
-                _ => Err(MeshSieveError::InvalidGeometry(format!(
-                    "unsupported basis '{name}' for segment"
-                ))),
-            },
-            CellType::Quadrilateral => match normalized.as_str() {
-                "lagrange_q1" | "q1" | "bilinear" => Ok(Self::LagrangeQ1Quadrilateral),
-                _ => Err(MeshSieveError::InvalidGeometry(format!(
-                    "unsupported basis '{name}' for quadrilateral"
-                ))),
-            },
-            _ => Err(MeshSieveError::InvalidGeometry(format!(
-                "unsupported cell type {cell_type:?} for basis '{name}'"
-            ))),
+        let normalized = normalize_name(name);
+        let explicit_degree = parse_trailing_degree(&normalized);
+        let degree = explicit_degree.unwrap_or(1);
+        let is_lagrange = normalized.contains("lagrange")
+            || normalized == "p"
+            || normalized == "q"
+            || normalized.starts_with('p')
+            || normalized.starts_with('q')
+            || normalized == "linear"
+            || normalized == "bilinear"
+            || normalized == "trilinear";
+        if !is_lagrange {
+            return Err(MeshSieveError::InvalidGeometry(format!(
+                "unsupported basis '{name}' for {cell_type:?}"
+            )));
         }
+        if matches!(cell_type, CellType::Segment) && degree == 1 {
+            return Ok(Self::LagrangeP1Segment);
+        }
+        if matches!(cell_type, CellType::Quadrilateral) && degree == 1 {
+            return Ok(Self::LagrangeQ1Quadrilateral);
+        }
+        Self::lagrange(cell_type, degree)
+    }
+
+    /// Build a Lagrange basis with a degree inferred from metadata.
+    pub fn from_metadata_with_order(
+        metadata: &DiscretizationMetadata,
+        cell_type: CellType,
+    ) -> Result<Self, MeshSieveError> {
+        let mut basis = Self::from_metadata(&metadata.basis, cell_type)?;
+        if let Some(order) = metadata.basis_order {
+            basis = Self::lagrange(cell_type, order)?;
+        }
+        Ok(basis)
+    }
+
+    /// Construct a configurable Lagrange basis for PetscFE-like setup paths.
+    pub fn lagrange(cell_type: CellType, degree: usize) -> Result<Self, MeshSieveError> {
+        if degree == 0 {
+            return Err(MeshSieveError::InvalidGeometry(
+                "Lagrange degree must be at least one".to_string(),
+            ));
+        }
+        let family = match cell_type {
+            CellType::Segment
+            | CellType::Triangle
+            | CellType::Tetrahedron
+            | CellType::Simplex(_) => BasisFamily::Simplex,
+            CellType::Quadrilateral | CellType::Hexahedron => BasisFamily::TensorProduct,
+            CellType::Prism => BasisFamily::Prism,
+            CellType::Pyramid => BasisFamily::Pyramid,
+            _ => {
+                return Err(MeshSieveError::InvalidGeometry(format!(
+                    "unsupported cell type {cell_type:?} for Lagrange basis"
+                )));
+            }
+        };
+        Ok(Self::Lagrange {
+            cell_type,
+            degree,
+            family,
+        })
     }
 
     /// Reference dimension of the basis.
@@ -49,6 +117,15 @@ impl Basis {
         match self {
             Basis::LagrangeP1Segment => 1,
             Basis::LagrangeQ1Quadrilateral => 2,
+            Basis::Lagrange { cell_type, .. } => cell_type.dimension() as usize,
+        }
+    }
+
+    /// Polynomial/interpolation degree.
+    pub fn degree(&self) -> usize {
+        match self {
+            Basis::LagrangeP1Segment | Basis::LagrangeQ1Quadrilateral => 1,
+            Basis::Lagrange { degree, .. } => *degree,
         }
     }
 
@@ -57,6 +134,13 @@ impl Basis {
         match self {
             Basis::LagrangeP1Segment => 2,
             Basis::LagrangeQ1Quadrilateral => 4,
+            Basis::Lagrange {
+                cell_type,
+                degree,
+                family,
+            } => reference_nodes(*cell_type, *degree, *family)
+                .map(|n| n.len())
+                .unwrap_or(0),
         }
     }
 
@@ -65,6 +149,7 @@ impl Basis {
         match self {
             Basis::LagrangeP1Segment => CellType::Segment,
             Basis::LagrangeQ1Quadrilateral => CellType::Quadrilateral,
+            Basis::Lagrange { cell_type, .. } => *cell_type,
         }
     }
 
@@ -73,6 +158,11 @@ impl Basis {
         match self {
             Basis::LagrangeP1Segment => tabulate_p1_segment(points),
             Basis::LagrangeQ1Quadrilateral => tabulate_q1_quad(points),
+            Basis::Lagrange {
+                cell_type,
+                degree,
+                family,
+            } => tabulate_lagrange(*cell_type, *degree, *family, points),
         }
     }
 }
@@ -100,30 +190,20 @@ pub struct QuadratureRule {
 impl QuadratureRule {
     /// Construct a quadrature rule from a metadata label and cell type.
     pub fn from_metadata(name: &str, cell_type: CellType) -> Result<Self, MeshSieveError> {
-        let normalized = name.to_lowercase();
+        let normalized = normalize_name(name);
+        let order =
+            parse_trailing_degree(&normalized).unwrap_or_else(|| match normalized.as_str() {
+                "midpoint" | "centroid" => 1,
+                _ => 2,
+            });
         match cell_type {
-            CellType::Segment => match normalized.as_str() {
-                "gauss1" | "midpoint" => Ok(gauss_legendre_1d(1, "gauss1")),
-                "gauss2" => Ok(gauss_legendre_1d(2, "gauss2")),
-                _ => Err(MeshSieveError::InvalidGeometry(format!(
-                    "unsupported quadrature '{name}' for segment"
-                ))),
-            },
-            CellType::Quadrilateral => match normalized.as_str() {
-                "gauss1" | "midpoint" | "gauss1x1" => Ok(tensor_product_quadrature(
-                    &gauss_legendre_1d(1, "gauss1"),
-                    &gauss_legendre_1d(1, "gauss1"),
-                    "gauss1x1",
-                )),
-                "gauss2" | "gauss2x2" => Ok(tensor_product_quadrature(
-                    &gauss_legendre_1d(2, "gauss2"),
-                    &gauss_legendre_1d(2, "gauss2"),
-                    "gauss2x2",
-                )),
-                _ => Err(MeshSieveError::InvalidGeometry(format!(
-                    "unsupported quadrature '{name}' for quadrilateral"
-                ))),
-            },
+            CellType::Segment => Ok(gauss_legendre_1d(order.min(3), name)),
+            CellType::Quadrilateral => Ok(tensor_power_quadrature(2, order.min(3), name)),
+            CellType::Hexahedron => Ok(tensor_power_quadrature(3, order.min(3), name)),
+            CellType::Triangle => simplex_quadrature(2, order, name),
+            CellType::Tetrahedron => simplex_quadrature(3, order, name),
+            CellType::Prism => prism_quadrature(order, name),
+            CellType::Pyramid => pyramid_quadrature(order, name),
             _ => Err(MeshSieveError::InvalidGeometry(format!(
                 "unsupported cell type {cell_type:?} for quadrature '{name}'"
             ))),
@@ -166,7 +246,7 @@ pub fn runtime_from_metadata(
     metadata: &DiscretizationMetadata,
     cell_type: CellType,
 ) -> Result<ElementRuntime, MeshSieveError> {
-    let basis = Basis::from_metadata(&metadata.basis, cell_type)?;
+    let basis = Basis::from_metadata_with_order(metadata, cell_type)?;
     let quadrature = if metadata.has_quadrature_data() {
         QuadratureRule::from_explicit(
             metadata.quadrature.clone(),
@@ -327,14 +407,181 @@ where
     vector
 }
 
+/// Finite-volume discretization metadata resembling PetscFV setup state.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FiniteVolumeMetadata {
+    /// Number of conserved/scalar components per cell.
+    pub components: usize,
+    /// Reconstruction order for face states.
+    pub reconstruction_order: usize,
+    /// Optional limiter name used by callers.
+    pub limiter: Option<String>,
+}
+
+impl FiniteVolumeMetadata {
+    /// Construct cell-centered FV metadata.
+    pub fn new(components: usize) -> Self {
+        Self {
+            components,
+            reconstruction_order: 1,
+            limiter: None,
+        }
+    }
+
+    /// Set reconstruction order.
+    pub fn with_reconstruction_order(mut self, order: usize) -> Self {
+        self.reconstruction_order = order;
+        self
+    }
+
+    /// Set limiter label.
+    pub fn with_limiter(mut self, limiter: impl Into<String>) -> Self {
+        self.limiter = Some(limiter.into());
+        self
+    }
+}
+
+/// Cell geometry used by finite-volume residuals.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CellGeometry {
+    /// Cell centroid in physical coordinates.
+    pub centroid: Vec<f64>,
+    /// Cell measure (length/area/volume).
+    pub volume: f64,
+}
+
+/// Face geometry used by finite-volume flux residuals.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FaceGeometry {
+    /// Face identifier.
+    pub face: PointId,
+    /// Face centroid.
+    pub centroid: Vec<f64>,
+    /// Outward normal scaled by face measure for the owner/left cell.
+    pub normal: Vec<f64>,
+    /// Face measure.
+    pub area: f64,
+    /// Adjacent cells in deterministic support order.
+    pub neighbors: Vec<PointId>,
+}
+
+/// Cell-centered finite-volume stencil for one face.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FluxStencil {
+    /// Face connecting the stencil cells.
+    pub face: PointId,
+    /// Left/owner cell.
+    pub left: PointId,
+    /// Optional right neighbor; `None` means boundary face.
+    pub right: Option<PointId>,
+}
+
+/// Compute an affine cell geometry from vertices.
+pub fn cell_geometry_from_vertices(vertices: &[Vec<f64>]) -> Result<CellGeometry, MeshSieveError> {
+    if vertices.is_empty() {
+        return Err(MeshSieveError::InvalidGeometry(
+            "cell geometry requires vertices".to_string(),
+        ));
+    }
+    let dim = vertices[0].len();
+    let mut centroid = vec![0.0; dim];
+    for vertex in vertices {
+        if vertex.len() != dim {
+            return Err(MeshSieveError::InvalidGeometry(
+                "inconsistent vertex dimension".to_string(),
+            ));
+        }
+        for d in 0..dim {
+            centroid[d] += vertex[d];
+        }
+    }
+    for value in &mut centroid {
+        *value /= vertices.len() as f64;
+    }
+    let volume = match dim {
+        1 => (vertices
+            .iter()
+            .map(|v| v[0])
+            .fold(f64::NEG_INFINITY, f64::max)
+            - vertices.iter().map(|v| v[0]).fold(f64::INFINITY, f64::min))
+        .abs(),
+        2 => polygon_area(vertices),
+        3 => bounding_box_volume(vertices),
+        _ => 0.0,
+    };
+    Ok(CellGeometry { centroid, volume })
+}
+
+/// Compute face geometry from face vertices and support cells.
+pub fn face_geometry_from_vertices(
+    face: PointId,
+    vertices: &[Vec<f64>],
+    neighbors: Vec<PointId>,
+) -> Result<FaceGeometry, MeshSieveError> {
+    let cell = cell_geometry_from_vertices(vertices)?;
+    let dim = cell.centroid.len();
+    let (normal, area) = match dim {
+        1 => (vec![1.0], 1.0),
+        2 => {
+            if vertices.len() < 2 {
+                return Err(MeshSieveError::InvalidGeometry(
+                    "2D face requires two vertices".to_string(),
+                ));
+            }
+            let dx = vertices[1][0] - vertices[0][0];
+            let dy = vertices[1][1] - vertices[0][1];
+            let length = (dx * dx + dy * dy).sqrt();
+            (vec![dy, -dx], length)
+        }
+        3 => {
+            if vertices.len() < 3 {
+                return Err(MeshSieveError::InvalidGeometry(
+                    "3D face requires at least three vertices".to_string(),
+                ));
+            }
+            let a = sub(&vertices[1], &vertices[0]);
+            let b = sub(&vertices[2], &vertices[0]);
+            let cross = vec![
+                a[1] * b[2] - a[2] * b[1],
+                a[2] * b[0] - a[0] * b[2],
+                a[0] * b[1] - a[1] * b[0],
+            ];
+            let area = norm(&cross) * 0.5;
+            (cross, area)
+        }
+        _ => (vec![], 0.0),
+    };
+    Ok(FaceGeometry {
+        face,
+        centroid: cell.centroid,
+        normal,
+        area,
+        neighbors,
+    })
+}
+
+/// Build neighbor flux stencils from face supports.
+pub fn flux_stencils<T>(topology: &T, faces: impl IntoIterator<Item = PointId>) -> Vec<FluxStencil>
+where
+    T: Sieve<Point = PointId>,
+{
+    let mut stencils = Vec::new();
+    for face in faces {
+        let mut cells: Vec<_> = topology.support_points(face).collect();
+        cells.sort_unstable();
+        if let Some(&left) = cells.first() {
+            stencils.push(FluxStencil {
+                face,
+                left,
+                right: cells.get(1).copied(),
+            });
+        }
+    }
+    stencils
+}
+
 /// One scalar degree of freedom in an element closure.
-///
-/// `point` identifies the mesh point that owns the DOF, while
-/// `local_dof` is the section-local slot after any orientation-dependent
-/// [`SectionSym`](crate::data::closure::SectionSym) permutation has been
-/// applied.  This is the unit consumed by high-order and tensor-product
-/// element kernels.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ClosureDof {
     /// Mesh point that owns this scalar DOF.
     pub point: PointId,
@@ -353,10 +600,6 @@ pub struct DofMap {
 
 impl DofMap {
     /// Build a scalar DOF map from an ordered list of points.
-    ///
-    /// This constructor preserves the historical scalar API where each point
-    /// owns one DOF.  Use [`from_closure_dofs`](Self::from_closure_dofs) when
-    /// point-local DOF slots matter.
     pub fn new(dofs: Vec<PointId>) -> Self {
         let closure_dofs: Vec<_> = dofs
             .iter()
@@ -406,9 +649,6 @@ impl DofMap {
     }
 
     /// Lookup the first index for a point.
-    ///
-    /// This method is kept for scalar assembly compatibility.  For high-order
-    /// sections with multiple DOFs per point, use [`slot_index`](Self::slot_index).
     pub fn index(&self, point: PointId) -> Option<usize> {
         self.first_point_indices.get(&point).copied()
     }
@@ -420,9 +660,6 @@ impl DofMap {
 }
 
 /// Build an assembly DOF map from a cached/un-cached DMPlex-style closure order.
-///
-/// Only points with section DOFs are included, and multi-DOF points appear once
-/// per scalar DOF in the flattened closure order.
 pub fn closure_dof_map<T, V, Sct>(
     topology: &T,
     section: &Section<V, Sct>,
@@ -479,6 +716,30 @@ pub fn assemble_local_vector<S: Storage<f64>>(
             )));
         }
         slice[0] += value;
+    }
+    Ok(())
+}
+
+/// Add a local vector contribution into a section using point/local-slot closure DOFs.
+pub fn assemble_local_vector_closure<S: Storage<f64>>(
+    section: &mut Section<f64, S>,
+    dofs: &[ClosureDof],
+    local: &[f64],
+) -> Result<(), MeshSieveError> {
+    if dofs.len() != local.len() {
+        return Err(MeshSieveError::InvalidGeometry(
+            "local vector length mismatch".to_string(),
+        ));
+    }
+    for (dof, value) in dofs.iter().zip(local.iter()) {
+        let slice = section.try_restrict_mut(dof.point)?;
+        if dof.local_dof >= slice.len() {
+            return Err(MeshSieveError::InvalidGeometry(format!(
+                "missing local DOF {} for {:?}",
+                dof.local_dof, dof.point
+            )));
+        }
+        slice[dof.local_dof] += value;
     }
     Ok(())
 }
@@ -543,6 +804,34 @@ pub fn cell_vertices<S: Sieve<Point = PointId>>(
     Ok(vertices)
 }
 
+/// Gather coordinate vectors for points.
+pub fn gather_point_coordinates<S: Storage<f64>>(
+    coordinates: &Coordinates<f64, S>,
+    points: &[PointId],
+) -> Result<Vec<Vec<f64>>, MeshSieveError> {
+    let mut coords = Vec::with_capacity(points.len());
+    for point in points {
+        coords.push(coordinates.section().try_restrict(*point)?.to_vec());
+    }
+    Ok(coords)
+}
+
+fn normalize_name(name: &str) -> String {
+    name.to_ascii_lowercase().replace(['-', ' '], "_")
+}
+
+fn parse_trailing_degree(name: &str) -> Option<usize> {
+    let digits: String = name
+        .chars()
+        .rev()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    (!digits.is_empty()).then(|| digits.parse().ok()).flatten()
+}
+
 fn tabulate_p1_segment(points: &[Vec<f64>]) -> Result<BasisTabulation, MeshSieveError> {
     let mut values = Vec::with_capacity(points.len());
     let mut gradients = Vec::with_capacity(points.len());
@@ -575,16 +864,271 @@ fn tabulate_q1_quad(points: &[Vec<f64>]) -> Result<BasisTabulation, MeshSieveErr
         let n3 = 0.25 * (1.0 + xi) * (1.0 + eta);
         let n4 = 0.25 * (1.0 - xi) * (1.0 + eta);
         values.push(vec![n1, n2, n3, n4]);
-
-        let dndxi = vec![
+        gradients.push(vec![
             vec![-0.25 * (1.0 - eta), -0.25 * (1.0 - xi)],
             vec![0.25 * (1.0 - eta), -0.25 * (1.0 + xi)],
             vec![0.25 * (1.0 + eta), 0.25 * (1.0 + xi)],
             vec![-0.25 * (1.0 + eta), 0.25 * (1.0 - xi)],
-        ];
-        gradients.push(dndxi);
+        ]);
     }
     Ok(BasisTabulation { values, gradients })
+}
+
+fn tabulate_lagrange(
+    cell_type: CellType,
+    degree: usize,
+    family: BasisFamily,
+    points: &[Vec<f64>],
+) -> Result<BasisTabulation, MeshSieveError> {
+    let nodes = reference_nodes(cell_type, degree, family)?;
+    let dim = cell_type.dimension() as usize;
+    for point in points {
+        if point.len() != dim {
+            return Err(MeshSieveError::InvalidGeometry(format!(
+                "quadrature point dimension {} does not match {dim}",
+                point.len()
+            )));
+        }
+    }
+    let exponents = monomial_exponents(dim, nodes.len());
+    let vandermonde: Vec<Vec<f64>> = nodes
+        .iter()
+        .map(|node| monomials(node, &exponents))
+        .collect();
+    let inv = invert_square(vandermonde)?;
+    let mut values = Vec::with_capacity(points.len());
+    let mut gradients = Vec::with_capacity(points.len());
+    for point in points {
+        let mons = monomials(point, &exponents);
+        let dmons = monomial_gradients(point, &exponents);
+        let mut vals = vec![0.0; nodes.len()];
+        let mut grads = vec![vec![0.0; dim]; nodes.len()];
+        for basis in 0..nodes.len() {
+            for m in 0..exponents.len() {
+                let coeff = inv[m][basis];
+                vals[basis] += coeff * mons[m];
+                for d in 0..dim {
+                    grads[basis][d] += coeff * dmons[m][d];
+                }
+            }
+        }
+        values.push(vals);
+        gradients.push(grads);
+    }
+    Ok(BasisTabulation { values, gradients })
+}
+
+fn reference_nodes(
+    cell_type: CellType,
+    degree: usize,
+    family: BasisFamily,
+) -> Result<Vec<Vec<f64>>, MeshSieveError> {
+    let p = degree;
+    let denom = p as f64;
+    let nodes = match (cell_type, family) {
+        (CellType::Segment, _) => (0..=p)
+            .map(|i| vec![-1.0 + 2.0 * i as f64 / denom])
+            .collect(),
+        (CellType::Triangle, BasisFamily::Simplex) => {
+            let mut out = Vec::new();
+            for i in 0..=p {
+                for j in 0..=p - i {
+                    out.push(vec![i as f64 / denom, j as f64 / denom]);
+                }
+            }
+            out
+        }
+        (CellType::Tetrahedron, BasisFamily::Simplex) => {
+            let mut out = Vec::new();
+            for i in 0..=p {
+                for j in 0..=p - i {
+                    for k in 0..=p - i - j {
+                        out.push(vec![i as f64 / denom, j as f64 / denom, k as f64 / denom]);
+                    }
+                }
+            }
+            out
+        }
+        (CellType::Quadrilateral, BasisFamily::TensorProduct) => tensor_nodes(2, p),
+        (CellType::Hexahedron, BasisFamily::TensorProduct) => tensor_nodes(3, p),
+        (CellType::Prism, BasisFamily::Prism) => {
+            let tri = reference_nodes(CellType::Triangle, p, BasisFamily::Simplex)?;
+            let seg = reference_nodes(CellType::Segment, p, BasisFamily::Simplex)?;
+            let mut out = Vec::new();
+            for t in &tri {
+                for z in &seg {
+                    out.push(vec![t[0], t[1], z[0]]);
+                }
+            }
+            out
+        }
+        (CellType::Pyramid, BasisFamily::Pyramid) => {
+            let mut out = Vec::new();
+            for k in 0..=p {
+                let layer = p - k;
+                let z = -1.0 + 2.0 * k as f64 / denom;
+                if layer == 0 {
+                    out.push(vec![0.0, 0.0, z]);
+                } else {
+                    for i in 0..=layer {
+                        for j in 0..=layer {
+                            let scale = layer as f64 / denom;
+                            out.push(vec![
+                                scale * (-1.0 + 2.0 * i as f64 / layer as f64),
+                                scale * (-1.0 + 2.0 * j as f64 / layer as f64),
+                                z,
+                            ]);
+                        }
+                    }
+                }
+            }
+            out
+        }
+        (CellType::Simplex(dim), BasisFamily::Simplex) if dim == 1 => {
+            reference_nodes(CellType::Segment, p, family)?
+        }
+        (CellType::Simplex(dim), BasisFamily::Simplex) if dim == 2 => {
+            reference_nodes(CellType::Triangle, p, family)?
+        }
+        (CellType::Simplex(dim), BasisFamily::Simplex) if dim == 3 => {
+            reference_nodes(CellType::Tetrahedron, p, family)?
+        }
+        _ => {
+            return Err(MeshSieveError::InvalidGeometry(format!(
+                "unsupported node layout for {cell_type:?} / {family:?}"
+            )));
+        }
+    };
+    Ok(nodes)
+}
+
+fn tensor_nodes(dim: usize, degree: usize) -> Vec<Vec<f64>> {
+    let mut out = Vec::new();
+    let mut cur = vec![0.0; dim];
+    fn rec(out: &mut Vec<Vec<f64>>, cur: &mut [f64], axis: usize, degree: usize) {
+        if axis == cur.len() {
+            out.push(cur.to_vec());
+            return;
+        }
+        for i in 0..=degree {
+            cur[axis] = -1.0 + 2.0 * i as f64 / degree as f64;
+            rec(out, cur, axis + 1, degree);
+        }
+    }
+    rec(&mut out, &mut cur, 0, degree);
+    out
+}
+
+fn monomial_exponents(dim: usize, count: usize) -> Vec<Vec<usize>> {
+    let mut exps = Vec::new();
+    let mut total = 0;
+    while exps.len() < count {
+        let mut cur = vec![0; dim];
+        gen_exponents_of_total(dim, total, 0, &mut cur, &mut exps, count);
+        total += 1;
+    }
+    exps
+}
+
+fn gen_exponents_of_total(
+    dim: usize,
+    total: usize,
+    axis: usize,
+    cur: &mut [usize],
+    out: &mut Vec<Vec<usize>>,
+    limit: usize,
+) {
+    if out.len() >= limit {
+        return;
+    }
+    if axis + 1 == dim {
+        cur[axis] = total;
+        out.push(cur.to_vec());
+        return;
+    }
+    for v in 0..=total {
+        cur[axis] = v;
+        gen_exponents_of_total(dim, total - v, axis + 1, cur, out, limit);
+    }
+}
+
+fn monomials(point: &[f64], exponents: &[Vec<usize>]) -> Vec<f64> {
+    exponents
+        .iter()
+        .map(|exp| {
+            point
+                .iter()
+                .zip(exp.iter())
+                .map(|(x, e)| x.powi(*e as i32))
+                .product()
+        })
+        .collect()
+}
+
+fn monomial_gradients(point: &[f64], exponents: &[Vec<usize>]) -> Vec<Vec<f64>> {
+    exponents
+        .iter()
+        .map(|exp| {
+            (0..point.len())
+                .map(|d| {
+                    if exp[d] == 0 {
+                        0.0
+                    } else {
+                        let mut value = exp[d] as f64;
+                        for (axis, (x, e)) in point.iter().zip(exp.iter()).enumerate() {
+                            let pow = if axis == d { e - 1 } else { *e };
+                            value *= x.powi(pow as i32);
+                        }
+                        value
+                    }
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn invert_square(mut a: Vec<Vec<f64>>) -> Result<Vec<Vec<f64>>, MeshSieveError> {
+    let n = a.len();
+    if a.iter().any(|row| row.len() != n) {
+        return Err(MeshSieveError::InvalidGeometry(
+            "non-square interpolation matrix".to_string(),
+        ));
+    }
+    let mut inv = vec![vec![0.0; n]; n];
+    for (i, row) in inv.iter_mut().enumerate() {
+        row[i] = 1.0;
+    }
+    for col in 0..n {
+        let pivot = (col..n)
+            .max_by(|&a_row, &b_row| a[a_row][col].abs().total_cmp(&a[b_row][col].abs()))
+            .unwrap();
+        if a[pivot][col].abs() < 1e-12 {
+            return Err(MeshSieveError::InvalidGeometry(
+                "singular interpolation matrix for basis nodes".to_string(),
+            ));
+        }
+        a.swap(col, pivot);
+        inv.swap(col, pivot);
+        let scale = a[col][col];
+        for j in 0..n {
+            a[col][j] /= scale;
+            inv[col][j] /= scale;
+        }
+        for r in 0..n {
+            if r == col {
+                continue;
+            }
+            let factor = a[r][col];
+            if factor == 0.0 {
+                continue;
+            }
+            for j in 0..n {
+                a[r][j] -= factor * a[col][j];
+                inv[r][j] -= factor * inv[col][j];
+            }
+        }
+    }
+    Ok(inv)
 }
 
 fn gauss_legendre_1d(order: usize, name: &str) -> QuadratureRule {
@@ -594,7 +1138,15 @@ fn gauss_legendre_1d(order: usize, name: &str) -> QuadratureRule {
             points: vec![vec![0.0]],
             weights: vec![2.0],
         },
-        2 => {
+        3 => {
+            let pt = (3.0_f64 / 5.0).sqrt();
+            QuadratureRule {
+                name: name.to_string(),
+                points: vec![vec![-pt], vec![0.0], vec![pt]],
+                weights: vec![5.0 / 9.0, 8.0 / 9.0, 5.0 / 9.0],
+            }
+        }
+        _ => {
             let pt = 1.0_f64 / 3.0_f64.sqrt();
             QuadratureRule {
                 name: name.to_string(),
@@ -602,31 +1154,89 @@ fn gauss_legendre_1d(order: usize, name: &str) -> QuadratureRule {
                 weights: vec![1.0, 1.0],
             }
         }
-        _ => QuadratureRule {
-            name: name.to_string(),
-            points: vec![],
-            weights: vec![],
-        },
     }
 }
 
-fn tensor_product_quadrature(a: &QuadratureRule, b: &QuadratureRule, name: &str) -> QuadratureRule {
-    let mut points = Vec::with_capacity(a.points.len() * b.points.len());
-    let mut weights = Vec::with_capacity(a.points.len() * b.points.len());
-    for (pa, wa) in a.points.iter().zip(a.weights.iter()) {
-        for (pb, wb) in b.points.iter().zip(b.weights.iter()) {
-            let mut pt = Vec::with_capacity(pa.len() + pb.len());
-            pt.extend_from_slice(pa);
-            pt.extend_from_slice(pb);
-            points.push(pt);
-            weights.push(wa * wb);
+fn tensor_power_quadrature(dim: usize, order: usize, name: &str) -> QuadratureRule {
+    let one = gauss_legendre_1d(order, name);
+    let mut points = vec![Vec::new()];
+    let mut weights = vec![1.0];
+    for _ in 0..dim {
+        let mut next_points = Vec::new();
+        let mut next_weights = Vec::new();
+        for (prefix, pw) in points.iter().zip(weights.iter()) {
+            for (p, w) in one.points.iter().zip(one.weights.iter()) {
+                let mut q = prefix.clone();
+                q.push(p[0]);
+                next_points.push(q);
+                next_weights.push(pw * w);
+            }
         }
+        points = next_points;
+        weights = next_weights;
     }
     QuadratureRule {
         name: name.to_string(),
         points,
         weights,
     }
+}
+
+fn simplex_quadrature(
+    dim: usize,
+    order: usize,
+    name: &str,
+) -> Result<QuadratureRule, MeshSieveError> {
+    match dim {
+        2 if order > 1 => Ok(QuadratureRule {
+            name: name.to_string(),
+            points: vec![
+                vec![1.0 / 6.0, 1.0 / 6.0],
+                vec![2.0 / 3.0, 1.0 / 6.0],
+                vec![1.0 / 6.0, 2.0 / 3.0],
+            ],
+            weights: vec![1.0 / 6.0, 1.0 / 6.0, 1.0 / 6.0],
+        }),
+        2 => Ok(QuadratureRule {
+            name: name.to_string(),
+            points: vec![vec![1.0 / 3.0, 1.0 / 3.0]],
+            weights: vec![0.5],
+        }),
+        3 => Ok(QuadratureRule {
+            name: name.to_string(),
+            points: vec![vec![0.25, 0.25, 0.25]],
+            weights: vec![1.0 / 6.0],
+        }),
+        _ => Err(MeshSieveError::InvalidGeometry(format!(
+            "unsupported simplex quadrature dimension {dim}"
+        ))),
+    }
+}
+
+fn prism_quadrature(order: usize, name: &str) -> Result<QuadratureRule, MeshSieveError> {
+    let tri = simplex_quadrature(2, order, name)?;
+    let seg = gauss_legendre_1d(order.min(3), name);
+    let mut points = Vec::new();
+    let mut weights = Vec::new();
+    for (tp, tw) in tri.points.iter().zip(tri.weights.iter()) {
+        for (sp, sw) in seg.points.iter().zip(seg.weights.iter()) {
+            points.push(vec![tp[0], tp[1], sp[0]]);
+            weights.push(tw * sw);
+        }
+    }
+    Ok(QuadratureRule {
+        name: name.to_string(),
+        points,
+        weights,
+    })
+}
+
+fn pyramid_quadrature(_order: usize, name: &str) -> Result<QuadratureRule, MeshSieveError> {
+    Ok(QuadratureRule {
+        name: name.to_string(),
+        points: vec![vec![0.0, 0.0, -0.5]],
+        weights: vec![8.0 / 3.0],
+    })
 }
 
 fn build_jacobian(
@@ -702,4 +1312,77 @@ fn invert_jacobian(dim: usize, jac: &[f64]) -> Result<(f64, Vec<f64>), MeshSieve
             "unsupported Jacobian dimension {dim}"
         ))),
     }
+}
+
+fn polygon_area(vertices: &[Vec<f64>]) -> f64 {
+    if vertices.len() < 3 {
+        return 0.0;
+    }
+    let mut area = 0.0;
+    for i in 0..vertices.len() {
+        let j = (i + 1) % vertices.len();
+        area += vertices[i][0] * vertices[j][1] - vertices[j][0] * vertices[i][1];
+    }
+    0.5 * area.abs()
+}
+
+fn bounding_box_volume(vertices: &[Vec<f64>]) -> f64 {
+    let mut mins = vec![f64::INFINITY; 3];
+    let mut maxs = vec![f64::NEG_INFINITY; 3];
+    for v in vertices {
+        for d in 0..3 {
+            mins[d] = mins[d].min(v[d]);
+            maxs[d] = maxs[d].max(v[d]);
+        }
+    }
+    (0..3).map(|d| maxs[d] - mins[d]).product::<f64>().abs()
+}
+
+fn sub(a: &[f64], b: &[f64]) -> Vec<f64> {
+    a.iter().zip(b.iter()).map(|(x, y)| x - y).collect()
+}
+
+fn norm(v: &[f64]) -> f64 {
+    v.iter().map(|x| x * x).sum::<f64>().sqrt()
+}
+
+/// Build a CSR row/column structure from element closure DOFs.
+pub fn csr_from_element_dof_maps(maps: impl IntoIterator<Item = DofMap>) -> CsrPattern {
+    let mut rows: HashMap<ClosureDof, BTreeSet<ClosureDof>> = HashMap::new();
+    for map in maps {
+        let dofs = map.closure_dofs().to_vec();
+        for row in &dofs {
+            let cols = rows.entry(*row).or_default();
+            for col in &dofs {
+                cols.insert(*col);
+            }
+        }
+    }
+    let mut row_dofs: Vec<_> = rows.keys().copied().collect();
+    row_dofs.sort_unstable();
+    let mut xadj = Vec::with_capacity(row_dofs.len() + 1);
+    let mut adjncy = Vec::new();
+    xadj.push(0);
+    for row in &row_dofs {
+        if let Some(cols) = rows.get(row) {
+            adjncy.extend(cols.iter().copied());
+        }
+        xadj.push(adjncy.len());
+    }
+    CsrPattern {
+        xadj,
+        adjncy,
+        rows: row_dofs,
+    }
+}
+
+/// Symbolic CSR pattern over closure DOF rows and columns.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CsrPattern {
+    /// CSR offsets by row.
+    pub xadj: Vec<usize>,
+    /// CSR columns as closure DOFs.
+    pub adjncy: Vec<ClosureDof>,
+    /// Row closure DOFs.
+    pub rows: Vec<ClosureDof>,
 }

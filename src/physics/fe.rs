@@ -1,8 +1,13 @@
 //! Finite-element utilities for evaluation and assembly.
 
-use crate::data::closure::{ClosureOrder, IdentitySectionSym, build_closure_index_unoriented};
+use crate::data::closure::{
+    ClosureOrder, IdentitySectionSym, SectionSym, build_closure_index,
+    build_closure_index_unoriented, get_closure,
+};
 use crate::data::coordinates::Coordinates;
 use crate::data::discretization::DiscretizationMetadata;
+use crate::data::global_map::LocalToGlobalMap;
+use crate::data::section::Section;
 use crate::data::storage::Storage;
 use crate::discretization::runtime::{
     Basis, BasisTabulation, QuadratureRule, local_load_vector, local_stiffness_matrix,
@@ -11,7 +16,7 @@ use crate::discretization::runtime::{
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cell_type::CellType;
 use crate::topology::point::PointId;
-use crate::topology::sieve::Sieve;
+use crate::topology::sieve::{Orientation, OrientedSieve, Sieve};
 
 /// Basis and quadrature evaluation on the reference element.
 #[derive(Clone, Debug)]
@@ -140,4 +145,81 @@ where
         }
     }
     assemble_element_matrices(coordinates, cell_type, &cell_nodes, metadata, rhs)
+}
+
+/// Orientation-aware FE closure data for element kernels.
+#[derive(Clone, Debug)]
+pub struct ElementClosureData<V> {
+    /// Cell whose closure was extracted.
+    pub cell: PointId,
+    /// Flattened closure values after applying point orientation symmetries.
+    pub values: Vec<V>,
+    /// Local point/slot to global-index map for each closure scalar DOF, when provided.
+    pub global_indices: Option<Vec<u64>>,
+}
+
+/// Extract closure values for a FE cell using DMPLEX-like ordering.
+pub fn extract_element_closure<T, V, Sct>(
+    topology: &T,
+    section: &Section<V, Sct>,
+    cell: PointId,
+    topology_version: u64,
+    order: &ClosureOrder,
+) -> Result<ElementClosureData<V>, MeshSieveError>
+where
+    T: Sieve<Point = PointId>,
+    V: Clone,
+    Sct: Storage<V>,
+{
+    let index = build_closure_index_unoriented(
+        topology,
+        section,
+        cell,
+        topology_version,
+        order,
+        &IdentitySectionSym,
+    )?;
+    let values = get_closure(section, &index)?;
+    Ok(ElementClosureData {
+        cell,
+        values,
+        global_indices: None,
+    })
+}
+
+/// Extract oriented closure values and optional global indices for a FE cell.
+pub fn extract_oriented_element_closure<T, V, Sct, O, Sym>(
+    topology: &T,
+    section: &Section<V, Sct>,
+    global_map: Option<&LocalToGlobalMap>,
+    cell: PointId,
+    topology_version: u64,
+    order: &ClosureOrder,
+    sym: &Sym,
+) -> Result<ElementClosureData<V>, MeshSieveError>
+where
+    T: OrientedSieve<Point = PointId, Orient = O>,
+    V: Clone,
+    Sct: Storage<V>,
+    O: Orientation + Eq + std::hash::Hash,
+    Sym: SectionSym<O>,
+{
+    let index = build_closure_index(topology, section, cell, topology_version, order, sym)?;
+    let values = get_closure(section, &index)?;
+    let global_indices = if let Some(map) = global_map {
+        let mut indices = Vec::with_capacity(index.len);
+        for entry in &index.points {
+            for &local_dof in &entry.permutation {
+                indices.push(map.global_index(entry.point, local_dof)?);
+            }
+        }
+        Some(indices)
+    } else {
+        None
+    };
+    Ok(ElementClosureData {
+        cell,
+        values,
+        global_indices,
+    })
 }

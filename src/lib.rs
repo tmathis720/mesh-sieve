@@ -77,6 +77,10 @@ pub mod prelude {
     pub use crate::algs::assembly::{
         AssemblyCommTags, assemble_section_with_ownership, assemble_section_with_tags_and_ownership,
     };
+    pub use crate::algs::assembly::{
+        GlobalCsrPattern, cell_closure_dof_map, global_preallocation_csr_from_closure,
+        oriented_cell_closure_dof_map, preallocation_csr_from_closure,
+    };
     pub use crate::algs::communicator::Communicator;
     #[cfg(feature = "mpi-support")]
     pub use crate::algs::communicator::MpiComm;
@@ -129,9 +133,12 @@ pub mod prelude {
     pub use crate::data::section::Section;
     pub use crate::debug_invariants::DebugInvariants;
     pub use crate::discretization::runtime::{
-        Basis, DofMap, ElementRuntime, ElementTabulation, QuadratureRule, assemble_local_matrix,
-        assemble_local_vector, cell_vertices, local_load_vector, local_stiffness_matrix,
-        runtime_from_metadata, tabulate_element,
+        Basis, BasisFamily, CellGeometry, ClosureDof, CsrPattern, DofMap, ElementRuntime,
+        ElementTabulation, FaceGeometry, FiniteVolumeMetadata, FluxStencil, QuadratureRule,
+        assemble_local_matrix, assemble_local_vector, assemble_local_vector_closure,
+        cell_geometry_from_vertices, cell_vertices, csr_from_element_dof_maps,
+        face_geometry_from_vertices, flux_stencils, gather_point_coordinates, local_load_vector,
+        local_stiffness_matrix, runtime_from_metadata, tabulate_element,
     };
     pub use crate::dm::{
         MeshDM, MeshDMBuilder, MeshDMDistribution, MeshDMOptions, MeshVector, PreallocationGraph,
@@ -140,8 +147,9 @@ pub mod prelude {
     pub use crate::overlap::delta::{AddDelta, CopyDelta, ValueDelta};
     pub use crate::overlap::overlap::Overlap;
     pub use crate::physics::fe::{
-        ElementMatrices, ReferenceElementEvaluation, assemble_element_matrices,
-        evaluate_reference_element, integrate_reference_scalar,
+        ElementClosureData, ElementMatrices, ReferenceElementEvaluation, assemble_element_matrices,
+        evaluate_reference_element, extract_element_closure, extract_oriented_element_closure,
+        integrate_reference_scalar,
     };
     pub use crate::topology::bounds::{PayloadLike, PointLike};
     pub use crate::topology::cell_type::CellType;

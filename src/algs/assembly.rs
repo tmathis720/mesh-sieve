@@ -109,3 +109,147 @@ where
         constraints,
     )
 }
+
+use crate::data::closure::{
+    ClosureOrder, IdentitySectionSym, SectionSym, build_closure_index,
+    build_closure_index_unoriented,
+};
+use crate::data::global_map::LocalToGlobalMap;
+use crate::discretization::runtime::{ClosureDof, CsrPattern, DofMap, dof_map_from_closure_index};
+use crate::topology::point::PointId;
+use crate::topology::sieve::{Orientation, OrientedSieve, Sieve};
+use std::collections::{BTreeSet, HashMap};
+
+/// Extract an orientation-correct closure DOF map for one cell.
+pub fn cell_closure_dof_map<T, V, Sct>(
+    topology: &T,
+    section: &Section<V, Sct>,
+    cell: PointId,
+    topology_version: u64,
+    order: &ClosureOrder,
+) -> Result<DofMap, MeshSieveError>
+where
+    T: Sieve<Point = PointId>,
+    Sct: Storage<V>,
+{
+    let index = build_closure_index_unoriented(
+        topology,
+        section,
+        cell,
+        topology_version,
+        order,
+        &IdentitySectionSym,
+    )?;
+    Ok(dof_map_from_closure_index(&index))
+}
+
+/// Extract an oriented closure DOF map using a caller-provided symmetry table.
+pub fn oriented_cell_closure_dof_map<T, V, Sct, O, Sym>(
+    topology: &T,
+    section: &Section<V, Sct>,
+    cell: PointId,
+    topology_version: u64,
+    order: &ClosureOrder,
+    sym: &Sym,
+) -> Result<DofMap, MeshSieveError>
+where
+    T: OrientedSieve<Point = PointId, Orient = O>,
+    Sct: Storage<V>,
+    O: Orientation + Eq + std::hash::Hash,
+    Sym: SectionSym<O>,
+{
+    let index = build_closure_index(topology, section, cell, topology_version, order, sym)?;
+    Ok(dof_map_from_closure_index(&index))
+}
+
+/// Sparse matrix preallocation pattern from cells and a local section.
+pub fn preallocation_csr_from_closure<T, V, Sct>(
+    topology: &T,
+    section: &Section<V, Sct>,
+    cells: impl IntoIterator<Item = PointId>,
+    topology_version: u64,
+    order: &ClosureOrder,
+) -> Result<CsrPattern, MeshSieveError>
+where
+    T: Sieve<Point = PointId>,
+    Sct: Storage<V>,
+{
+    let mut rows: HashMap<ClosureDof, BTreeSet<ClosureDof>> = HashMap::new();
+    for cell in cells {
+        let map = cell_closure_dof_map(topology, section, cell, topology_version, order)?;
+        let dofs = map.closure_dofs().to_vec();
+        for row in &dofs {
+            rows.entry(*row).or_default().extend(dofs.iter().copied());
+        }
+    }
+    Ok(csr_from_rows(rows))
+}
+
+/// Sparse matrix preallocation pattern in global-numbered CSR columns.
+pub fn global_preallocation_csr_from_closure<T, V, Sct>(
+    topology: &T,
+    section: &Section<V, Sct>,
+    global_map: &LocalToGlobalMap,
+    cells: impl IntoIterator<Item = PointId>,
+    topology_version: u64,
+    order: &ClosureOrder,
+) -> Result<GlobalCsrPattern, MeshSieveError>
+where
+    T: Sieve<Point = PointId>,
+    Sct: Storage<V>,
+{
+    let local = preallocation_csr_from_closure(topology, section, cells, topology_version, order)?;
+    let rows = local
+        .rows
+        .iter()
+        .map(|dof| {
+            global_map
+                .global_index(dof.point, dof.local_dof)
+                .map(|g| g as usize)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let adjncy = local
+        .adjncy
+        .iter()
+        .map(|dof| {
+            global_map
+                .global_index(dof.point, dof.local_dof)
+                .map(|g| g as usize)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(GlobalCsrPattern {
+        xadj: local.xadj,
+        adjncy,
+        rows,
+    })
+}
+
+/// Global-numbered CSR sparsity pattern for solver matrix preallocation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GlobalCsrPattern {
+    /// CSR row offsets.
+    pub xadj: Vec<usize>,
+    /// Global column indices.
+    pub adjncy: Vec<usize>,
+    /// Global row indices represented by each CSR row.
+    pub rows: Vec<usize>,
+}
+
+fn csr_from_rows(mut rows: HashMap<ClosureDof, BTreeSet<ClosureDof>>) -> CsrPattern {
+    let mut row_dofs: Vec<_> = rows.keys().copied().collect();
+    row_dofs.sort_unstable();
+    let mut xadj = Vec::with_capacity(row_dofs.len() + 1);
+    let mut adjncy = Vec::new();
+    xadj.push(0);
+    for row in &row_dofs {
+        if let Some(cols) = rows.remove(row) {
+            adjncy.extend(cols);
+        }
+        xadj.push(adjncy.len());
+    }
+    CsrPattern {
+        xadj,
+        adjncy,
+        rows: row_dofs,
+    }
+}
