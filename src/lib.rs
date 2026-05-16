@@ -125,7 +125,7 @@ pub mod prelude {
     pub use crate::data::global_map::LocalToGlobalMap;
     pub use crate::data::hanging_node_constraints::{
         HangingDofConstraint, HangingNodeConstraints, LinearConstraintTerm,
-        apply_hanging_constraints_to_section,
+        apply_hanging_constraints_to_section, constraints_from_topological_anchors,
     };
     pub use crate::data::multi_section::{FieldSection, MultiSection};
     #[cfg(feature = "map-adapter")]
