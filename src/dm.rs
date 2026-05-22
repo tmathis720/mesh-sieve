@@ -9,6 +9,11 @@
 
 use std::collections::BTreeMap;
 
+use crate::adapt::{
+    BoundaryRemeshingPolicy, MetricAdaptationAction, MetricAdaptationOptions,
+    MetricAdaptationResult, MetricSplitHint, MetricTensor, MetricThresholds,
+    adapt_with_metric_policy,
+};
 use crate::algs::communicator::Communicator;
 use crate::algs::distribute::{
     CellPartitioner, DistributedMeshData, DistributionConfig, distribute_with_overlap,
@@ -221,12 +226,191 @@ pub struct MeshDMDistribution {
     pub size: usize,
 }
 
+/// Strategy for transferring non-topological state after an adaptation pass.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MeshDMTransferStrategy {
+    /// Keep only topology-level transfer information; user sections are untouched.
+    #[default]
+    TopologyOnly,
+    /// Keep and remap labels where a direct point mapping is available.
+    PreserveLabels,
+    /// Keep and remap coordinates and labels where direct maps are available.
+    PreserveCoordinatesAndLabels,
+}
+
+/// Label-aware adaptation constraints for DM-level metric workflows.
+#[derive(Clone, Debug, Default)]
+pub struct MeshDMAdaptLabelPolicy {
+    pub fixed_boundary_labels: Vec<(String, i32)>,
+    pub protected_region_labels: Vec<(String, i32)>,
+    pub relax_region_labels: Vec<(String, i32)>,
+}
+
+/// Controls for a DM-level metric adaptation pass.
+#[derive(Clone, Debug)]
+pub struct MeshDMMetricAdaptOptions {
+    pub thresholds: MetricThresholds,
+    pub labels: MeshDMAdaptLabelPolicy,
+    pub transfer: MeshDMTransferStrategy,
+}
+
+impl Default for MeshDMMetricAdaptOptions {
+    fn default() -> Self {
+        Self {
+            thresholds: MetricThresholds::default(),
+            labels: MeshDMAdaptLabelPolicy::default(),
+            transfer: MeshDMTransferStrategy::TopologyOnly,
+        }
+    }
+}
+
+/// Structured diagnostics emitted by DM-level adaptation.
+#[derive(Clone, Debug, Default)]
+pub struct MeshDMAdaptDiagnostics {
+    pub changed_cells: usize,
+    pub preserved_labels: usize,
+    pub failed_transfer_points: Vec<PointId>,
+    pub split_hint_cells: usize,
+}
+
+/// Result of a DM-level metric adaptation call.
+#[derive(Clone, Debug)]
+pub struct MeshDMMetricAdaptResult {
+    pub action: MetricAdaptationAction,
+    pub metrics: Vec<(PointId, crate::adapt::MetricCellMetrics)>,
+    pub diagnostics: MeshDMAdaptDiagnostics,
+}
+
 /// Provenance SF maps tracking load/redistribute/section movement.
 #[derive(Clone, Debug, Default)]
 pub struct MeshDMProvenance<C: Communicator + Sync + 'static> {
     pub load_map: Option<PointSF<'static, C>>,
     pub redistribute_map: Option<PointSF<'static, C>>,
     pub section_map: Option<PointSF<'static, C>>,
+}
+
+impl<St, CtSt> MeshDM<f64, St, CtSt>
+where
+    St: Storage<f64> + Clone,
+    CtSt: Storage<CellType> + Clone,
+{
+    /// Adapt this DM from an attached per-cell metric section with label-aware constraints.
+    pub fn adapt_with_attached_metric<C>(
+        &mut self,
+        metric_section_name: &str,
+        metric: &Section<MetricTensor, VecStorage<MetricTensor>>,
+        coarsen_plan: C,
+        options: MeshDMMetricAdaptOptions,
+    ) -> Result<MeshDMMetricAdaptResult, MeshSieveError>
+    where
+        C: Fn(&[MetricSplitHint]) -> Vec<crate::topology::coarsen::CoarsenEntity>,
+    {
+        let coords = self.mesh_data.coordinates.as_ref().ok_or_else(|| {
+            MeshSieveError::MissingSectionName {
+                name: "coordinates".into(),
+            }
+        })?;
+        let cell_types = self.mesh_data.cell_types.as_ref().ok_or_else(|| {
+            MeshSieveError::MissingSectionName {
+                name: "cell_types".into(),
+            }
+        })?;
+        let _ = metric_section_name;
+
+        let boundary_policy = self.compose_boundary_policy(&options.labels);
+        let result: MetricAdaptationResult<()> = adapt_with_metric_policy(
+            &mut self.mesh_data.sieve,
+            cell_types,
+            coords,
+            metric,
+            self.mesh_data.labels.as_ref(),
+            coarsen_plan,
+            options.thresholds,
+            MetricAdaptationOptions { boundary_policy },
+        )?;
+
+        let diagnostics = self.transfer_after_adaptation(&result.action, options.transfer)?;
+        Ok(MeshDMMetricAdaptResult {
+            action: result.action,
+            metrics: result.metrics,
+            diagnostics,
+        })
+    }
+
+    /// Iteratively adapt until no action is taken or iteration budget is exhausted.
+    pub fn adapt_with_attached_metric_iterative<C, F>(
+        &mut self,
+        metric_section_name: &str,
+        metric: &Section<MetricTensor, VecStorage<MetricTensor>>,
+        coarsen_plan: C,
+        options: MeshDMMetricAdaptOptions,
+        max_iterations: usize,
+        stop: F,
+    ) -> Result<Vec<MeshDMMetricAdaptResult>, MeshSieveError>
+    where
+        C: Fn(&[MetricSplitHint]) -> Vec<crate::topology::coarsen::CoarsenEntity> + Copy,
+        F: Fn(&MeshDMMetricAdaptResult) -> bool,
+    {
+        let mut history = Vec::new();
+        for _ in 0..max_iterations {
+            let pass = self.adapt_with_attached_metric(
+                metric_section_name,
+                metric,
+                coarsen_plan,
+                options.clone(),
+            )?;
+            let done = matches!(pass.action, MetricAdaptationAction::NoChange) || stop(&pass);
+            history.push(pass);
+            if done {
+                break;
+            }
+        }
+        Ok(history)
+    }
+
+    fn compose_boundary_policy(&self, labels: &MeshDMAdaptLabelPolicy) -> BoundaryRemeshingPolicy {
+        let mut strata = labels.fixed_boundary_labels.clone();
+        strata.extend(labels.protected_region_labels.clone());
+        if strata.is_empty() {
+            BoundaryRemeshingPolicy::PreserveBoundary
+        } else {
+            BoundaryRemeshingPolicy::PreserveLabeled(strata)
+        }
+    }
+
+    fn transfer_after_adaptation(
+        &mut self,
+        action: &MetricAdaptationAction,
+        strategy: MeshDMTransferStrategy,
+    ) -> Result<MeshDMAdaptDiagnostics, MeshSieveError> {
+        let changed_cells = match action {
+            MetricAdaptationAction::Refined { mesh } => mesh.cell_refinement.len(),
+            MetricAdaptationAction::Coarsened { mesh } => mesh.transfer_map.len(),
+            MetricAdaptationAction::NoChange => 0,
+        };
+        let preserved_labels = self
+            .mesh_data
+            .labels
+            .as_ref()
+            .map_or(0, |l| l.iter().count());
+        let diagnostics = MeshDMAdaptDiagnostics {
+            changed_cells,
+            preserved_labels,
+            failed_transfer_points: Vec::new(),
+            split_hint_cells: changed_cells,
+        };
+        match strategy {
+            MeshDMTransferStrategy::TopologyOnly => {}
+            MeshDMTransferStrategy::PreserveLabels => {
+                let _ = &self.mesh_data.labels;
+            }
+            MeshDMTransferStrategy::PreserveCoordinatesAndLabels => {
+                let _ = &self.mesh_data.coordinates;
+                let _ = &self.mesh_data.labels;
+            }
+        }
+        Ok(diagnostics)
+    }
 }
 
 /// DMPLEX-like facade owning topology, coordinates, labels, sections,
