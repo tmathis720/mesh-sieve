@@ -287,6 +287,9 @@ pub struct MeshDMProvenance<C: Communicator + Sync + 'static> {
     pub load_map: Option<PointSF<'static, C>>,
     pub redistribute_map: Option<PointSF<'static, C>>,
     pub section_map: Option<PointSF<'static, C>>,
+    pub storage_version: Option<i32>,
+    pub permutation_source: Option<String>,
+    pub redistribution_map_id: Option<String>,
 }
 
 impl<St, CtSt> MeshDM<f64, St, CtSt>
@@ -814,6 +817,9 @@ where
                 load_map: None,
                 redistribute_map: Some(redistribute_map),
                 section_map: None,
+                storage_version: None,
+                permutation_source: None,
+                redistribution_map_id: None,
             },
         }
     }

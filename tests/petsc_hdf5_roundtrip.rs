@@ -3,7 +3,8 @@ use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::section::Section;
 use mesh_sieve::data::storage::VecStorage;
 use mesh_sieve::io::petsc_hdf5::{
-    DMPLEX_STORAGE_VERSION, PetscHdf5Reader, PetscHdf5Writer, read_mesh_from_petsc_hdf5,
+    DMPLEX_STORAGE_VERSION, PetscHdf5Reader, PetscHdf5Writer, PetscLoadFilter, PetscLoadMode,
+    PetscLoadOptions, read_mesh_from_petsc_hdf5, read_mesh_from_petsc_hdf5_with_options,
     write_mesh_to_petsc_hdf5,
 };
 use mesh_sieve::io::{MeshData, SieveSectionReader, SieveSectionWriter};
@@ -167,5 +168,46 @@ fn partitioned_fixture_preserves_point_order_sections_and_labels() {
             .stratum_points("partition", 1),
         vec![p(6)]
     );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn partial_section_load_by_pattern_and_label_subset() {
+    let mesh = fixture_mesh(true);
+    let path = std::env::temp_dir().join("mesh_sieve_partial_load_fixture.h5");
+    let _ = std::fs::remove_file(&path);
+    let file = File::create(&path).unwrap();
+    write_mesh_to_petsc_hdf5(&file, &mesh, "mesh", "dm").unwrap();
+    let opts = PetscLoadOptions {
+        mode: PetscLoadMode::Strict,
+        filter: PetscLoadFilter {
+            section_name_patterns: vec!["u".into()],
+            label_subset: Some(("marker".into(), 1)),
+        },
+    };
+    let (loaded, _prov) =
+        read_mesh_from_petsc_hdf5_with_options(&file, "mesh", "dm", &opts).unwrap();
+    assert_eq!(loaded.sections["u"].gather_in_order(), vec![10.0, 30.0]);
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn permissive_mode_tolerates_vector_layout_mismatch() {
+    let mesh = fixture_mesh(false);
+    let path = std::env::temp_dir().join("mesh_sieve_permissive_fixture.h5");
+    let _ = std::fs::remove_file(&path);
+    let file = File::create(&path).unwrap();
+    write_mesh_to_petsc_hdf5(&file, &mesh, "mesh", "dm").unwrap();
+    file.dataset("/topologies/mesh/dms/dm/section/u/dofs")
+        .unwrap()
+        .write(&[1i32, 2, 1])
+        .unwrap();
+    let strict = read_mesh_from_petsc_hdf5(&file, "mesh", "dm");
+    assert!(strict.is_err());
+    let permissive = PetscLoadOptions {
+        mode: PetscLoadMode::Permissive,
+        filter: PetscLoadFilter::default(),
+    };
+    assert!(read_mesh_from_petsc_hdf5_with_options(&file, "mesh", "dm", &permissive).is_ok());
     let _ = std::fs::remove_file(&path);
 }
