@@ -1,10 +1,13 @@
 //! MultiSection: group multiple field sections with shared point offsets.
 
 use crate::data::atlas::Atlas;
-use crate::data::constrained_section::{DofConstraint, apply_constraints_to_section};
+use crate::data::constrained_section::{
+    ConstrainedSection, DofConstraint, LabelConstraintSpec, apply_constraints_to_section,
+};
 use crate::data::section::Section;
 use crate::data::storage::Storage;
 use crate::mesh_error::MeshSieveError;
+use crate::topology::labels::LabelSet;
 use crate::topology::point::PointId;
 use std::collections::{BTreeMap, HashSet};
 
@@ -14,6 +17,43 @@ pub struct FieldSection<V, S: Storage<V>> {
     name: String,
     section: Section<V, S>,
     constraints: BTreeMap<PointId, Vec<DofConstraint<V>>>,
+}
+
+/// Build a constrained section from explicit per-point dofs and label constraints.
+pub fn constrained_section_from_label_specs<V, S>(
+    point_dofs: &[(PointId, usize)],
+    labels: &LabelSet,
+    specs: &[LabelConstraintSpec],
+) -> Result<ConstrainedSection<V, S>, MeshSieveError>
+where
+    V: Clone + Default,
+    S: Storage<V> + Clone,
+{
+    let mut atlas = Atlas::default();
+    for (p, dof) in point_dofs {
+        atlas.try_insert(*p, *dof)?;
+    }
+    let section = Section::<V, S>::new(atlas);
+    let mut constrained = ConstrainedSection::new(section);
+    for spec in specs {
+        for p in labels.stratum_points(&spec.label, spec.value) {
+            let len = constrained
+                .section()
+                .atlas()
+                .get(p)
+                .map(|(_, l)| l)
+                .unwrap_or(0);
+            if len == 0 {
+                continue;
+            }
+            for &c in &spec.components {
+                if c < len {
+                    constrained.insert_constraint(p, c, V::default())?;
+                }
+            }
+        }
+    }
+    Ok(constrained)
 }
 
 impl<V, S> FieldSection<V, S>
@@ -354,7 +394,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{FieldSection, MultiSection};
+    use super::{FieldSection, MultiSection, constrained_section_from_label_specs};
     use crate::data::atlas::Atlas;
     use crate::data::section::Section;
     use crate::data::storage::VecStorage;
@@ -426,5 +466,27 @@ mod tests {
         assert_eq!(multi.field_dof(p3, 0).unwrap(), 0);
         assert_eq!(multi.field_dof_by_name(p3, "pressure").unwrap(), 1);
         assert_eq!(multi.field_offset_by_name(p3, "pressure").unwrap(), 6);
+    }
+
+    #[test]
+    fn constrained_layout_from_labels() {
+        use crate::data::constrained_section::LabelConstraintSpec;
+        use crate::topology::labels::LabelSet;
+
+        let p1 = PointId::new(1).unwrap();
+        let p2 = PointId::new(2).unwrap();
+        let mut labels = LabelSet::new();
+        labels.set_label(p2, "boundary", 1);
+        let cs = constrained_section_from_label_specs::<f64, VecStorage<f64>>(
+            &[(p1, 3), (p2, 3)],
+            &labels,
+            &[LabelConstraintSpec::new("boundary", 1, vec![0, 2])],
+        )
+        .unwrap();
+        assert_eq!(cs.section().atlas().total_len(), 6);
+        let c = cs.constraints().get(&p2).unwrap();
+        assert_eq!(c.len(), 2);
+        assert_eq!(c[0].index, 0);
+        assert_eq!(c[1].index, 2);
     }
 }

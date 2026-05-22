@@ -21,6 +21,15 @@ pub struct LabelSet {
     labels: HashMap<String, HashMap<PointId, i32>>,
 }
 
+/// Deterministic iteration order contract for label strata.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LabelIterationOrder {
+    /// Sort by `PointId` only.
+    PointAscending,
+    /// Sort by label value ascending, then `PointId`.
+    ValueThenPointAscending,
+}
+
 impl LabelSet {
     /// Creates an empty label set.
     pub fn new() -> Self {
@@ -221,6 +230,104 @@ impl LabelSet {
             map.iter()
                 .map(move |(&point, &value)| (name.as_str(), point, value))
         })
+    }
+
+    /// Apply a label to the closure of a set of seed points.
+    pub fn apply_to_closure<S>(
+        &mut self,
+        sieve: &S,
+        name: &str,
+        value: i32,
+        seeds: impl IntoIterator<Item = PointId>,
+    ) where
+        S: Sieve<Point = PointId>,
+    {
+        for point in sieve.closure_iter(seeds) {
+            self.set_label(point, name, value);
+        }
+    }
+
+    /// Apply a label to the star/support of a set of seed points.
+    pub fn apply_to_star<S>(
+        &mut self,
+        sieve: &S,
+        name: &str,
+        value: i32,
+        seeds: impl IntoIterator<Item = PointId>,
+    ) where
+        S: Sieve<Point = PointId>,
+    {
+        for point in sieve.star_iter(seeds) {
+            self.set_label(point, name, value);
+        }
+    }
+
+    /// Copy all points in `src_name/src_value` into `dst_name/dst_value`.
+    pub fn union_into(
+        &mut self,
+        other: &LabelSet,
+        src_name: &str,
+        src_value: i32,
+        dst_name: &str,
+        dst_value: i32,
+    ) {
+        for point in other.stratum_points(src_name, src_value) {
+            self.set_label(point, dst_name, dst_value);
+        }
+    }
+
+    /// Intersect current `dst_name/dst_value` with `other/src_name/src_value`.
+    pub fn intersect_with(
+        &mut self,
+        other: &LabelSet,
+        src_name: &str,
+        src_value: i32,
+        dst_name: &str,
+        dst_value: i32,
+    ) {
+        let keep: HashSet<PointId> = other
+            .stratum_points(src_name, src_value)
+            .into_iter()
+            .collect();
+        let to_remove: Vec<PointId> = self
+            .stratum_points(dst_name, dst_value)
+            .into_iter()
+            .filter(|p| !keep.contains(p))
+            .collect();
+        for p in to_remove {
+            if let Some(map) = self.labels.get_mut(dst_name) {
+                map.remove(&p);
+            }
+        }
+    }
+
+    /// Subtract points in `other/src_name/src_value` from `dst_name/dst_value`.
+    pub fn subtract(
+        &mut self,
+        other: &LabelSet,
+        src_name: &str,
+        src_value: i32,
+        dst_name: &str,
+        dst_value: i32,
+    ) {
+        let remove: HashSet<PointId> = other
+            .stratum_points(src_name, src_value)
+            .into_iter()
+            .collect();
+        for p in remove {
+            if self.get_label(p, dst_name) == Some(dst_value) {
+                if let Some(map) = self.labels.get_mut(dst_name) {
+                    map.remove(&p);
+                }
+            }
+        }
+    }
+
+    /// Remap all points in one stratum value to another.
+    pub fn remap_value(&mut self, name: &str, from: i32, to: i32) {
+        for p in self.stratum_points(name, from) {
+            self.set_label(p, name, to);
+        }
     }
 }
 

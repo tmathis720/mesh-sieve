@@ -10,6 +10,28 @@ use crate::topology::cache::InvalidateCache;
 use crate::topology::point::PointId;
 use std::collections::BTreeMap;
 
+/// Label-based boundary constraint specification for section construction.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LabelConstraintSpec {
+    /// Label name.
+    pub label: String,
+    /// Label value.
+    pub value: i32,
+    /// Component indices constrained when label matches.
+    pub components: Vec<usize>,
+}
+
+impl LabelConstraintSpec {
+    /// Create a new spec.
+    pub fn new(label: impl Into<String>, value: i32, components: Vec<usize>) -> Self {
+        Self {
+            label: label.into(),
+            value,
+            components,
+        }
+    }
+}
+
 /// A single constrained degree of freedom within a point slice.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DofConstraint<V> {

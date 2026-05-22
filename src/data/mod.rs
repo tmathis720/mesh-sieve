@@ -38,7 +38,8 @@ pub use closure::{
     set_closure,
 };
 pub use constrained_section::{
-    ConstrainedSection, ConstraintSet, DofConstraint, apply_constraints_to_section,
+    ConstrainedSection, ConstraintSet, DofConstraint, LabelConstraintSpec,
+    apply_constraints_to_section,
 };
 pub use coordinate_dm::{CoordinateDM, CoordinateNumbering};
 pub use discretization::{Discretization, DiscretizationMetadata, FieldDiscretization, RegionKey};
@@ -50,7 +51,7 @@ pub use hanging_node_constraints::{
 pub use mixed_section::{
     MixedScalar, MixedSectionStore, ScalarType, TaggedSection, TaggedSectionBuffer,
 };
-pub use multi_section::{FieldSection, MultiSection};
+pub use multi_section::{FieldSection, MultiSection, constrained_section_from_label_specs};
 pub use section::Section;
 pub use section_layout::{
     DofLayout, build_layout_with, constrained_dof_len, layout_for_multi_section_with_periodic,

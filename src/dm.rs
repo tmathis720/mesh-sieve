@@ -16,12 +16,14 @@ use crate::algs::distribute::{
 use crate::algs::dual_graph::{DualGraph, build_dual};
 use crate::algs::renumber::{StratifiedOrdering, stratified_permutation};
 use crate::data::atlas::Atlas;
-use crate::diagnostics::{MeshCheckOptions, run_mesh_checks};
 use crate::data::coordinates::Coordinates;
 use crate::data::discretization::Discretization;
 use crate::data::global_map::{LocalToGlobalMap, global_vector_for_map};
+use crate::data::multi_section::constrained_section_from_label_specs;
 use crate::data::section::Section;
 use crate::data::storage::{Storage, VecStorage};
+use crate::data::{ConstrainedSection, LabelConstraintSpec};
+use crate::diagnostics::{MeshCheckOptions, run_mesh_checks};
 use crate::io::MeshData;
 use crate::mesh_error::MeshSieveError;
 use crate::mesh_graph::{AdjacencyWeighting, MeshGraph, cell_adjacency_graph_with_cells};
@@ -497,6 +499,28 @@ where
             section: Some(section_name.to_string()),
             values: global_vector_for_map(map),
         })
+    }
+
+    /// Create a constrained section for a field using label constraints.
+    pub fn create_constrained_section_from_labels(
+        &self,
+        field_name: &str,
+        point_dofs: &[(PointId, usize)],
+        constraints: &[LabelConstraintSpec],
+    ) -> Result<ConstrainedSection<V, St>, MeshSieveError> {
+        if let Some(discretization) = self.discretization() {
+            if discretization.field(field_name).is_none() {
+                return Err(MeshSieveError::MissingSectionName {
+                    name: field_name.to_string(),
+                });
+            }
+        }
+        let labels = self
+            .labels()
+            .ok_or_else(|| MeshSieveError::MissingSectionName {
+                name: "labels".to_string(),
+            })?;
+        constrained_section_from_label_specs(point_dofs, labels, constraints)
     }
 
     /// Distribute this DM through the lower-level distribution pipeline and
