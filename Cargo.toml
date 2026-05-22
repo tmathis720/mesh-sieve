@@ -80,6 +80,9 @@ wgpu = ["dep:wgpu", "dep:pollster", "dep:futures-intrusive"]
 # entry point is deliberately compiled as an unsupported reader with a clear
 # diagnostic instead of pretending CGNS is implemented.
 cgns = []
+triangle-support = []
+tetgen-support = []
+gmsh-support = []
 
 
 [build-dependencies]
