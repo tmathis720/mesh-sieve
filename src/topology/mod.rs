@@ -22,6 +22,7 @@ pub mod bounds;
 pub mod cache;
 pub mod cell_type;
 pub mod coarsen;
+pub mod coastal;
 pub mod labels;
 pub mod orientation;
 pub mod ownership;
@@ -36,6 +37,11 @@ pub mod validation;
 pub use anchors::{AnchorKind, PointAnchor, TopologicalAnchors};
 pub use cache::InvalidateCache;
 pub use cell_type::CellType;
+pub use coastal::{
+    BOUNDARY_CLASS_LABEL, BOUNDARY_ROLE_LABEL, BoundaryClass, CoastalLabelQueries,
+    CoastalMetadataError, CoastalValidationOptions, OpenBoundaryRole, VERTICAL_LAYER_LABEL,
+    VerticalCoordinateSystem, WET_DRY_MASK_LABEL, WetDryMask, validate_coastal_metadata,
+};
 pub use labels::LabelSet;
 pub use orientation::*;
 pub use ownership::{OwnershipEntry, PointOwnership};
