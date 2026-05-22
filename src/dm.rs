@@ -16,6 +16,7 @@ use crate::algs::distribute::{
 use crate::algs::dual_graph::{DualGraph, build_dual};
 use crate::algs::renumber::{StratifiedOrdering, stratified_permutation};
 use crate::data::atlas::Atlas;
+use crate::diagnostics::{MeshCheckOptions, run_mesh_checks};
 use crate::data::coordinates::Coordinates;
 use crate::data::discretization::Discretization;
 use crate::data::global_map::{LocalToGlobalMap, global_vector_for_map};
@@ -31,7 +32,6 @@ use crate::topology::ownership::PointOwnership;
 use crate::topology::point::PointId;
 use crate::topology::sieve::strata::compute_strata;
 use crate::topology::sieve::{MeshSieve, Sieve};
-use crate::topology::validation::{TopologyValidationOptions, validate_oriented_sieve_topology};
 
 /// Options for a DMPLEX-like setup pipeline.
 ///
@@ -59,6 +59,8 @@ pub struct MeshDMOptions {
     pub check_faces: bool,
     /// Validate coordinate geometry metadata when coordinates are present.
     pub check_geometry: bool,
+    /// Enable all mesh checks in a DMPLEX-like single switch.
+    pub check_all: bool,
     /// Reorder section atlas entries by topology strata during setup.
     pub reorder_section: Option<StratifiedOrdering>,
     /// Balance ownership of partition-boundary points during distribution.
@@ -79,6 +81,7 @@ impl Default for MeshDMOptions {
             check_skeleton: false,
             check_faces: false,
             check_geometry: false,
+            check_all: false,
             reorder_section: None,
             balance_boundary_ownership: false,
             synchronize_sections: true,
@@ -352,40 +355,31 @@ where
 
     /// Run topology/geometry checks requested by [`MeshDMOptions`].
     pub fn run_requested_checks(&mut self) -> Result<(), MeshSieveError> {
-        if self.options.check_skeleton {
-            compute_strata(&self.mesh_data.sieve)?;
-        }
+        let check_all = self.options.check_all;
+        let check_options = MeshCheckOptions {
+            check_symmetry: check_all || self.options.check_symmetry,
+            check_skeleton: check_all || self.options.check_skeleton,
+            check_faces: check_all || self.options.check_faces,
+            check_geometry: check_all || self.options.check_geometry,
+            check_overlap: check_all,
+            check_ownership: check_all,
+            check_sections: check_all,
+        };
 
-        if self.options.check_faces {
+        if check_options.check_faces {
             let cells = self.height_stratum(0)?;
             let _ = self.cell_adjacency_graph(cells, Default::default(), AdjacencyWeighting::None);
         }
 
-        if self.options.check_symmetry {
-            if let Some(cell_types) = &self.mesh_data.cell_types {
-                validate_oriented_sieve_topology(
-                    &mut self.mesh_data.sieve,
-                    cell_types,
-                    TopologyValidationOptions::all(),
-                )?;
-            }
-        }
-
-        if self.options.check_geometry {
-            if let Some(coords) = &self.mesh_data.coordinates {
-                for (point, (_offset, len)) in coords.section().atlas().iter_entries() {
-                    if len != coords.embedding_dimension() {
-                        return Err(MeshSieveError::SliceLengthMismatch {
-                            point,
-                            expected: coords.embedding_dimension(),
-                            found: len,
-                        });
-                    }
-                }
-            }
-        }
-
-        Ok(())
+        run_mesh_checks(
+            &mut self.mesh_data.sieve,
+            self.mesh_data.cell_types.as_ref(),
+            self.mesh_data.coordinates.as_ref(),
+            self.ownership.as_ref(),
+            self.overlap.as_ref(),
+            self.mesh_data.sections.values(),
+            check_options,
+        )
     }
 
     /// Return points in a height stratum (height 0 are cells in DMPLEX terms).
