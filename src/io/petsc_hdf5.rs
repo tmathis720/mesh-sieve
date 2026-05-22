@@ -18,7 +18,7 @@ use crate::topology::point::PointId;
 use crate::topology::sieve::strata::compute_strata;
 use crate::topology::sieve::{MeshSieve, OrientedSieve, Sieve};
 use hdf5::{File, Group};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -39,6 +39,40 @@ where
 
 /// PETSc DMPlex HDF5 storage version written by this module.
 pub const DMPLEX_STORAGE_VERSION: i32 = 3;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PetscLoadMode {
+    Strict,
+    Permissive,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PetscLoadFilter {
+    pub section_name_patterns: Vec<String>,
+    pub label_subset: Option<(String, i32)>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PetscLoadOptions {
+    pub mode: PetscLoadMode,
+    pub filter: PetscLoadFilter,
+}
+
+impl Default for PetscLoadOptions {
+    fn default() -> Self {
+        Self {
+            mode: PetscLoadMode::Strict,
+            filter: PetscLoadFilter::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PetscProvenance {
+    pub storage_version: i32,
+    pub permutation_source: String,
+    pub redistribution_map_id: Option<String>,
+}
 
 const GROUP_TOPOLOGIES: &str = "topologies";
 const GROUP_TOPOLOGY: &str = "topology";
@@ -117,7 +151,7 @@ impl PetscHdf5Reader {
     ) -> Result<BTreeMap<String, Section<f64, VecStorage<f64>>>, MeshSieveError> {
         let topo = file.group(&format!("/{GROUP_TOPOLOGIES}/{mesh_name}"))?;
         let dm = topo.group(&format!("{GROUP_DMS}/{dm_name}"))?;
-        read_sections(&dm)
+        read_sections_with_options(&dm, None, &PetscLoadOptions::default())
     }
 }
 
@@ -237,9 +271,33 @@ pub fn read_mesh_from_petsc_hdf5(
     mesh_name: &str,
     dm_name: &str,
 ) -> Result<MeshData<MeshSieve, f64, VecStorage<f64>, VecStorage<CellType>>, MeshSieveError> {
+    Ok(read_mesh_from_petsc_hdf5_with_options(
+        file,
+        mesh_name,
+        dm_name,
+        &PetscLoadOptions::default(),
+    )?
+    .0)
+}
+
+pub fn read_mesh_from_petsc_hdf5_with_options(
+    file: &File,
+    mesh_name: &str,
+    dm_name: &str,
+    options: &PetscLoadOptions,
+) -> Result<
+    (
+        MeshData<MeshSieve, f64, VecStorage<f64>, VecStorage<CellType>>,
+        PetscProvenance,
+    ),
+    MeshSieveError,
+> {
     if let Ok(dataset) = file.dataset(DATASET_VERSION) {
         let version: Vec<i32> = dataset.read_raw()?;
-        if !version.is_empty() && version[0] != DMPLEX_STORAGE_VERSION {
+        if matches!(options.mode, PetscLoadMode::Strict)
+            && !version.is_empty()
+            && version[0] != DMPLEX_STORAGE_VERSION
+        {
             return Err(MeshSieveError::MeshIoParse(format!(
                 "unsupported DMPlex HDF5 storage version {}; expected {DMPLEX_STORAGE_VERSION}",
                 version[0]
@@ -249,25 +307,45 @@ pub fn read_mesh_from_petsc_hdf5(
 
     let topology_root = file.group(&format!("/{GROUP_TOPOLOGIES}/{mesh_name}"))?;
     let topology = topology_root.group(GROUP_TOPOLOGY)?;
-    let order = read_permutation(&topology)?;
+    let order = read_permutation_checked(&topology, options.mode)?;
     let mut sieve = MeshSieve::default();
     read_strata(&topology, &order, &mut sieve)?;
     let cell_types = read_cell_types(&topology, &order)?;
     let labels = read_labels(&topology_root)?;
+    let subset = options
+        .filter
+        .label_subset
+        .as_ref()
+        .and_then(|(name, value)| labels.as_ref().map(|l| l.stratum_points(name, *value)))
+        .map(|v| v.into_iter().collect::<BTreeSet<_>>());
     let sections = match topology_root.group(&format!("{GROUP_DMS}/{dm_name}")) {
-        Ok(dm) => read_sections(&dm)?,
+        Ok(dm) => read_sections_with_options(&dm, subset.as_ref(), options)?,
         Err(_) => BTreeMap::new(),
     };
 
-    Ok(MeshData {
-        sieve,
-        coordinates: None,
-        sections,
-        mixed_sections: Default::default(),
-        labels,
-        cell_types,
-        discretization: None,
-    })
+    Ok((
+        MeshData {
+            sieve,
+            coordinates: None,
+            sections,
+            mixed_sections: Default::default(),
+            labels,
+            cell_types,
+            discretization: None,
+        },
+        PetscProvenance {
+            storage_version: file
+                .dataset(DATASET_VERSION)
+                .ok()
+                .and_then(|d| d.read_raw::<i32>().ok())
+                .and_then(|v| v.first().copied())
+                .unwrap_or(DMPLEX_STORAGE_VERSION),
+            permutation_source: format!(
+                "/{GROUP_TOPOLOGIES}/{mesh_name}/{GROUP_TOPOLOGY}/{DATASET_PERMUTATION}"
+            ),
+            redistribution_map_id: None,
+        },
+    ))
 }
 
 fn point_order(
@@ -533,21 +611,28 @@ fn write_dm(
     Ok(())
 }
 
-fn read_sections(
+fn read_sections_with_options(
     dm: &Group,
+    subset: Option<&BTreeSet<PointId>>,
+    options: &PetscLoadOptions,
 ) -> Result<BTreeMap<String, Section<f64, VecStorage<f64>>>, MeshSieveError> {
     let mut sections = BTreeMap::new();
     let section_root = dm.group(GROUP_SECTION)?;
     let vecs = dm.group(GROUP_VECS)?;
     for name in section_root.member_names()? {
+        if !matches_any_pattern(&name, &options.filter.section_name_patterns) {
+            continue;
+        }
         let group = section_root.group(&name)?;
         let points: Vec<i64> = group.dataset(DATASET_SECTION_POINTS)?.read_raw()?;
         let dofs: Vec<i32> = group.dataset(DATASET_SECTION_DOFS)?.read_raw()?;
         let values: Vec<f64> = vecs.dataset(&name)?.read_raw()?;
+        check_section_layout_compatible(&name, &points, &dofs, &values, options.mode)?;
         let mut atlas = Atlas::default();
         for (raw, dof) in points.iter().zip(dofs.iter()) {
-            if *dof > 0 {
-                atlas.try_insert(PointId::new(*raw as u64)?, *dof as usize)?;
+            let point = PointId::new(*raw as u64)?;
+            if *dof > 0 && subset.is_none_or(|s| s.contains(&point)) {
+                atlas.try_insert(point, *dof as usize)?;
             }
         }
         let mut section = Section::<f64, VecStorage<f64>>::new(atlas);
@@ -557,11 +642,16 @@ fn read_sections(
                 let point = PointId::new(*raw as u64)?;
                 let end = offset + *dof as usize;
                 if end > values.len() {
-                    return Err(MeshSieveError::MeshIoParse(format!(
-                        "vector {name} shorter than section layout"
-                    )));
+                    if matches!(options.mode, PetscLoadMode::Strict) {
+                        return Err(MeshSieveError::MeshIoParse(format!(
+                            "vector {name} shorter than section layout"
+                        )));
+                    }
+                    break;
                 }
-                section.try_set(point, &values[offset..end])?;
+                if subset.is_none_or(|s| s.contains(&point)) {
+                    section.try_set(point, &values[offset..end])?;
+                }
                 offset = end;
             }
         }
@@ -570,15 +660,82 @@ fn read_sections(
     Ok(sections)
 }
 
+fn check_section_layout_compatible(
+    name: &str,
+    points: &[i64],
+    dofs: &[i32],
+    values: &[f64],
+    mode: PetscLoadMode,
+) -> Result<(), MeshSieveError> {
+    if points.len() != dofs.len() && matches!(mode, PetscLoadMode::Strict) {
+        return Err(MeshSieveError::MeshIoParse(format!(
+            "section {name} points/dofs mismatch: {} vs {}",
+            points.len(),
+            dofs.len()
+        )));
+    }
+    let expected: usize = dofs.iter().filter(|d| **d > 0).map(|d| *d as usize).sum();
+    if expected != values.len() && matches!(mode, PetscLoadMode::Strict) {
+        return Err(MeshSieveError::MeshIoParse(format!(
+            "section {name} vector length mismatch: expected {expected}, found {}",
+            values.len()
+        )));
+    }
+    Ok(())
+}
+
+fn matches_any_pattern(name: &str, patterns: &[String]) -> bool {
+    if patterns.is_empty() {
+        return true;
+    }
+    patterns.iter().any(|p| {
+        if p == "*" {
+            true
+        } else if let Some(core) = p.strip_prefix('*').and_then(|s| s.strip_suffix('*')) {
+            name.contains(core)
+        } else if let Some(s) = p.strip_prefix('*') {
+            name.ends_with(s)
+        } else if let Some(s) = p.strip_suffix('*') {
+            name.starts_with(s)
+        } else {
+            name == p
+        }
+    })
+}
+
 fn topology_group(file: &File, mesh_name: &str) -> Result<Group, MeshSieveError> {
     Ok(file.group(&format!("/{GROUP_TOPOLOGIES}/{mesh_name}/{GROUP_TOPOLOGY}"))?)
 }
 
 fn read_permutation(topology: &Group) -> Result<Vec<PointId>, MeshSieveError> {
+    read_permutation_checked(topology, PetscLoadMode::Strict)
+}
+
+fn read_permutation_checked(
+    topology: &Group,
+    mode: PetscLoadMode,
+) -> Result<Vec<PointId>, MeshSieveError> {
     let raw: Vec<i64> = topology.dataset(DATASET_PERMUTATION)?.read_raw()?;
-    raw.into_iter()
+    for (idx, value) in raw.iter().enumerate() {
+        if *value <= 0 && matches!(mode, PetscLoadMode::Strict) {
+            return Err(MeshSieveError::MeshIoParse(format!(
+                "out-of-range permutation point tag at index {idx}: {value}"
+            )));
+        }
+    }
+    let points = raw
+        .into_iter()
         .map(|value| PointId::new(value as u64))
-        .collect::<Result<Vec<_>, _>>()
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut seen = BTreeSet::new();
+    for (idx, point) in points.iter().enumerate() {
+        if !seen.insert(*point) && matches!(mode, PetscLoadMode::Strict) {
+            return Err(MeshSieveError::MeshIoParse(format!(
+                "duplicate permutation point tag at index {idx}: {point:?}"
+            )));
+        }
+    }
+    Ok(points)
 }
 
 fn create_or_open_group(parent: &Group, name: &str) -> Result<Group, MeshSieveError> {
