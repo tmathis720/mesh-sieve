@@ -22,6 +22,15 @@ use crate::topology::point::PointId;
 use crate::topology::sieve::{MeshSieve, OrientedSieve, Sieve};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// Diagnostics for SF map validation.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SfValidationReport {
+    pub domain_points: usize,
+    pub range_points: usize,
+    pub duplicate_leaves: Vec<PointId>,
+    pub unmapped_ghosts: Vec<PointId>,
+}
+
 /// A remote root in a star forest.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct RemotePoint {
@@ -239,6 +248,99 @@ where
             }
         }
         Ok(())
+    }
+
+    /// Compose `self` with `next`, i.e. `next ∘ self`.
+    pub fn compose(&self, next: &PointSF<'_, C>) -> PointSF<'static, C> {
+        let mut composed = Vec::new();
+        let next_by_local: BTreeMap<PointId, RemotePoint> = next
+            .leaves
+            .iter()
+            .map(|leaf| (leaf.local, leaf.remote))
+            .collect();
+        for leaf in &self.leaves {
+            let remote = next_by_local
+                .get(&leaf.remote.point)
+                .copied()
+                .unwrap_or(leaf.remote);
+            composed.push(PointSfLeaf {
+                local: leaf.local,
+                remote,
+                owner_rank: remote.rank,
+                is_ghost: remote.rank != self.my_rank,
+            });
+        }
+        let roots: Vec<_> = composed
+            .iter()
+            .filter_map(|leaf| (leaf.remote.rank == self.my_rank).then_some(leaf.remote.point))
+            .collect();
+        PointSF::from_leaves(self.my_rank, roots, composed)
+    }
+
+    /// Invert this SF if leaves map uniquely by remote point.
+    pub fn invert(&self) -> Result<PointSF<'static, C>, MeshSieveError> {
+        let mut seen = BTreeSet::new();
+        let mut inv = Vec::with_capacity(self.leaves.len());
+        for leaf in &self.leaves {
+            if !seen.insert(leaf.remote.point) {
+                return Err(MeshSieveError::MeshIoParse(
+                    "cannot invert SF with duplicate remote points".to_string(),
+                ));
+            }
+            inv.push(PointSfLeaf {
+                local: leaf.remote.point,
+                remote: RemotePoint {
+                    rank: self.my_rank,
+                    point: leaf.local,
+                },
+                owner_rank: self.my_rank,
+                is_ghost: false,
+            });
+        }
+        let roots = self.leaves.iter().map(|l| l.local);
+        Ok(PointSF::from_leaves(self.my_rank, roots, inv))
+    }
+
+    /// Restrict this SF to points in a label value.
+    pub fn restrict_to_label(
+        &self,
+        labels: &LabelSet,
+        name: &str,
+        value: i32,
+    ) -> PointSF<'static, C> {
+        let leaves: Vec<_> = self
+            .leaves
+            .iter()
+            .copied()
+            .filter(|leaf| labels.get_label(leaf.local, name) == Some(value))
+            .collect();
+        let roots: Vec<_> = leaves.iter().map(|leaf| leaf.remote.point).collect();
+        PointSF::from_leaves(self.my_rank, roots, leaves)
+    }
+
+    /// Validate cardinality and mapping coherence, reporting duplicates and unmapped ghosts.
+    pub fn validate_mapping(&self) -> SfValidationReport {
+        let mut report = SfValidationReport::default();
+        let mut domain = BTreeSet::new();
+        let mut range = BTreeSet::new();
+        let mut counts: BTreeMap<PointId, usize> = BTreeMap::new();
+        for leaf in &self.leaves {
+            domain.insert(leaf.local);
+            range.insert(leaf.remote.point);
+            *counts.entry(leaf.local).or_insert(0) += 1;
+        }
+        report.domain_points = domain.len();
+        report.range_points = range.len();
+        report.duplicate_leaves = counts
+            .into_iter()
+            .filter_map(|(p, n)| (n > 1).then_some(p))
+            .collect();
+        report.unmapped_ghosts = self
+            .owner
+            .iter()
+            .filter_map(|(&p, entry)| (entry.is_ghost && !domain.contains(&p)).then_some(p))
+            .collect();
+        report
     }
 
     /// Complete a section using CopyDelta and optional ownership metadata.

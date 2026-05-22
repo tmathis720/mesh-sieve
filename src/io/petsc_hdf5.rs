@@ -6,6 +6,7 @@
 //! mesh/section/vector data to be written, loaded independently, and
 //! re-associated by the preserved point permutation/order.
 
+use crate::algs::point_sf::PointSF;
 use crate::data::atlas::Atlas;
 use crate::data::section::Section;
 use crate::data::storage::VecStorage;
@@ -22,6 +23,19 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Compose load/redistribute/section SF maps for DMPlex-style migration workflows.
+pub fn compose_migration_pipeline<C>(
+    load_map: &PointSF<'_, C>,
+    redistribute_map: &PointSF<'_, C>,
+    section_map: &PointSF<'_, C>,
+) -> PointSF<'static, C>
+where
+    C: crate::algs::communicator::Communicator + Sync,
+{
+    let topo = load_map.compose(redistribute_map);
+    topo.compose(section_map)
+}
 
 /// PETSc DMPlex HDF5 storage version written by this module.
 pub const DMPLEX_STORAGE_VERSION: i32 = 3;
