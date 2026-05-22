@@ -113,3 +113,33 @@ fn label_propagation_closure_and_star() {
     seed_pts.sort_unstable();
     assert_eq!(seed_pts, vec![cell, face, vertex]);
 }
+
+#[test]
+fn label_algebra_and_remap_and_seed_propagation() {
+    let mut sieve = InMemorySieve::<PointId, ()>::default();
+    let c = PointId::new(1).unwrap();
+    let f = PointId::new(2).unwrap();
+    let v = PointId::new(3).unwrap();
+    sieve.add_arrow(c, f, ());
+    sieve.add_arrow(f, v, ());
+
+    let mut a = LabelSet::new();
+    let mut b = LabelSet::new();
+    a.set_label(f, "bd", 1);
+    b.set_label(v, "bd", 1);
+
+    a.apply_to_closure(&sieve, "seed", 9, [f]);
+    assert_eq!(a.stratum_points("seed", 9), vec![f, v]);
+    a.apply_to_star(&sieve, "seed", 10, [v]);
+    assert_eq!(a.stratum_points("seed", 10), vec![c, f, v]);
+
+    a.union_into(&b, "bd", 1, "bd", 1);
+    assert_eq!(a.stratum_points("bd", 1), vec![f, v]);
+    a.intersect_with(&b, "bd", 1, "bd", 1);
+    assert_eq!(a.stratum_points("bd", 1), vec![v]);
+    a.subtract(&b, "bd", 1, "bd", 1);
+    assert!(a.stratum_points("bd", 1).is_empty());
+
+    b.remap_value("bd", 1, 5);
+    assert_eq!(b.stratum_points("bd", 5), vec![v]);
+}
