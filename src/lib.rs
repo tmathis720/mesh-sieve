@@ -143,6 +143,10 @@ pub mod prelude {
     pub use crate::dm::{
         MeshDM, MeshDMBuilder, MeshDMDistribution, MeshDMOptions, MeshVector, PreallocationGraph,
     };
+    pub use crate::geometry::locate::{
+        BoundingBox, LocalizedCellCoordinates, LocatedCell, PeriodicDomain, PointLocation,
+        PointLocator, localized_reference_to_physical, locate_point, project_section_to_vertices,
+    };
     pub use crate::io::MeshBundle;
     pub use crate::overlap::delta::{AddDelta, CopyDelta, ValueDelta};
     pub use crate::overlap::overlap::Overlap;
