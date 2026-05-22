@@ -14,6 +14,7 @@ use crate::algs::distribute::{
     CellPartitioner, DistributedMeshData, DistributionConfig, distribute_with_overlap,
 };
 use crate::algs::dual_graph::{DualGraph, build_dual};
+use crate::algs::point_sf::PointSF;
 use crate::algs::renumber::{StratifiedOrdering, stratified_permutation};
 use crate::data::atlas::Atlas;
 use crate::data::coordinates::Coordinates;
@@ -220,6 +221,14 @@ pub struct MeshDMDistribution {
     pub size: usize,
 }
 
+/// Provenance SF maps tracking load/redistribute/section movement.
+#[derive(Clone, Debug, Default)]
+pub struct MeshDMProvenance<C: Communicator + Sync + 'static> {
+    pub load_map: Option<PointSF<'static, C>>,
+    pub redistribute_map: Option<PointSF<'static, C>>,
+    pub section_map: Option<PointSF<'static, C>>,
+}
+
 /// DMPLEX-like facade owning topology, coordinates, labels, sections,
 /// discretization metadata, distribution state, and solver numbering maps.
 #[derive(Debug)]
@@ -234,6 +243,7 @@ where
     overlap: Option<Overlap>,
     global_sections: BTreeMap<String, LocalToGlobalMap>,
     distribution: Option<MeshDMDistribution>,
+    provenance_maps: MeshDMProvenance<crate::algs::communicator::NoComm>,
 }
 
 impl<V, St, CtSt> MeshDM<V, St, CtSt>
@@ -264,6 +274,7 @@ where
             overlap: None,
             global_sections: BTreeMap::new(),
             distribution: None,
+            provenance_maps: MeshDMProvenance::default(),
         }
     }
 
@@ -339,6 +350,10 @@ where
     /// Borrow distribution metadata, if this DM has been distributed.
     pub fn distribution(&self) -> Option<&MeshDMDistribution> {
         self.distribution.as_ref()
+    }
+
+    pub fn provenance_maps(&self) -> &MeshDMProvenance<crate::algs::communicator::NoComm> {
+        &self.provenance_maps
     }
 
     /// Borrow DM setup options.
@@ -566,6 +581,9 @@ where
         let sf =
             crate::algs::point_sf::PointSF::with_ownership(overlap, ownership, comm, comm.rank());
         sf.validate()?;
+        self.provenance_maps.section_map = Some(crate::algs::point_sf::create_process_sf::<
+            crate::algs::communicator::NoComm,
+        >(ownership, comm.rank()));
         if let Some(coords) = &mut self.mesh_data.coordinates {
             sf.complete_section(coords.section_mut())?;
             if let Some(high_order) = coords.high_order_mut() {
@@ -584,6 +602,9 @@ where
         rank: usize,
         size: usize,
     ) -> Self {
+        let redistribute_map = crate::algs::point_sf::create_process_sf::<
+            crate::algs::communicator::NoComm,
+        >(&data.ownership, rank);
         let mesh_data = MeshData {
             sieve: data.sieve,
             coordinates: data.coordinates,
@@ -605,6 +626,11 @@ where
                 rank,
                 size,
             }),
+            provenance_maps: MeshDMProvenance {
+                load_map: None,
+                redistribute_map: Some(redistribute_map),
+                section_map: None,
+            },
         }
     }
 
