@@ -55,6 +55,7 @@ pub mod adapt;
 pub mod algs;
 pub mod data;
 pub mod debug_invariants;
+pub mod diagnostics;
 pub mod discretization;
 pub mod dm;
 pub mod forest;
@@ -132,6 +133,10 @@ pub mod prelude {
     pub use crate::data::section::Map;
     pub use crate::data::section::Section;
     pub use crate::debug_invariants::DebugInvariants;
+    pub use crate::diagnostics::{
+        MeshCheckOptions, fem_diagnostics_report, fvm_flux_diagnostics, mesh_dot_graph,
+        mesh_json_debug_dump, mesh_text_summary, mesh_tikz_viewer, run_mesh_checks,
+    };
     pub use crate::discretization::runtime::{
         Basis, BasisFamily, CellGeometry, ClosureDof, CsrPattern, DofMap, ElementRuntime,
         ElementTabulation, FaceGeometry, FiniteVolumeMetadata, FluxStencil, QuadratureRule,
