@@ -134,8 +134,10 @@ pub mod prelude {
     pub use crate::data::section::Section;
     pub use crate::debug_invariants::DebugInvariants;
     pub use crate::diagnostics::{
-        MeshCheckOptions, fem_diagnostics_report, fvm_flux_diagnostics, mesh_dot_graph,
-        mesh_json_debug_dump, mesh_text_summary, mesh_tikz_viewer, run_mesh_checks,
+        FvmQualityDiagnostics, MeshCheckOptions, MetricSummary, fem_diagnostics_report,
+        fvm_flux_diagnostics, fvm_quality_diagnostics, fvm_quality_diagnostics_json,
+        mesh_dot_graph, mesh_json_debug_dump, mesh_text_summary, mesh_tikz_viewer, run_mesh_checks,
+        run_mesh_checks_f64_with_report,
     };
     pub use crate::discretization::runtime::{
         Basis, BasisFamily, CellGeometry, ClosureDof, CsrPattern, DofMap, ElementRuntime,
