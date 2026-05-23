@@ -162,6 +162,10 @@ pub mod prelude {
         evaluate_reference_element, extract_element_closure, extract_oriented_element_closure,
         integrate_reference_scalar,
     };
+    pub use crate::physics::fvm::{
+        FaceKind, FvmFaceLoops, FvmInputs, assemble_convective_fluxes, assemble_diffusive_fluxes,
+        classify_face_loops, interpolate_cell_centered_scalar, interpolate_face_centered_scalar,
+    };
     pub use crate::topology::bounds::{PayloadLike, PointLike};
     pub use crate::topology::cell_type::CellType;
     pub use crate::topology::labels::LabelSet;

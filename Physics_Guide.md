@@ -5,6 +5,10 @@ This guide maps common physics workflows (FEM/FVM/DG, multigrid, domain decompos
 For a focused walkthrough of discretization metadata and element assembly, see
 [`docs/fe-setup.md`](docs/fe-setup.md).
 
+For finite-volume workflows, use [`src/physics/fvm.rs`](src/physics/fvm.rs) as the canonical integration path.
+It provides FV-oriented internal/boundary face loops, geometry metric accessors, interpolation helpers,
+and flux-kernel assembly placeholders separate from finite-element runtime APIs.
+
 ---
 
 ## 0) Core mental model (physics ↔ API)
