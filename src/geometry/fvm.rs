@@ -8,6 +8,10 @@ use crate::topology::sieve::Sieve;
 use std::cmp::Ordering;
 
 const EPS: f64 = 1e-12;
+/// Assumption for polygonal faces:
+/// vertices are provided in a boundary-walk order (clockwise or counterclockwise).
+/// Faces may be mildly non-planar; centroid and area are computed by fan triangulation
+/// around the arithmetic mean projected along a Newell normal surrogate.
 
 #[derive(Clone, Debug)]
 pub struct FvmFaceMetrics {
@@ -71,10 +75,15 @@ where
     if vertices.len() < 2 {
         return Err(MeshSieveError::InvalidGeometry("face with <2 vertices".into()));
     }
-    let centroid = mean(&vertices);
+    let centroid = polygon_centroid(&vertices);
     let owner_centroid = cell_centroid(sieve, owner, coordinates)?;
     let mut area_vec = polygon_area_vector(&vertices);
-    if dot(area_vec, sub(centroid, owner_centroid)) < 0.0 {
+    if let Some(n) = neighbor {
+        let nc = cell_centroid(sieve, n, coordinates)?;
+        if dot(area_vec, sub(nc, owner_centroid)) < 0.0 {
+            area_vec = scale(area_vec, -1.0);
+        }
+    } else if dot(area_vec, sub(centroid, owner_centroid)) < 0.0 {
         area_vec = scale(area_vec, -1.0);
     }
     let area_mag = norm(area_vec);
@@ -90,13 +99,15 @@ where
             let c = (dot(area_vec, d).abs() / (area_mag * dmag)).clamp(-1.0, 1.0);
             Some(c.acos().to_degrees())
         } else { None };
-        let mid = scale(add(owner_centroid, nc), 0.5);
-        let skew = sub(centroid, mid);
+        let lambda = if dmag > EPS { dot(sub(centroid, owner_centroid), d) / (dmag * dmag) } else { 0.5 };
+        let closest_on_d = add(owner_centroid, scale(d, lambda));
+        let skew = sub(centroid, closest_on_d);
         (Some(d), orth, angle, skew, Some(sub(centroid, nc)))
     } else {
         let ahat = if area_mag > EPS { scale(area_vec, 1.0 / area_mag) } else { [0.0; 3] };
         let orth = dot(owner_to_face, ahat).abs();
-        (None, orth, None, [0.0; 3], None)
+        let skew = sub(centroid, add(owner_centroid, scale(ahat, dot(owner_to_face, ahat))));
+        (None, orth, None, skew, None)
     };
 
     Ok(FvmFaceMetrics {
@@ -162,6 +173,27 @@ fn polygon_area_vector(vertices: &[[f64;3]]) -> [f64;3] {
         sum = add(sum, scale(cross(a,b), 0.5));
     }
     sum
+}
+
+fn polygon_centroid(vertices: &[[f64; 3]]) -> [f64; 3] {
+    if vertices.len() <= 2 {
+        return mean(vertices);
+    }
+    let c0 = mean(vertices);
+    let mut weighted = [0.0; 3];
+    let mut wsum = 0.0;
+    for i in 0..vertices.len() {
+        let a = vertices[i];
+        let b = vertices[(i + 1) % vertices.len()];
+        let tri_n = cross(sub(a, c0), sub(b, c0));
+        let w = 0.5 * norm(tri_n);
+        if w > EPS {
+            let tri_c = scale(add(add(c0, a), b), 1.0 / 3.0);
+            weighted = add(weighted, scale(tri_c, w));
+            wsum += w;
+        }
+    }
+    if wsum > EPS { scale(weighted, 1.0 / wsum) } else { c0 }
 }
 
 fn mean(v: &[[f64;3]]) -> [f64;3] { let mut c=[0.0;3]; for p in v { c=add(c,*p);} scale(c,1.0/(v.len() as f64)) }
