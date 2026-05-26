@@ -10,9 +10,9 @@
 use std::collections::BTreeMap;
 
 use crate::adapt::{
-    BoundaryRemeshingPolicy, MetricAdaptationAction, MetricAdaptationOptions,
-    MetricAdaptationResult, MetricSplitHint, MetricTensor, MetricThresholds,
-    adapt_with_metric_policy,
+    BoundaryRemeshingPolicy, FvStabilityThresholds, MetricAdaptationAction,
+    MetricAdaptationOptions, MetricAdaptationResult, MetricSplitHint, MetricTensor,
+    MetricThresholds, adapt_with_metric_policy, select_cells_from_fvm_diagnostics,
 };
 use crate::algs::communicator::Communicator;
 use crate::algs::distribute::{
@@ -29,7 +29,8 @@ use crate::data::multi_section::constrained_section_from_label_specs;
 use crate::data::section::Section;
 use crate::data::storage::{Storage, VecStorage};
 use crate::data::{ConstrainedSection, LabelConstraintSpec};
-use crate::diagnostics::{MeshCheckOptions, run_mesh_checks};
+use crate::diagnostics::{MeshCheckOptions, fvm_cell_diagnostics, run_mesh_checks};
+use crate::geometry::fvm::build_fvm_face_metrics;
 use crate::io::MeshData;
 use crate::mesh_error::MeshSieveError;
 use crate::mesh_graph::{AdjacencyWeighting, MeshGraph, cell_adjacency_graph_with_cells};
@@ -271,6 +272,8 @@ pub struct MeshDMAdaptDiagnostics {
     pub preserved_labels: usize,
     pub failed_transfer_points: Vec<PointId>,
     pub split_hint_cells: usize,
+    pub fvm_face_metrics_cached: usize,
+    pub boundary_faces: usize,
 }
 
 /// Result of a DM-level metric adaptation call.
@@ -279,6 +282,13 @@ pub struct MeshDMMetricAdaptResult {
     pub action: MetricAdaptationAction,
     pub metrics: Vec<(PointId, crate::adapt::MetricCellMetrics)>,
     pub diagnostics: MeshDMAdaptDiagnostics,
+    pub fv_selection: Option<(Vec<PointId>, Vec<PointId>)>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct MeshDMAdaptIterationOptions {
+    pub max_iterations: usize,
+    pub stop_when_below_threshold: bool,
 }
 
 /// Provenance SF maps tracking load/redistribute/section movement.
@@ -337,7 +347,45 @@ where
             action: result.action,
             metrics: result.metrics,
             diagnostics,
+            fv_selection: None,
         })
+    }
+
+    pub fn adapt_until_fv_thresholds<C>(
+        &mut self,
+        metric_section_name: &str,
+        metric: &Section<MetricTensor, VecStorage<MetricTensor>>,
+        coarsen_plan: C,
+        options: MeshDMMetricAdaptOptions,
+        fv_thresholds: FvStabilityThresholds,
+        iter: MeshDMAdaptIterationOptions,
+    ) -> Result<Vec<MeshDMMetricAdaptResult>, MeshSieveError>
+    where
+        C: Fn(&[MetricSplitHint]) -> Vec<crate::topology::coarsen::CoarsenEntity> + Copy,
+    {
+        let mut history = Vec::new();
+        for _ in 0..iter.max_iterations.max(1) {
+            let mut pass = self.adapt_with_attached_metric(
+                metric_section_name,
+                metric,
+                coarsen_plan,
+                options.clone(),
+            )?;
+            let coords = self.mesh_data.coordinates.as_ref().ok_or_else(|| MeshSieveError::MissingSectionName { name: "coordinates".into() })?;
+            let cell_types = self.mesh_data.cell_types.as_ref().ok_or_else(|| MeshSieveError::MissingSectionName { name: "cell_types".into() })?;
+            let cell_diags = fvm_cell_diagnostics(&self.mesh_data.sieve, cell_types, coords)?;
+            let selection = select_cells_from_fvm_diagnostics(&cell_diags, fv_thresholds);
+            pass.fv_selection = Some((selection.refine_cells.clone(), selection.coarsen_cells.clone()));
+            history.push(pass.clone());
+            let stop_by_action = matches!(pass.action, MetricAdaptationAction::NoChange);
+            let stop_by_threshold = iter.stop_when_below_threshold
+                && selection.refine_cells.is_empty()
+                && selection.coarsen_cells.is_empty();
+            if stop_by_action || stop_by_threshold {
+                break;
+            }
+        }
+        Ok(history)
     }
 
     /// Iteratively adapt until no action is taken or iteration budget is exhausted.
@@ -396,11 +444,22 @@ where
             .labels
             .as_ref()
             .map_or(0, |l| l.iter().count());
+        let coords = self.mesh_data.coordinates.as_ref();
+        let cell_types = self.mesh_data.cell_types.as_ref();
+        let (fvm_face_metrics_cached, boundary_faces) = if let (Some(coords), Some(cell_types)) = (coords, cell_types) {
+            let face_metrics = build_fvm_face_metrics(&self.mesh_data.sieve, cell_types, coords)?;
+            let bfaces = face_metrics.iter().filter(|m| m.neighbor.is_none()).count();
+            (face_metrics.len(), bfaces)
+        } else {
+            (0, 0)
+        };
         let diagnostics = MeshDMAdaptDiagnostics {
             changed_cells,
             preserved_labels,
             failed_transfer_points: Vec::new(),
             split_hint_cells: changed_cells,
+            fvm_face_metrics_cached,
+            boundary_faces,
         };
         match strategy {
             MeshDMTransferStrategy::TopologyOnly => {}
