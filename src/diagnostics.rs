@@ -34,6 +34,52 @@ pub struct FvmQualityDiagnostics {
     pub cell_char_length: MetricSummary,
 }
 
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct FvReadinessThresholds {
+    pub max_non_orthogonality_deg: f64,
+    pub max_skewness: f64,
+    pub min_cell_char_length: f64,
+}
+
+impl Default for FvReadinessThresholds {
+    fn default() -> Self {
+        Self {
+            max_non_orthogonality_deg: 75.0,
+            max_skewness: 4.0,
+            min_cell_char_length: 1.0e-8,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FvReadinessOptions {
+    pub strict: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct FvReadinessViolation {
+    pub metric: &'static str,
+    pub point: PointId,
+    pub value: f64,
+    pub threshold: f64,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct FvReadinessSummary {
+    pub failed: usize,
+    pub total: usize,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct FvReadinessReport {
+    pub passed: bool,
+    pub thresholds: FvReadinessThresholds,
+    pub non_orthogonality: FvReadinessSummary,
+    pub skewness: FvReadinessSummary,
+    pub cell_char_length: FvReadinessSummary,
+    pub violations: Vec<FvReadinessViolation>,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MeshCheckOptions {
     pub check_symmetry: bool,
@@ -220,6 +266,156 @@ where
     let report = fvm_quality_diagnostics(sieve, cell_types, coordinates)?;
     serde_json::to_string(&report)
         .map_err(|e| MeshSieveError::InvalidGeometry(format!("serialize diagnostics: {e}")))
+}
+
+pub fn fv_readiness_report<CT, CS>(
+    sieve: &MeshSieve,
+    cell_types: &Section<CellType, CT>,
+    coordinates: &Coordinates<f64, CS>,
+    thresholds: FvReadinessThresholds,
+    options: FvReadinessOptions,
+) -> Result<FvReadinessReport, MeshSieveError>
+where
+    CT: Storage<CellType>,
+    CS: Storage<f64>,
+{
+    let face_metrics = build_fvm_face_metrics(sieve, cell_types, coordinates)?;
+    let mut report = FvReadinessReport {
+        passed: true,
+        thresholds,
+        non_orthogonality: FvReadinessSummary {
+            total: face_metrics.len(),
+            ..FvReadinessSummary::default()
+        },
+        skewness: FvReadinessSummary {
+            total: face_metrics.len(),
+            ..FvReadinessSummary::default()
+        },
+        ..FvReadinessReport::default()
+    };
+    for fm in &face_metrics {
+        let non_ortho = fm.non_orthogonality_deg.unwrap_or(0.0);
+        if non_ortho > thresholds.max_non_orthogonality_deg {
+            report.non_orthogonality.failed += 1;
+            report.violations.push(FvReadinessViolation {
+                metric: "non_orthogonality_deg",
+                point: fm.face,
+                value: non_ortho,
+                threshold: thresholds.max_non_orthogonality_deg,
+            });
+        }
+        let denom = fm
+            .owner_to_neighbor
+            .map(norm3)
+            .unwrap_or_else(|| norm3(fm.owner_to_face));
+        let skewness = if denom > 1e-12 {
+            norm3(fm.skewness_vector) / denom
+        } else {
+            0.0
+        };
+        if skewness > thresholds.max_skewness {
+            report.skewness.failed += 1;
+            report.violations.push(FvReadinessViolation {
+                metric: "skewness",
+                point: fm.face,
+                value: skewness,
+                threshold: thresholds.max_skewness,
+            });
+        }
+    }
+    let mut cell_area_sum: std::collections::BTreeMap<PointId, f64> =
+        std::collections::BTreeMap::new();
+    for fm in &face_metrics {
+        *cell_area_sum.entry(fm.owner).or_insert(0.0) += fm.area_magnitude;
+        if let Some(n) = fm.neighbor {
+            *cell_area_sum.entry(n).or_insert(0.0) += fm.area_magnitude;
+        }
+    }
+    report.cell_char_length.total = cell_area_sum.len();
+    for (cell, area_sum) in cell_area_sum {
+        if let Some(cell_type) = cell_types
+            .try_restrict(cell)
+            .ok()
+            .and_then(|v| v.first().copied())
+        {
+            let mut verts: Vec<_> = sieve
+                .closure_iter([cell])
+                .filter(|p| sieve.cone_points(*p).next().is_none())
+                .collect();
+            verts.sort_unstable();
+            verts.dedup();
+            let quality = crate::geometry::quality::cell_quality_from_section(
+                cell_type,
+                &verts,
+                coordinates,
+            )?;
+            let char_len = if area_sum > 1e-12 {
+                quality.jacobian_sign.abs() / area_sum
+            } else {
+                0.0
+            };
+            if char_len < thresholds.min_cell_char_length {
+                report.cell_char_length.failed += 1;
+                report.violations.push(FvReadinessViolation {
+                    metric: "cell_char_length",
+                    point: cell,
+                    value: char_len,
+                    threshold: thresholds.min_cell_char_length,
+                });
+            }
+        }
+    }
+    report.passed = report.violations.is_empty();
+    if options.strict && !report.passed {
+        return Err(MeshSieveError::InvalidGeometry(format!(
+            "FV readiness failed with {} violation(s)",
+            report.violations.len()
+        )));
+    }
+    Ok(report)
+}
+
+pub fn fv_readiness_report_json(report: &FvReadinessReport) -> Result<String, MeshSieveError> {
+    serde_json::to_string(report)
+        .map_err(|e| MeshSieveError::InvalidGeometry(format!("serialize readiness report: {e}")))
+}
+
+pub fn fv_readiness_report_text(report: &FvReadinessReport) -> String {
+    let mut out = String::new();
+    let _ = writeln!(&mut out, "fv_readiness_passed={}", report.passed);
+    let _ = writeln!(
+        &mut out,
+        "thresholds: max_non_orthogonality_deg={}, max_skewness={}, min_cell_char_length={}",
+        report.thresholds.max_non_orthogonality_deg,
+        report.thresholds.max_skewness,
+        report.thresholds.min_cell_char_length
+    );
+    let _ = writeln!(
+        &mut out,
+        "non_orthogonality_failed={}/{}",
+        report.non_orthogonality.failed, report.non_orthogonality.total
+    );
+    let _ = writeln!(
+        &mut out,
+        "skewness_failed={}/{}",
+        report.skewness.failed, report.skewness.total
+    );
+    let _ = writeln!(
+        &mut out,
+        "cell_char_length_failed={}/{}",
+        report.cell_char_length.failed, report.cell_char_length.total
+    );
+    for v in &report.violations {
+        let _ = writeln!(
+            &mut out,
+            "violation metric={} point={} value={} threshold={}",
+            v.metric,
+            v.point.get(),
+            v.value,
+            v.threshold
+        );
+    }
+    out
 }
 
 fn summarize(values: &[f64]) -> MetricSummary {
