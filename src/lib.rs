@@ -111,9 +111,10 @@ pub mod prelude {
     };
     pub use crate::data::atlas::Atlas;
     pub use crate::data::bc::{
-        FieldDofIndices, LabelQuery, apply_dirichlet_to_constrained_section,
-        apply_dirichlet_to_constrained_section_fields, apply_dirichlet_to_section,
-        apply_dirichlet_to_section_fields,
+        CoastalBoundaryAssembly, CoastalBoundaryAssemblyError, FieldDofIndices, LabelQuery,
+        apply_dirichlet_to_constrained_section, apply_dirichlet_to_constrained_section_fields,
+        apply_dirichlet_to_section, apply_dirichlet_to_section_fields, coastal_boundary_face_sets,
+        map_coastal_boundary_conditions, resolve_coastal_boundary_assembly,
     };
     pub use crate::data::constrained_section::{
         ConstrainedSection, ConstraintSet, DofConstraint, apply_constraints_to_section,
@@ -163,10 +164,11 @@ pub mod prelude {
         integrate_reference_scalar,
     };
     pub use crate::physics::fvm::{
-        FaceKind, FluxActivityMask, FvBoundaryBranch, FvmFaceLoops, FvmInputs,
+        BoundaryBranchError, FaceKind, FluxActivityMask, FvBoundaryBranch, FvmFaceLoops, FvmInputs,
         assemble_convective_fluxes, assemble_convective_fluxes_masked, assemble_diffusive_fluxes,
-        boundary_branch_for_face, classify_face_loops, flux_activity_mask_from_wet_dry,
-        interpolate_cell_centered_scalar, interpolate_face_centered_scalar,
+        boundary_branch_for_face, boundary_branch_for_face_checked, classify_face_loops,
+        flux_activity_mask_from_wet_dry, interpolate_cell_centered_scalar,
+        interpolate_face_centered_scalar,
     };
     pub use crate::topology::bounds::{PayloadLike, PointLike};
     pub use crate::topology::cell_type::CellType;

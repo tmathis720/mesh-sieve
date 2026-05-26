@@ -4,12 +4,19 @@ use crate::data::constrained_section::ConstrainedSection;
 use crate::data::section::Section;
 use crate::data::storage::Storage;
 use crate::mesh_error::MeshSieveError;
-use crate::physics::fvm::{BoundaryCondition, FvBoundaryBranch, boundary_branch_for_face};
-use crate::topology::coastal::CoastalLabelQueries;
+use crate::physics::fvm::{
+    BoundaryBranchError, BoundaryCondition, FvBoundaryBranch, boundary_branch_for_face_checked,
+};
 use crate::topology::cache::InvalidateCache;
+use crate::topology::coastal::CoastalLabelQueries;
 use crate::topology::labels::LabelSet;
 use crate::topology::point::PointId;
 use std::collections::{HashMap, HashSet};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CoastalBoundaryAssemblyError {
+    InvalidBoundaryFaceRole(BoundaryBranchError),
+}
 
 /// Label query selector for boundary condition application.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -78,7 +85,7 @@ pub fn coastal_boundary_face_sets(
     boundary_faces: impl IntoIterator<Item = PointId>,
 ) -> CoastalBoundaryFaceSets {
     let faces: HashSet<_> = boundary_faces.into_iter().collect();
-    let mut filter = |pts: Vec<PointId>| -> Vec<PointId> {
+    let filter = |pts: Vec<PointId>| -> Vec<PointId> {
         let mut v: Vec<_> = pts.into_iter().filter(|p| faces.contains(p)).collect();
         v.sort_unstable();
         v
@@ -101,11 +108,42 @@ pub fn map_coastal_boundary_conditions(
 ) -> HashMap<PointId, BoundaryCondition> {
     let mut out = HashMap::new();
     for face in boundary_faces {
-        if let Some(branch) = boundary_branch_for_face(labels, face) {
+        if let Ok(branch) = boundary_branch_for_face_checked(labels, face) {
             out.insert(face, branch_closure(branch, face));
         }
     }
     out
+}
+
+/// Resolved coastal boundary data ready for FV flux assembly.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CoastalBoundaryAssembly {
+    pub face_sets: CoastalBoundaryFaceSets,
+    pub boundary_conditions: HashMap<PointId, BoundaryCondition>,
+    pub branches: HashMap<PointId, FvBoundaryBranch>,
+}
+
+/// High-level coastal API: resolve boundary face groups and BC closures in one pass.
+pub fn resolve_coastal_boundary_assembly(
+    labels: &LabelSet,
+    boundary_faces: impl IntoIterator<Item = PointId>,
+    branch_closure: impl Fn(FvBoundaryBranch, PointId) -> BoundaryCondition,
+) -> Result<CoastalBoundaryAssembly, CoastalBoundaryAssemblyError> {
+    let faces: Vec<_> = boundary_faces.into_iter().collect();
+    let face_sets = coastal_boundary_face_sets(labels, faces.iter().copied());
+    let mut boundary_conditions = HashMap::new();
+    let mut branches = HashMap::new();
+    for face in faces {
+        let branch = boundary_branch_for_face_checked(labels, face)
+            .map_err(CoastalBoundaryAssemblyError::InvalidBoundaryFaceRole)?;
+        boundary_conditions.insert(face, branch_closure(branch, face));
+        branches.insert(face, branch);
+    }
+    Ok(CoastalBoundaryAssembly {
+        face_sets,
+        boundary_conditions,
+        branches,
+    })
 }
 
 fn field_offsets(field_dofs: &[usize]) -> Vec<usize> {
@@ -262,4 +300,116 @@ where
         }
     }
     section.apply_constraints()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::discretization::runtime::FluxStencil;
+    use crate::physics::fvm::{FvmInputs, flux_activity_mask_from_wet_dry};
+    use crate::topology::coastal::{
+        BOUNDARY_CLASS_LABEL, BOUNDARY_ROLE_LABEL, BoundaryClass, OpenBoundaryRole,
+        WET_DRY_MASK_LABEL, WetDryMask,
+    };
+
+    fn p(id: u64) -> PointId {
+        PointId::new(id).unwrap()
+    }
+
+    #[test]
+    fn resolves_all_boundary_branches_to_bc_closures() {
+        let mut labels = LabelSet::new();
+        labels.set_label(
+            p(10),
+            BOUNDARY_CLASS_LABEL,
+            BoundaryClass::FreeSurface.code(),
+        );
+        labels.set_label(p(11), BOUNDARY_CLASS_LABEL, BoundaryClass::Bed.code());
+        labels.set_label(p(12), BOUNDARY_CLASS_LABEL, BoundaryClass::Open.code());
+        labels.set_label(p(12), BOUNDARY_ROLE_LABEL, OpenBoundaryRole::Inflow.code());
+        labels.set_label(p(13), BOUNDARY_CLASS_LABEL, BoundaryClass::Open.code());
+        labels.set_label(p(13), BOUNDARY_ROLE_LABEL, OpenBoundaryRole::Outflow.code());
+        labels.set_label(p(14), BOUNDARY_CLASS_LABEL, BoundaryClass::Open.code());
+        labels.set_label(p(14), BOUNDARY_ROLE_LABEL, OpenBoundaryRole::Tidal.code());
+
+        let resolved = resolve_coastal_boundary_assembly(
+            &labels,
+            [p(10), p(11), p(12), p(13), p(14)],
+            |branch, _| match branch {
+                FvBoundaryBranch::FreeSurface => BoundaryCondition::Neumann { gradient: 1.0 },
+                FvBoundaryBranch::Bed => BoundaryCondition::Neumann { gradient: -1.0 },
+                FvBoundaryBranch::Inflow => BoundaryCondition::Dirichlet { value: 10.0 },
+                FvBoundaryBranch::Outflow => BoundaryCondition::Robin {
+                    alpha: 1.0,
+                    beta: 0.5,
+                    gamma: 0.2,
+                },
+                FvBoundaryBranch::Tidal => BoundaryCondition::Dirichlet { value: 7.0 },
+                FvBoundaryBranch::Open => unreachable!(),
+            },
+        )
+        .unwrap();
+        assert_eq!(resolved.face_sets.free_surface, vec![p(10)]);
+        assert_eq!(resolved.face_sets.bed, vec![p(11)]);
+        assert_eq!(resolved.face_sets.inflow, vec![p(12)]);
+        assert_eq!(resolved.face_sets.outflow, vec![p(13)]);
+        assert_eq!(resolved.face_sets.tidal, vec![p(14)]);
+        assert_eq!(resolved.boundary_conditions.len(), 5);
+    }
+
+    #[test]
+    fn errors_on_missing_open_role_in_assembly_faces() {
+        let mut labels = LabelSet::new();
+        labels.set_label(p(12), BOUNDARY_CLASS_LABEL, BoundaryClass::Open.code());
+        let err = resolve_coastal_boundary_assembly(&labels, [p(12)], |_, _| {
+            BoundaryCondition::Dirichlet { value: 0.0 }
+        })
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            CoastalBoundaryAssemblyError::InvalidBoundaryFaceRole(BoundaryBranchError::OpenBoundaryMissingRole { face }) if face == p(12)
+        ));
+    }
+
+    #[test]
+    fn wet_dry_mask_permutations_and_mixed_boundary_sets() {
+        let c0 = p(1);
+        let c1 = p(2);
+        let c2 = p(3);
+        let b0 = p(10);
+        let b1 = p(11);
+        let i0 = p(20);
+        let inputs = FvmInputs::new(
+            [
+                FluxStencil {
+                    face: b0,
+                    left: c0,
+                    right: None,
+                },
+                FluxStencil {
+                    face: b1,
+                    left: c1,
+                    right: None,
+                },
+                FluxStencil {
+                    face: i0,
+                    left: c1,
+                    right: Some(c2),
+                },
+            ],
+            vec![],
+            vec![],
+        );
+        let mut labels = LabelSet::new();
+        labels.set_label(b0, BOUNDARY_CLASS_LABEL, BoundaryClass::Open.code());
+        labels.set_label(b0, BOUNDARY_ROLE_LABEL, OpenBoundaryRole::Inflow.code());
+        labels.set_label(b1, BOUNDARY_CLASS_LABEL, BoundaryClass::Bed.code());
+        labels.set_label(i0, BOUNDARY_CLASS_LABEL, BoundaryClass::Open.code());
+        labels.set_label(c1, WET_DRY_MASK_LABEL, WetDryMask::Dry.code());
+        labels.set_label(c2, WET_DRY_MASK_LABEL, WetDryMask::Wet.code());
+        let mask = flux_activity_mask_from_wet_dry(&inputs, &labels);
+        assert_eq!(mask.boundary_faces_active.get(&b0), Some(&true));
+        assert_eq!(mask.boundary_faces_active.get(&b1), Some(&false));
+        assert_eq!(mask.near_boundary_faces_active.get(&i0), Some(&false));
+    }
 }
