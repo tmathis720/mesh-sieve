@@ -15,7 +15,7 @@ use crate::topology::coastal::{
 use crate::topology::labels::LabelSet;
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FaceKind {
@@ -142,6 +142,134 @@ pub trait FvmPhysicsHooks {
 pub struct FluxAssembly {
     pub residual: HashMap<PointId, f64>,
     pub source: HashMap<PointId, f64>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FvmFieldSections {
+    pub cell_scalar: HashMap<PointId, f64>,
+    pub cell_gradient: HashMap<PointId, Vec<f64>>,
+    pub face_mass_flux: HashMap<PointId, f64>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FvmSchemeSettings {
+    pub convective: ConvectiveScheme,
+    pub reconstruction: ReconstructionSettings,
+    pub diffusion: DiffusionSettings,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FvmAssemblyOutput {
+    pub convective: FluxAssembly,
+    pub diffusive: FluxAssembly,
+    pub total: FluxAssembly,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum FvmAssemblyError {
+    MissingFaceMetric { face: PointId },
+    MissingCellMetric { cell: PointId },
+    MissingBoundaryFaceLabel { face: PointId },
+    LabelMappedToUnknownFace { face: PointId },
+    LabelMappedToInternalFace { face: PointId },
+    UnsupportedBoundaryBranch { face: PointId, branch: FvBoundaryBranch },
+    Kernel(MeshSieveError),
+}
+
+impl From<MeshSieveError> for FvmAssemblyError {
+    fn from(value: MeshSieveError) -> Self {
+        Self::Kernel(value)
+    }
+}
+
+pub fn assemble_fv_system(
+    inputs: &FvmInputs,
+    fields: &FvmFieldSections,
+    convective_bcs: &HashMap<PointId, BoundaryCondition>,
+    diffusive_bcs: &HashMap<PointId, BoundaryCondition>,
+    boundary_face_branches: &HashMap<PointId, FvBoundaryBranch>,
+    supported_boundary_branches: &HashSet<FvBoundaryBranch>,
+    schemes: FvmSchemeSettings,
+) -> Result<FvmAssemblyOutput, FvmAssemblyError> {
+    preflight_fv_assembly(
+        inputs,
+        boundary_face_branches,
+        supported_boundary_branches,
+    )?;
+    let convective = assemble_convective_fluxes_with_reconstruction(
+        inputs,
+        &fields.cell_scalar,
+        &fields.face_mass_flux,
+        convective_bcs,
+        schemes.convective,
+        schemes.reconstruction,
+    )?;
+    let diffusive = assemble_diffusive_fluxes(
+        inputs,
+        &fields.cell_scalar,
+        &fields.cell_gradient,
+        diffusive_bcs,
+        schemes.diffusion,
+    )?;
+    let mut total = FluxAssembly::default();
+    for (cell, value) in convective.residual.iter().chain(diffusive.residual.iter()) {
+        total.add_residual(*cell, *value);
+    }
+    for (cell, value) in convective.source.iter().chain(diffusive.source.iter()) {
+        total.add_source(*cell, *value);
+    }
+    Ok(FvmAssemblyOutput {
+        convective,
+        diffusive,
+        total,
+    })
+}
+
+fn preflight_fv_assembly(
+    inputs: &FvmInputs,
+    boundary_face_branches: &HashMap<PointId, FvBoundaryBranch>,
+    supported_boundary_branches: &HashSet<FvBoundaryBranch>,
+) -> Result<(), FvmAssemblyError> {
+    for stencil in inputs.internal_faces() {
+        if inputs.face_metrics(stencil.face).is_none() {
+            return Err(FvmAssemblyError::MissingFaceMetric { face: stencil.face });
+        }
+        if inputs.cell_metrics(stencil.left).is_none() {
+            return Err(FvmAssemblyError::MissingCellMetric { cell: stencil.left });
+        }
+        let right = stencil.right.expect("internal");
+        if inputs.cell_metrics(right).is_none() {
+            return Err(FvmAssemblyError::MissingCellMetric { cell: right });
+        }
+    }
+    let boundary_faces: HashSet<_> = inputs.boundary_faces().map(|s| s.face).collect();
+    for stencil in inputs.boundary_faces() {
+        if inputs.face_metrics(stencil.face).is_none() {
+            return Err(FvmAssemblyError::MissingFaceMetric { face: stencil.face });
+        }
+        if inputs.cell_metrics(stencil.left).is_none() {
+            return Err(FvmAssemblyError::MissingCellMetric { cell: stencil.left });
+        }
+        let branch = boundary_face_branches
+            .get(&stencil.face)
+            .copied()
+            .ok_or(FvmAssemblyError::MissingBoundaryFaceLabel { face: stencil.face })?;
+        if !supported_boundary_branches.contains(&branch) {
+            return Err(FvmAssemblyError::UnsupportedBoundaryBranch {
+                face: stencil.face,
+                branch,
+            });
+        }
+    }
+    for (face, _) in boundary_face_branches {
+        if inputs.face_metrics(*face).is_none() {
+            return Err(FvmAssemblyError::LabelMappedToUnknownFace { face: *face });
+        }
+        if !boundary_faces.contains(face) {
+            return Err(FvmAssemblyError::LabelMappedToInternalFace { face: *face });
+        }
+    }
+    Ok(())
 }
 
 impl FluxAssembly {
@@ -1041,5 +1169,96 @@ mod tests {
             .unwrap();
             assert!((r.residual[&c0] + r.residual[&c1]).abs() < 1e-12);
         }
+    }
+
+    #[test]
+    fn assemble_driver_internal_only_mesh() {
+        let c0 = pid(1);
+        let c1 = pid(2);
+        let f = pid(11);
+        let inputs = FvmInputs::new(
+            [FluxStencil { face: f, left: c0, right: Some(c1) }],
+            vec![
+                (c0, CellGeometry { centroid: vec![0.0, 0.0], volume: 1.0 }),
+                (c1, CellGeometry { centroid: vec![1.0, 0.0], volume: 1.0 }),
+            ],
+            vec![(f, FaceGeometry { face: f, centroid: vec![0.5, 0.0], normal: vec![1.0, 0.0], area: 1.0, neighbors: vec![c0, c1] })],
+        );
+        let out = assemble_fv_system(
+            &inputs,
+            &FvmFieldSections {
+                cell_scalar: HashMap::from([(c0, 1.0), (c1, 3.0)]),
+                cell_gradient: HashMap::from([(c0, vec![2.0, 0.0]), (c1, vec![2.0, 0.0])]),
+                face_mass_flux: HashMap::from([(f, 1.0)]),
+            },
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashSet::new(),
+            FvmSchemeSettings { convective: ConvectiveScheme::Central, reconstruction: ReconstructionSettings::default(), diffusion: DiffusionSettings::default() },
+        ).unwrap();
+        assert!((out.total.residual[&c0] + out.total.residual[&c1]).abs() < 1e-12);
+    }
+
+    #[test]
+    fn assemble_driver_mixed_internal_boundary_mesh() {
+        let c0 = pid(1);
+        let c1 = pid(2);
+        let fi = pid(20);
+        let fb = pid(21);
+        let inputs = FvmInputs::new(
+            [FluxStencil { face: fi, left: c0, right: Some(c1) }, FluxStencil { face: fb, left: c0, right: None }],
+            vec![
+                (c0, CellGeometry { centroid: vec![0.0, 0.0], volume: 1.0 }),
+                (c1, CellGeometry { centroid: vec![1.0, 0.0], volume: 1.0 }),
+            ],
+            vec![
+                (fi, FaceGeometry { face: fi, centroid: vec![0.5, 0.0], normal: vec![1.0, 0.0], area: 1.0, neighbors: vec![c0, c1] }),
+                (fb, FaceGeometry { face: fb, centroid: vec![-0.5, 0.0], normal: vec![-1.0, 0.0], area: 1.0, neighbors: vec![c0] }),
+            ],
+        );
+        let branches = HashMap::from([(fb, FvBoundaryBranch::Inflow)]);
+        let supported = HashSet::from([FvBoundaryBranch::Inflow]);
+        let err = assemble_fv_system(
+            &inputs,
+            &FvmFieldSections {
+                cell_scalar: HashMap::from([(c0, 1.0), (c1, 2.0)]),
+                cell_gradient: HashMap::from([(c0, vec![1.0, 0.0]), (c1, vec![1.0, 0.0])]),
+                face_mass_flux: HashMap::from([(fi, 1.0), (fb, 1.0)]),
+            },
+            &HashMap::from([(fb, BoundaryCondition::Dirichlet { value: 5.0 })]),
+            &HashMap::from([(fb, BoundaryCondition::Neumann { gradient: 0.0 })]),
+            &branches,
+            &supported,
+            FvmSchemeSettings { convective: ConvectiveScheme::Upwind, reconstruction: ReconstructionSettings::default(), diffusion: DiffusionSettings::default() },
+        ).unwrap();
+        assert!(err.total.residual.contains_key(&c0));
+    }
+
+    #[test]
+    fn assemble_driver_boundary_only_rejects_invalid_label_mapping() {
+        let c0 = pid(1);
+        let fb = pid(31);
+        let inputs = FvmInputs::new(
+            [FluxStencil { face: fb, left: c0, right: None }],
+            vec![(c0, CellGeometry { centroid: vec![0.0, 0.0], volume: 1.0 })],
+            vec![(fb, FaceGeometry { face: fb, centroid: vec![0.0, 1.0], normal: vec![0.0, 1.0], area: 1.0, neighbors: vec![c0] })],
+        );
+        let bad_map = HashMap::from([(pid(99), FvBoundaryBranch::Open)]);
+        let supported = HashSet::from([FvBoundaryBranch::Open]);
+        let err = assemble_fv_system(
+            &inputs,
+            &FvmFieldSections {
+                cell_scalar: HashMap::from([(c0, 1.0)]),
+                cell_gradient: HashMap::from([(c0, vec![0.0, 1.0])]),
+                face_mass_flux: HashMap::from([(fb, 1.0)]),
+            },
+            &HashMap::from([(fb, BoundaryCondition::Dirichlet { value: 1.0 })]),
+            &HashMap::from([(fb, BoundaryCondition::Dirichlet { value: 1.0 })]),
+            &bad_map,
+            &supported,
+            FvmSchemeSettings { convective: ConvectiveScheme::Central, reconstruction: ReconstructionSettings::default(), diffusion: DiffusionSettings::default() },
+        ).unwrap_err();
+        assert!(matches!(err, FvmAssemblyError::LabelMappedToUnknownFace { .. }));
     }
 }
