@@ -164,6 +164,35 @@ pub struct FvmInputs {
     pub loops: FvmFaceLoops,
     pub cell_geometry: Vec<(PointId, CellGeometry)>,
     pub face_geometry: Vec<(PointId, FaceGeometry)>,
+    cell_index: HashMap<PointId, usize>,
+    face_index: HashMap<PointId, usize>,
+    internal_owner_neighbor_idx: Vec<(usize, usize)>,
+    boundary_owner_idx: Vec<usize>,
+    packed_cache: Option<PackedFvmInputs>,
+}
+
+#[derive(Clone, Debug)]
+pub struct PackedFvmInputs {
+    pub internal_faces: Vec<PackedInternalFace>,
+    pub boundary_faces: Vec<PackedBoundaryFace>,
+}
+
+#[derive(Clone, Debug)]
+pub struct PackedInternalFace {
+    pub face: PointId,
+    pub owner: PointId,
+    pub neighbor: PointId,
+    pub face_geom_idx: usize,
+    pub owner_cell_geom_idx: usize,
+    pub neighbor_cell_geom_idx: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct PackedBoundaryFace {
+    pub face: PointId,
+    pub owner: PointId,
+    pub face_geom_idx: usize,
+    pub owner_cell_geom_idx: usize,
 }
 
 impl FvmInputs {
@@ -180,11 +209,18 @@ impl FvmInputs {
                 loops.boundary.push(stencil);
             }
         }
-        Self {
+        let mut inputs = Self {
             loops,
             cell_geometry,
             face_geometry,
-        }
+            cell_index: HashMap::new(),
+            face_index: HashMap::new(),
+            internal_owner_neighbor_idx: Vec::new(),
+            boundary_owner_idx: Vec::new(),
+            packed_cache: None,
+        };
+        inputs.rebuild_indices();
+        inputs
     }
 
     pub fn internal_faces(&self) -> impl Iterator<Item = &FluxStencil> {
@@ -194,14 +230,96 @@ impl FvmInputs {
         self.loops.boundary.iter()
     }
     pub fn cell_metrics(&self, cell: PointId) -> Option<&CellGeometry> {
-        self.cell_geometry
-            .iter()
-            .find_map(|(id, m)| (*id == cell).then_some(m))
+        self.cell_index
+            .get(&cell)
+            .and_then(|&idx| self.cell_geometry.get(idx).map(|(_, m)| m))
     }
     pub fn face_metrics(&self, face: PointId) -> Option<&FaceGeometry> {
-        self.face_geometry
-            .iter()
-            .find_map(|(id, m)| (*id == face).then_some(m))
+        self.face_index
+            .get(&face)
+            .and_then(|&idx| self.face_geometry.get(idx).map(|(_, m)| m))
+    }
+
+    pub fn internal_owner_neighbor_indices(&self) -> &[(usize, usize)] {
+        &self.internal_owner_neighbor_idx
+    }
+
+    pub fn boundary_owner_indices(&self) -> &[usize] {
+        &self.boundary_owner_idx
+    }
+
+    pub fn packed(&self) -> Option<&PackedFvmInputs> {
+        self.packed_cache.as_ref()
+    }
+
+    pub fn build_packed_cache(&mut self) {
+        let mut internal_faces = Vec::with_capacity(self.loops.internal.len());
+        let mut boundary_faces = Vec::with_capacity(self.loops.boundary.len());
+        for stencil in &self.loops.internal {
+            if let (Some(&fi), Some(&oi), Some(neighbor), Some(&ni)) = (
+                self.face_index.get(&stencil.face),
+                self.cell_index.get(&stencil.left),
+                stencil.right,
+                stencil.right.and_then(|r| self.cell_index.get(&r)),
+            ) {
+                internal_faces.push(PackedInternalFace {
+                    face: stencil.face,
+                    owner: stencil.left,
+                    neighbor,
+                    face_geom_idx: fi,
+                    owner_cell_geom_idx: oi,
+                    neighbor_cell_geom_idx: ni,
+                });
+            }
+        }
+        for stencil in &self.loops.boundary {
+            if let (Some(&fi), Some(&oi)) = (
+                self.face_index.get(&stencil.face),
+                self.cell_index.get(&stencil.left),
+            ) {
+                boundary_faces.push(PackedBoundaryFace {
+                    face: stencil.face,
+                    owner: stencil.left,
+                    face_geom_idx: fi,
+                    owner_cell_geom_idx: oi,
+                });
+            }
+        }
+        self.packed_cache = Some(PackedFvmInputs {
+            internal_faces,
+            boundary_faces,
+        });
+    }
+
+    fn rebuild_indices(&mut self) {
+        self.cell_index.clear();
+        self.face_index.clear();
+        for (idx, (id, _)) in self.cell_geometry.iter().enumerate() {
+            self.cell_index.insert(*id, idx);
+        }
+        for (idx, (id, _)) in self.face_geometry.iter().enumerate() {
+            self.face_index.insert(*id, idx);
+        }
+        self.internal_owner_neighbor_idx.clear();
+        self.internal_owner_neighbor_idx
+            .reserve(self.loops.internal.len());
+        for stencil in &self.loops.internal {
+            if let (Some(&owner), Some(neighbor), Some(&neigh)) = (
+                self.cell_index.get(&stencil.left),
+                stencil.right,
+                stencil.right.and_then(|r| self.cell_index.get(&r)),
+            ) {
+                let _ = neighbor;
+                self.internal_owner_neighbor_idx.push((owner, neigh));
+            }
+        }
+        self.boundary_owner_idx.clear();
+        self.boundary_owner_idx.reserve(self.loops.boundary.len());
+        for stencil in &self.loops.boundary {
+            if let Some(&owner) = self.cell_index.get(&stencil.left) {
+                self.boundary_owner_idx.push(owner);
+            }
+        }
     }
 }
 
