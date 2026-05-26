@@ -27,9 +27,9 @@ pub mod refine;
 pub use crate::debug_invariants::DebugInvariants;
 
 pub use bc::{
-    FieldDofIndices, LabelQuery, apply_dirichlet_to_constrained_section,
+    CoastalBoundaryFaceSets, FieldDofIndices, LabelQuery, apply_dirichlet_to_constrained_section,
     apply_dirichlet_to_constrained_section_fields, apply_dirichlet_to_section,
-    apply_dirichlet_to_section_fields,
+    apply_dirichlet_to_section_fields, coastal_boundary_face_sets, map_coastal_boundary_conditions,
 };
 pub use closure::{
     ClosureIndex, ClosureIndexCache, ClosureIndexKey, ClosureOrder, ClosurePointIndex,

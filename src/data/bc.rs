@@ -4,9 +4,12 @@ use crate::data::constrained_section::ConstrainedSection;
 use crate::data::section::Section;
 use crate::data::storage::Storage;
 use crate::mesh_error::MeshSieveError;
+use crate::physics::fvm::{BoundaryCondition, FvBoundaryBranch, boundary_branch_for_face};
+use crate::topology::coastal::CoastalLabelQueries;
 use crate::topology::cache::InvalidateCache;
 use crate::topology::labels::LabelSet;
 use crate::topology::point::PointId;
+use std::collections::{HashMap, HashSet};
 
 /// Label query selector for boundary condition application.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,6 +59,53 @@ impl FieldDofIndices {
 
 fn label_points(labels: &LabelSet, query: &LabelQuery) -> Vec<PointId> {
     labels.stratum_points(query.name(), query.value())
+}
+
+/// Boundary face sets derived from canonical coastal labels.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CoastalBoundaryFaceSets {
+    pub free_surface: Vec<PointId>,
+    pub bed: Vec<PointId>,
+    pub open: Vec<PointId>,
+    pub inflow: Vec<PointId>,
+    pub outflow: Vec<PointId>,
+    pub tidal: Vec<PointId>,
+}
+
+/// Build boundary-face sets by intersecting supplied boundary faces with coastal labels.
+pub fn coastal_boundary_face_sets(
+    labels: &LabelSet,
+    boundary_faces: impl IntoIterator<Item = PointId>,
+) -> CoastalBoundaryFaceSets {
+    let faces: HashSet<_> = boundary_faces.into_iter().collect();
+    let mut filter = |pts: Vec<PointId>| -> Vec<PointId> {
+        let mut v: Vec<_> = pts.into_iter().filter(|p| faces.contains(p)).collect();
+        v.sort_unstable();
+        v
+    };
+    CoastalBoundaryFaceSets {
+        free_surface: filter(labels.free_surface_points()),
+        bed: filter(labels.bed_points()),
+        open: filter(labels.open_boundary_points()),
+        inflow: filter(labels.inflow_points()),
+        outflow: filter(labels.outflow_points()),
+        tidal: filter(labels.tidal_points()),
+    }
+}
+
+/// Assign per-face boundary conditions using coastal boundary class/role labels.
+pub fn map_coastal_boundary_conditions(
+    labels: &LabelSet,
+    boundary_faces: impl IntoIterator<Item = PointId>,
+    branch_closure: impl Fn(FvBoundaryBranch, PointId) -> BoundaryCondition,
+) -> HashMap<PointId, BoundaryCondition> {
+    let mut out = HashMap::new();
+    for face in boundary_faces {
+        if let Some(branch) = boundary_branch_for_face(labels, face) {
+            out.insert(face, branch_closure(branch, face));
+        }
+    }
+    out
 }
 
 fn field_offsets(field_dofs: &[usize]) -> Vec<usize> {
