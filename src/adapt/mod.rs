@@ -21,6 +21,7 @@ use crate::topology::refine::{
 };
 use crate::topology::sieve::Sieve;
 use std::collections::HashMap;
+use crate::diagnostics::FvmCellDiagnostic;
 
 /// Aggregated quality metrics used for adaptivity decisions.
 #[derive(Clone, Copy, Debug)]
@@ -195,6 +196,51 @@ pub struct MetricThresholds {
     pub split_face_length: f64,
     /// When enabled, enforce geometry checks during refinement.
     pub check_geometry: bool,
+}
+
+/// FV-stability-driven thresholds mapped from diagnostics.
+#[derive(Clone, Copy, Debug)]
+pub struct FvStabilityThresholds {
+    pub refine_non_orthogonality_deg: f64,
+    pub refine_skewness: f64,
+    pub refine_min_char_length: f64,
+    pub coarsen_non_orthogonality_deg: f64,
+    pub coarsen_skewness: f64,
+    pub coarsen_min_char_length: f64,
+}
+
+impl Default for FvStabilityThresholds {
+    fn default() -> Self {
+        Self {
+            refine_non_orthogonality_deg: 75.0,
+            refine_skewness: 4.0,
+            refine_min_char_length: 1.0e-8,
+            coarsen_non_orthogonality_deg: 35.0,
+            coarsen_skewness: 1.5,
+            coarsen_min_char_length: 1.0e-4,
+        }
+    }
+}
+
+pub fn select_cells_from_fvm_diagnostics(
+    cell_diags: &[FvmCellDiagnostic],
+    thresholds: FvStabilityThresholds,
+) -> AdaptivitySelection {
+    let mut selection = AdaptivitySelection::default();
+    for d in cell_diags {
+        if d.max_non_orthogonality_deg > thresholds.refine_non_orthogonality_deg
+            || d.max_skewness > thresholds.refine_skewness
+            || d.char_length < thresholds.refine_min_char_length
+        {
+            selection.refine_cells.push(d.cell);
+        } else if d.max_non_orthogonality_deg <= thresholds.coarsen_non_orthogonality_deg
+            && d.max_skewness <= thresholds.coarsen_skewness
+            && d.char_length >= thresholds.coarsen_min_char_length
+        {
+            selection.coarsen_cells.push(d.cell);
+        }
+    }
+    selection
 }
 
 impl Default for MetricThresholds {

@@ -34,6 +34,15 @@ pub struct FvmQualityDiagnostics {
     pub cell_char_length: MetricSummary,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct FvmCellDiagnostic {
+    pub cell: PointId,
+    pub max_non_orthogonality_deg: f64,
+    pub max_skewness: f64,
+    pub char_length: f64,
+    pub boundary_face_count: usize,
+}
+
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct FvReadinessThresholds {
     pub max_non_orthogonality_deg: f64,
@@ -252,6 +261,78 @@ where
         skewness: summarize(&skewness),
         cell_char_length: summarize(&char_lengths),
     })
+}
+
+pub fn fvm_cell_diagnostics<CT, CS>(
+    sieve: &MeshSieve,
+    cell_types: &Section<CellType, CT>,
+    coordinates: &Coordinates<f64, CS>,
+) -> Result<Vec<FvmCellDiagnostic>, MeshSieveError>
+where
+    CT: Storage<CellType>,
+    CS: Storage<f64>,
+{
+    let face_metrics = build_fvm_face_metrics(sieve, cell_types, coordinates)?;
+    let mut by_cell: std::collections::BTreeMap<PointId, FvmCellDiagnostic> =
+        std::collections::BTreeMap::new();
+    let mut cell_area_sum: std::collections::BTreeMap<PointId, f64> =
+        std::collections::BTreeMap::new();
+    for fm in &face_metrics {
+        let denom = fm
+            .owner_to_neighbor
+            .map(norm3)
+            .unwrap_or_else(|| norm3(fm.owner_to_face));
+        let skewness = if denom > 1e-12 {
+            norm3(fm.skewness_vector) / denom
+        } else {
+            0.0
+        };
+        let owner = by_cell.entry(fm.owner).or_insert(FvmCellDiagnostic {
+            cell: fm.owner,
+            max_non_orthogonality_deg: 0.0,
+            max_skewness: 0.0,
+            char_length: 0.0,
+            boundary_face_count: 0,
+        });
+        owner.max_non_orthogonality_deg = owner
+            .max_non_orthogonality_deg
+            .max(fm.non_orthogonality_deg.unwrap_or(0.0));
+        owner.max_skewness = owner.max_skewness.max(skewness);
+        if fm.neighbor.is_none() {
+            owner.boundary_face_count += 1;
+        }
+        *cell_area_sum.entry(fm.owner).or_insert(0.0) += fm.area_magnitude;
+        if let Some(n) = fm.neighbor {
+            let neigh = by_cell.entry(n).or_insert(FvmCellDiagnostic {
+                cell: n,
+                max_non_orthogonality_deg: 0.0,
+                max_skewness: 0.0,
+                char_length: 0.0,
+                boundary_face_count: 0,
+            });
+            neigh.max_non_orthogonality_deg = neigh
+                .max_non_orthogonality_deg
+                .max(fm.non_orthogonality_deg.unwrap_or(0.0));
+            neigh.max_skewness = neigh.max_skewness.max(skewness);
+            *cell_area_sum.entry(n).or_insert(0.0) += fm.area_magnitude;
+        }
+    }
+    for (cell, diag) in &mut by_cell {
+        if let Some(cell_type) = cell_types.try_restrict(*cell).ok().and_then(|v| v.first().copied()) {
+            let mut verts: Vec<_> = sieve
+                .closure_iter([*cell])
+                .filter(|p| sieve.cone_points(*p).next().is_none())
+                .collect();
+            verts.sort_unstable();
+            verts.dedup();
+            let quality = crate::geometry::quality::cell_quality_from_section(cell_type, &verts, coordinates)?;
+            let area_sum = *cell_area_sum.get(cell).unwrap_or(&0.0);
+            if area_sum > 1e-12 {
+                diag.char_length = quality.jacobian_sign.abs() / area_sum;
+            }
+        }
+    }
+    Ok(by_cell.into_values().collect())
 }
 
 pub fn fvm_quality_diagnostics_json<CT, CS>(
