@@ -64,3 +64,53 @@ let opts = CoastalValidationOptions::default();
 validate_coastal_metadata(&labels, None, None, opts)?;
 # Ok::<(), mesh_sieve::topology::CoastalMetadataError>(())
 ```
+
+## Finite-volume boundary mapping
+
+For FV boundary assembly (`src/physics/fvm.rs`), coastal labels map to boundary branches as:
+
+- `boundary_class=1` (`FreeSurface`) → `FvBoundaryBranch::FreeSurface`
+- `boundary_class=2` (`Bed`) → `FvBoundaryBranch::Bed`
+- `boundary_class=3` (`Open`) + no role → `FvBoundaryBranch::Open`
+- `boundary_class=3` + `boundary_role=11` (`Inflow`) → `FvBoundaryBranch::Inflow`
+- `boundary_class=3` + `boundary_role=12` (`Outflow`) → `FvBoundaryBranch::Outflow`
+- `boundary_class=3` + `boundary_role=13` (`Tidal`) → `FvBoundaryBranch::Tidal`
+
+Use `data::bc::coastal_boundary_face_sets(...)` to fetch per-class/role boundary face IDs from labels and a boundary-face iterator.
+
+Use `data::bc::map_coastal_boundary_conditions(...)` to produce per-face `BoundaryCondition` values from a closure over `FvBoundaryBranch`.
+
+### Example: coastal labels + FV assembly
+
+```rust
+use mesh_sieve::data::bc::{coastal_boundary_face_sets, map_coastal_boundary_conditions};
+use mesh_sieve::physics::fvm::{
+    ConvectiveScheme, assemble_convective_fluxes_masked, flux_activity_mask_from_wet_dry,
+};
+
+let face_sets = coastal_boundary_face_sets(&labels, inputs.boundary_faces().map(|s| s.face));
+assert!(!face_sets.open.is_empty() || !face_sets.bed.is_empty() || !face_sets.free_surface.is_empty());
+
+let bcs = map_coastal_boundary_conditions(&labels, inputs.boundary_faces().map(|s| s.face), |branch, _face| {
+    match branch {
+        mesh_sieve::physics::fvm::FvBoundaryBranch::Inflow => mesh_sieve::physics::fvm::BoundaryCondition::Dirichlet { value: 1.0 },
+        mesh_sieve::physics::fvm::FvBoundaryBranch::Outflow => mesh_sieve::physics::fvm::BoundaryCondition::Neumann { gradient: 0.0 },
+        mesh_sieve::physics::fvm::FvBoundaryBranch::Tidal => mesh_sieve::physics::fvm::BoundaryCondition::Dirichlet { value: 0.2 },
+        mesh_sieve::physics::fvm::FvBoundaryBranch::Bed => mesh_sieve::physics::fvm::BoundaryCondition::Neumann { gradient: 0.0 },
+        mesh_sieve::physics::fvm::FvBoundaryBranch::FreeSurface => mesh_sieve::physics::fvm::BoundaryCondition::Neumann { gradient: 0.0 },
+        mesh_sieve::physics::fvm::FvBoundaryBranch::Open => mesh_sieve::physics::fvm::BoundaryCondition::Neumann { gradient: 0.0 },
+    }
+});
+
+let wet_dry_mask = flux_activity_mask_from_wet_dry(&inputs, &labels);
+let flux = assemble_convective_fluxes_masked(
+    &inputs,
+    &cell_scalar,
+    &face_mass_flux,
+    &bcs,
+    ConvectiveScheme::Upwind,
+    Some(&wet_dry_mask),
+)?;
+```
+
+`FluxActivityMask` gates both boundary faces and near-boundary internal faces, so dry cells can suppress boundary and adjacent flux contributions.

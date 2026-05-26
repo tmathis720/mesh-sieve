@@ -8,6 +8,11 @@ use crate::data::section::Section;
 use crate::data::storage::Storage;
 use crate::discretization::runtime::{CellGeometry, FaceGeometry, FluxStencil};
 use crate::mesh_error::MeshSieveError;
+use crate::topology::coastal::{
+    BOUNDARY_CLASS_LABEL, BOUNDARY_ROLE_LABEL, BoundaryClass, OpenBoundaryRole, WET_DRY_MASK_LABEL,
+    WetDryMask,
+};
+use crate::topology::labels::LabelSet;
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
 use std::collections::HashMap;
@@ -29,6 +34,17 @@ pub enum BoundaryCondition {
     Dirichlet { value: f64 },
     Neumann { gradient: f64 },
     Robin { alpha: f64, beta: f64, gamma: f64 },
+}
+
+/// FV-oriented coastal boundary branch used to select flux closure behavior.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FvBoundaryBranch {
+    Open,
+    Inflow,
+    Outflow,
+    Tidal,
+    Bed,
+    FreeSurface,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -143,8 +159,72 @@ pub fn assemble_convective_fluxes(
     boundary_conditions: &HashMap<PointId, BoundaryCondition>,
     scheme: ConvectiveScheme,
 ) -> Result<FluxAssembly, MeshSieveError> {
+    assemble_convective_fluxes_masked(
+        inputs,
+        cell_scalar,
+        face_mass_flux,
+        boundary_conditions,
+        scheme,
+        None,
+    )
+}
+
+/// Optional face-activity mask used to gate FV flux contributions.
+#[derive(Clone, Debug, Default)]
+pub struct FluxActivityMask {
+    pub boundary_faces_active: HashMap<PointId, bool>,
+    pub near_boundary_faces_active: HashMap<PointId, bool>,
+}
+
+fn face_is_active(mask: Option<&FluxActivityMask>, stencil: &FluxStencil, boundary: bool) -> bool {
+    let Some(mask) = mask else { return true };
+    if boundary {
+        return mask.boundary_faces_active.get(&stencil.face).copied().unwrap_or(true);
+    }
+    if mask.near_boundary_faces_active.get(&stencil.face).copied().unwrap_or(true) {
+        return true;
+    }
+    false
+}
+
+/// Build a flux-activity mask from coastal wet/dry labels on cells.
+pub fn flux_activity_mask_from_wet_dry(
+    inputs: &FvmInputs,
+    labels: &LabelSet,
+) -> FluxActivityMask {
+    let mut mask = FluxActivityMask::default();
+    let dry = WetDryMask::Dry.code();
+    let cell_is_dry = |cell: PointId| labels.get_label(cell, WET_DRY_MASK_LABEL) == Some(dry);
+    for stencil in inputs.boundary_faces() {
+        mask.boundary_faces_active
+            .insert(stencil.face, !cell_is_dry(stencil.left));
+    }
+    for stencil in inputs.internal_faces() {
+        let near_boundary = labels.get_label(stencil.face, BOUNDARY_CLASS_LABEL).is_some();
+        if near_boundary {
+            let left_dry = cell_is_dry(stencil.left);
+            let right_dry = stencil.right.map(cell_is_dry).unwrap_or(true);
+            mask.near_boundary_faces_active
+                .insert(stencil.face, !(left_dry || right_dry));
+        }
+    }
+    mask
+}
+
+/// Assemble convective fluxes with optional wet/dry gating.
+pub fn assemble_convective_fluxes_masked(
+    inputs: &FvmInputs,
+    cell_scalar: &HashMap<PointId, f64>,
+    face_mass_flux: &HashMap<PointId, f64>,
+    boundary_conditions: &HashMap<PointId, BoundaryCondition>,
+    scheme: ConvectiveScheme,
+    activity_mask: Option<&FluxActivityMask>,
+) -> Result<FluxAssembly, MeshSieveError> {
     let mut assembly = FluxAssembly::default();
     for stencil in inputs.internal_faces() {
+        if !face_is_active(activity_mask, stencil, false) {
+            continue;
+        }
         let mdot = *face_mass_flux.get(&stencil.face).ok_or_else(|| MeshSieveError::InvalidGeometry(format!("missing mass flux for face {}", stencil.face)))?;
         let l = *cell_scalar.get(&stencil.left).ok_or_else(|| MeshSieveError::InvalidGeometry(format!("missing scalar for cell {}", stencil.left)))?;
         let rcell = stencil.right.expect("internal face must have neighbor");
@@ -155,20 +235,31 @@ pub fn assemble_convective_fluxes(
         assembly.add_residual(rcell, -flux);
     }
     for stencil in inputs.boundary_faces() {
+        if !face_is_active(activity_mask, stencil, true) {
+            continue;
+        }
         let mdot = *face_mass_flux.get(&stencil.face).ok_or_else(|| MeshSieveError::InvalidGeometry(format!("missing mass flux for boundary face {}", stencil.face)))?;
         let phi_i = *cell_scalar.get(&stencil.left).ok_or_else(|| MeshSieveError::InvalidGeometry(format!("missing scalar for cell {}", stencil.left)))?;
         let bc = boundary_conditions.get(&stencil.face).copied().ok_or_else(|| MeshSieveError::InvalidGeometry(format!("missing boundary condition for face {}", stencil.face)))?;
-        let phi_b = match bc {
-            BoundaryCondition::Dirichlet { value } => value,
-            BoundaryCondition::Neumann { .. } => phi_i,
-            BoundaryCondition::Robin { alpha, beta, gamma } => {
-                if alpha.abs() < 1e-14 { phi_i } else { (gamma - beta * phi_i) / alpha }
-            }
-        };
+        let phi_b = match bc { BoundaryCondition::Dirichlet { value } => value, BoundaryCondition::Neumann { .. } => phi_i, BoundaryCondition::Robin { alpha, beta, gamma } => if alpha.abs() < 1e-14 { phi_i } else { (gamma - beta * phi_i) / alpha } };
         let phi_f = if mdot >= 0.0 { phi_i } else { phi_b };
         assembly.add_residual(stencil.left, mdot * phi_f);
     }
     Ok(assembly)
+}
+
+pub fn boundary_branch_for_face(labels: &LabelSet, face: PointId) -> Option<FvBoundaryBranch> {
+    match labels.get_label(face, BOUNDARY_CLASS_LABEL) {
+        Some(v) if v == BoundaryClass::FreeSurface.code() => Some(FvBoundaryBranch::FreeSurface),
+        Some(v) if v == BoundaryClass::Bed.code() => Some(FvBoundaryBranch::Bed),
+        Some(v) if v == BoundaryClass::Open.code() => match labels.get_label(face, BOUNDARY_ROLE_LABEL) {
+            Some(v) if v == OpenBoundaryRole::Inflow.code() => Some(FvBoundaryBranch::Inflow),
+            Some(v) if v == OpenBoundaryRole::Outflow.code() => Some(FvBoundaryBranch::Outflow),
+            Some(v) if v == OpenBoundaryRole::Tidal.code() => Some(FvBoundaryBranch::Tidal),
+            _ => Some(FvBoundaryBranch::Open),
+        },
+        _ => None,
+    }
 }
 
 pub fn assemble_diffusive_fluxes(

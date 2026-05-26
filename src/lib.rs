@@ -163,8 +163,10 @@ pub mod prelude {
         integrate_reference_scalar,
     };
     pub use crate::physics::fvm::{
-        FaceKind, FvmFaceLoops, FvmInputs, assemble_convective_fluxes, assemble_diffusive_fluxes,
-        classify_face_loops, interpolate_cell_centered_scalar, interpolate_face_centered_scalar,
+        FaceKind, FluxActivityMask, FvBoundaryBranch, FvmFaceLoops, FvmInputs,
+        assemble_convective_fluxes, assemble_convective_fluxes_masked, assemble_diffusive_fluxes,
+        boundary_branch_for_face, classify_face_loops, flux_activity_mask_from_wet_dry,
+        interpolate_cell_centered_scalar, interpolate_face_centered_scalar,
     };
     pub use crate::topology::bounds::{PayloadLike, PointLike};
     pub use crate::topology::cell_type::CellType;
