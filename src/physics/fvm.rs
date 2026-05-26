@@ -23,10 +23,39 @@ pub enum FaceKind {
     Boundary,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ConvectiveScheme {
     Upwind,
     Central,
+    BoundedLinear { blend: f64 },
+    BlendUpwindCentral { blend: f64 },
+    HighResolution { blend: f64, limiter: SlopeLimiterFamily },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReconstructionGradient {
+    LeastSquares,
+    GreenGauss,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlopeLimiterFamily {
+    None,
+    Minmod,
+    VanLeer,
+    Superbee,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ReconstructionSettings {
+    pub gradient: ReconstructionGradient,
+    pub limiter: SlopeLimiterFamily,
+}
+
+impl Default for ReconstructionSettings {
+    fn default() -> Self {
+        Self { gradient: ReconstructionGradient::LeastSquares, limiter: SlopeLimiterFamily::None }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -50,13 +79,27 @@ pub enum FvBoundaryBranch {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DiffusionSettings {
     pub diffusivity: f64,
-    pub non_orthogonal_correction: bool,
+    pub non_orthogonal_mode: NonOrthogonalCorrectionMode,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NonOrthogonalCorrectionMode {
+    OrthogonalOnly,
+    Deferred,
+    FullyCorrected,
 }
 
 impl Default for DiffusionSettings {
     fn default() -> Self {
-        Self { diffusivity: 1.0, non_orthogonal_correction: true }
+        Self { diffusivity: 1.0, non_orthogonal_mode: NonOrthogonalCorrectionMode::FullyCorrected }
     }
+}
+
+pub trait FvmPhysicsHooks {
+    fn turbulence_flux(&self, _stencil: &FluxStencil, _inputs: &FvmInputs) -> f64 { 0.0 }
+    fn free_surface_flux(&self, _stencil: &FluxStencil, _inputs: &FvmInputs) -> f64 { 0.0 }
+    fn turbulence_source(&self, _cell: PointId, _inputs: &FvmInputs) -> f64 { 0.0 }
+    fn free_surface_source(&self, _cell: PointId, _inputs: &FvmInputs) -> f64 { 0.0 }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -159,12 +202,31 @@ pub fn assemble_convective_fluxes(
     boundary_conditions: &HashMap<PointId, BoundaryCondition>,
     scheme: ConvectiveScheme,
 ) -> Result<FluxAssembly, MeshSieveError> {
+    assemble_convective_fluxes_with_reconstruction(
+        inputs,
+        cell_scalar,
+        face_mass_flux,
+        boundary_conditions,
+        scheme,
+        ReconstructionSettings::default(),
+    )
+}
+
+pub fn assemble_convective_fluxes_with_reconstruction(
+    inputs: &FvmInputs,
+    cell_scalar: &HashMap<PointId, f64>,
+    face_mass_flux: &HashMap<PointId, f64>,
+    boundary_conditions: &HashMap<PointId, BoundaryCondition>,
+    scheme: ConvectiveScheme,
+    reconstruction: ReconstructionSettings,
+) -> Result<FluxAssembly, MeshSieveError> {
     assemble_convective_fluxes_masked(
         inputs,
         cell_scalar,
         face_mass_flux,
         boundary_conditions,
         scheme,
+        reconstruction,
         None,
     )
 }
@@ -218,6 +280,7 @@ pub fn assemble_convective_fluxes_masked(
     face_mass_flux: &HashMap<PointId, f64>,
     boundary_conditions: &HashMap<PointId, BoundaryCondition>,
     scheme: ConvectiveScheme,
+    reconstruction: ReconstructionSettings,
     activity_mask: Option<&FluxActivityMask>,
 ) -> Result<FluxAssembly, MeshSieveError> {
     let mut assembly = FluxAssembly::default();
@@ -229,7 +292,7 @@ pub fn assemble_convective_fluxes_masked(
         let l = *cell_scalar.get(&stencil.left).ok_or_else(|| MeshSieveError::InvalidGeometry(format!("missing scalar for cell {}", stencil.left)))?;
         let rcell = stencil.right.expect("internal face must have neighbor");
         let r = *cell_scalar.get(&rcell).ok_or_else(|| MeshSieveError::InvalidGeometry(format!("missing scalar for cell {}", rcell)))?;
-        let phi_f = match scheme { ConvectiveScheme::Upwind => if mdot >= 0.0 { l } else { r }, ConvectiveScheme::Central => 0.5 * (l + r) };
+        let phi_f = convective_face_value(l, r, mdot, scheme, reconstruction.limiter);
         let flux = mdot * phi_f;
         assembly.add_residual(stencil.left, flux);
         assembly.add_residual(rcell, -flux);
@@ -242,7 +305,7 @@ pub fn assemble_convective_fluxes_masked(
         let phi_i = *cell_scalar.get(&stencil.left).ok_or_else(|| MeshSieveError::InvalidGeometry(format!("missing scalar for cell {}", stencil.left)))?;
         let bc = boundary_conditions.get(&stencil.face).copied().ok_or_else(|| MeshSieveError::InvalidGeometry(format!("missing boundary condition for face {}", stencil.face)))?;
         let phi_b = match bc { BoundaryCondition::Dirichlet { value } => value, BoundaryCondition::Neumann { .. } => phi_i, BoundaryCondition::Robin { alpha, beta, gamma } => if alpha.abs() < 1e-14 { phi_i } else { (gamma - beta * phi_i) / alpha } };
-        let phi_f = if mdot >= 0.0 { phi_i } else { phi_b };
+        let phi_f = convective_face_value(phi_i, phi_b, mdot, scheme, reconstruction.limiter);
         assembly.add_residual(stencil.left, mdot * phi_f);
     }
     Ok(assembly)
@@ -269,6 +332,17 @@ pub fn assemble_diffusive_fluxes(
     boundary_conditions: &HashMap<PointId, BoundaryCondition>,
     settings: DiffusionSettings,
 ) -> Result<FluxAssembly, MeshSieveError> {
+    assemble_diffusive_fluxes_with_hooks(inputs, cell_scalar, cell_gradient, boundary_conditions, settings, None)
+}
+
+pub fn assemble_diffusive_fluxes_with_hooks(
+    inputs: &FvmInputs,
+    cell_scalar: &HashMap<PointId, f64>,
+    cell_gradient: &HashMap<PointId, Vec<f64>>,
+    boundary_conditions: &HashMap<PointId, BoundaryCondition>,
+    settings: DiffusionSettings,
+    hooks: Option<&dyn FvmPhysicsHooks>,
+) -> Result<FluxAssembly, MeshSieveError> {
     let mut assembly = FluxAssembly::default();
     for stencil in inputs.internal_faces() {
         let fg = inputs.face_metrics(stencil.face).ok_or_else(|| MeshSieveError::InvalidGeometry(format!("missing face geometry for face {}", stencil.face)))?;
@@ -282,12 +356,19 @@ pub fn assemble_diffusive_fluxes(
         let a = &fg.normal;
         let orth = if d2 > 0.0 { (phi_r - phi_l) * dot(a, &d) / d2 } else { 0.0 };
         let mut flux = -settings.diffusivity * orth;
-        if settings.non_orthogonal_correction {
+        let mut non_orth_flux = 0.0;
+        if settings.non_orthogonal_mode != NonOrthogonalCorrectionMode::OrthogonalOnly {
             let gf = avg(cell_gradient.get(&stencil.left), cell_gradient.get(&rcell), a.len())?;
             let a_orth = if d2 > 0.0 { scale(&d, dot(a, &d) / d2) } else { vec![0.0; a.len()] };
             let a_non = sub(a, &a_orth);
-            flux += -settings.diffusivity * dot(&gf, &a_non);
+            non_orth_flux = -settings.diffusivity * dot(&gf, &a_non);
         }
+        match settings.non_orthogonal_mode {
+            NonOrthogonalCorrectionMode::OrthogonalOnly => {}
+            NonOrthogonalCorrectionMode::Deferred => assembly.add_source(stencil.left, -non_orth_flux),
+            NonOrthogonalCorrectionMode::FullyCorrected => flux += non_orth_flux,
+        }
+        if let Some(h) = hooks { flux += h.turbulence_flux(stencil, inputs) + h.free_surface_flux(stencil, inputs); }
         assembly.add_residual(stencil.left, flux);
         assembly.add_residual(rcell, -flux);
     }
@@ -316,8 +397,43 @@ pub fn assemble_diffusive_fluxes(
             }
         }
     }
+    if let Some(h) = hooks {
+        for (cell, _) in &inputs.cell_geometry {
+            assembly.add_source(*cell, h.turbulence_source(*cell, inputs) + h.free_surface_source(*cell, inputs));
+        }
+    }
     Ok(assembly)
 }
+
+fn convective_face_value(l: f64, r: f64, mdot: f64, scheme: ConvectiveScheme, _limiter: SlopeLimiterFamily) -> f64 {
+    let up = if mdot >= 0.0 { l } else { r };
+    let dn = if mdot >= 0.0 { r } else { l };
+    let central = 0.5 * (l + r);
+    let (mn, mx) = (l.min(r), l.max(r));
+    match scheme {
+        ConvectiveScheme::Upwind => up,
+        ConvectiveScheme::Central => central,
+        ConvectiveScheme::BoundedLinear { blend } => clamp(up + clamp01(blend) * (central - up), mn, mx),
+        ConvectiveScheme::BlendUpwindCentral { blend } => (1.0 - clamp01(blend)) * up + clamp01(blend) * central,
+        ConvectiveScheme::HighResolution { blend, limiter: lim } => {
+            let psi = slope_limiter(lim, up, dn);
+            let hr = up + 0.5 * psi * (dn - up);
+            let b = clamp01(blend);
+            clamp((1.0 - b) * up + b * hr, mn, mx)
+        }
+    }
+}
+fn slope_limiter(limiter: SlopeLimiterFamily, up: f64, dn: f64) -> f64 {
+    let r = if (dn - up).abs() < 1e-14 { 1.0 } else { ((up - dn) / (dn - up)).abs() };
+    match limiter {
+        SlopeLimiterFamily::None => 1.0,
+        SlopeLimiterFamily::Minmod => r.clamp(0.0, 1.0),
+        SlopeLimiterFamily::VanLeer => (r + r.abs()) / (1.0 + r.abs()),
+        SlopeLimiterFamily::Superbee => (2.0 * r).min(1.0).max(r.min(2.0)).max(0.0),
+    }
+}
+fn clamp(x: f64, lo: f64, hi: f64) -> f64 { x.max(lo).min(hi) }
+fn clamp01(x: f64) -> f64 { clamp(x, 0.0, 1.0) }
 
 fn dot(a: &[f64], b: &[f64]) -> f64 { a.iter().zip(b.iter()).map(|(x,y)| x*y).sum() }
 fn sub(a: &[f64], b: &[f64]) -> Vec<f64> { a.iter().zip(b.iter()).map(|(x,y)| x-y).collect() }
@@ -356,5 +472,47 @@ mod tests {
         let grad = HashMap::from([(c0,vec![2.0,0.0]),(c1,vec![2.0,0.0])]);
         let r = assemble_diffusive_fluxes(&inputs,&phi,&grad,&HashMap::new(),DiffusionSettings::default()).unwrap();
         assert!((r.residual[&c0] + r.residual[&c1]).abs() < 1e-12);
+    }
+
+    #[test]
+    fn convective_bounded_linear_is_bounded_on_skewed_pair() {
+        let c0 = pid(1); let c1 = pid(2); let f = pid(10);
+        let inputs = FvmInputs::new(
+            [FluxStencil{face:f,left:c0,right:Some(c1)}],
+            vec![(c0,CellGeometry{centroid:vec![0.0,0.0],volume:1.0}),(c1,CellGeometry{centroid:vec![1.2,0.3],volume:1.0})],
+            vec![(f,FaceGeometry{face:f,centroid:vec![0.55,0.2],normal:vec![0.9,0.4],area:0.98,neighbors:vec![c0,c1]})]
+        );
+        let phi = HashMap::from([(c0, 0.0), (c1, 1.0)]);
+        let mdot = HashMap::from([(f, 4.0)]);
+        let r = assemble_convective_fluxes_with_reconstruction(
+            &inputs,
+            &phi,
+            &mdot,
+            &HashMap::new(),
+            ConvectiveScheme::BoundedLinear { blend: 1.0 },
+            ReconstructionSettings { gradient: ReconstructionGradient::GreenGauss, limiter: SlopeLimiterFamily::VanLeer },
+        ).unwrap();
+        let face_value = r.residual[&c0] / mdot[&f];
+        assert!((0.0..=1.0).contains(&face_value));
+        assert!((r.residual[&c0] + r.residual[&c1]).abs() < 1e-12);
+    }
+
+    #[test]
+    fn diffusive_non_orthogonal_modes_preserve_pair_conservation() {
+        let c0=pid(1); let c1=pid(2); let f=pid(9);
+        let inputs = FvmInputs::new(
+            [FluxStencil{face:f,left:c0,right:Some(c1)}],
+            vec![(c0,CellGeometry{centroid:vec![0.0,0.0],volume:1.0}),(c1,CellGeometry{centroid:vec![1.0,0.25],volume:1.0})],
+            vec![(f,FaceGeometry{face:f,centroid:vec![0.45,0.15],normal:vec![0.8,0.6],area:1.0,neighbors:vec![c0,c1]})]
+        );
+        let phi = HashMap::from([(c0,1.0),(c1,3.0)]);
+        let grad = HashMap::from([(c0,vec![2.0,0.2]),(c1,vec![2.0,0.2])]);
+        for mode in [NonOrthogonalCorrectionMode::OrthogonalOnly, NonOrthogonalCorrectionMode::Deferred, NonOrthogonalCorrectionMode::FullyCorrected] {
+            let r = assemble_diffusive_fluxes(
+                &inputs,&phi,&grad,&HashMap::new(),
+                DiffusionSettings { diffusivity: 1.0, non_orthogonal_mode: mode }
+            ).unwrap();
+            assert!((r.residual[&c0] + r.residual[&c1]).abs() < 1e-12);
+        }
     }
 }
