@@ -29,7 +29,7 @@ use crate::data::multi_section::constrained_section_from_label_specs;
 use crate::data::section::Section;
 use crate::data::storage::{Storage, VecStorage};
 use crate::data::{ConstrainedSection, LabelConstraintSpec};
-use crate::diagnostics::{MeshCheckOptions, fvm_cell_diagnostics, run_mesh_checks};
+use crate::diagnostics::{FvmQualityDiagnostics, MeshCheckOptions, fvm_cell_diagnostics, fvm_quality_diagnostics, run_mesh_checks};
 use crate::geometry::fvm::build_fvm_face_metrics;
 use crate::io::MeshData;
 use crate::mesh_error::MeshSieveError;
@@ -291,6 +291,14 @@ pub struct MeshDMAdaptIterationOptions {
     pub stop_when_below_threshold: bool,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct MeshDMFvIterationReport {
+    pub pass_index: usize,
+    pub fvm_quality: Option<FvmQualityDiagnostics>,
+    pub refine_candidates: usize,
+    pub coarsen_candidates: usize,
+}
+
 /// Provenance SF maps tracking load/redistribute/section movement.
 #[derive(Clone, Debug, Default)]
 pub struct MeshDMProvenance<C: Communicator + Sync + 'static> {
@@ -388,6 +396,52 @@ where
         Ok(history)
     }
 
+    pub fn adapt_until_fv_thresholds_with_history<C>(
+        &mut self,
+        metric_section_name: &str,
+        metric: &Section<MetricTensor, VecStorage<MetricTensor>>,
+        coarsen_plan: C,
+        options: MeshDMMetricAdaptOptions,
+        fv_thresholds: FvStabilityThresholds,
+        iter: MeshDMAdaptIterationOptions,
+    ) -> Result<(Vec<MeshDMMetricAdaptResult>, Vec<MeshDMFvIterationReport>), MeshSieveError>
+    where
+        C: Fn(&[MetricSplitHint]) -> Vec<crate::topology::coarsen::CoarsenEntity> + Copy,
+    {
+        let mut history = Vec::new();
+        let mut reports = Vec::new();
+        for pass_idx in 0..iter.max_iterations.max(1) {
+            let mut pass = self.adapt_with_attached_metric(
+                metric_section_name,
+                metric,
+                coarsen_plan,
+                options.clone(),
+            )?;
+            self.refresh_fv_geometry_caches()?;
+            let coords = self.mesh_data.coordinates.as_ref().ok_or_else(|| MeshSieveError::MissingSectionName { name: "coordinates".into() })?;
+            let cell_types = self.mesh_data.cell_types.as_ref().ok_or_else(|| MeshSieveError::MissingSectionName { name: "cell_types".into() })?;
+            let quality = fvm_quality_diagnostics(&self.mesh_data.sieve, cell_types, coords).ok();
+            let cell_diags = fvm_cell_diagnostics(&self.mesh_data.sieve, cell_types, coords)?;
+            let selection = select_cells_from_fvm_diagnostics(&cell_diags, fv_thresholds);
+            pass.fv_selection = Some((selection.refine_cells.clone(), selection.coarsen_cells.clone()));
+            reports.push(MeshDMFvIterationReport {
+                pass_index: pass_idx,
+                fvm_quality: quality,
+                refine_candidates: selection.refine_cells.len(),
+                coarsen_candidates: selection.coarsen_cells.len(),
+            });
+            history.push(pass.clone());
+            let stop_by_action = matches!(pass.action, MetricAdaptationAction::NoChange);
+            let stop_by_threshold = iter.stop_when_below_threshold
+                && selection.refine_cells.is_empty()
+                && selection.coarsen_cells.is_empty();
+            if stop_by_action || stop_by_threshold {
+                break;
+            }
+        }
+        Ok((history, reports))
+    }
+
     /// Iteratively adapt until no action is taken or iteration budget is exhausted.
     pub fn adapt_with_attached_metric_iterative<C, F>(
         &mut self,
@@ -434,6 +488,7 @@ where
         action: &MetricAdaptationAction,
         strategy: MeshDMTransferStrategy,
     ) -> Result<MeshDMAdaptDiagnostics, MeshSieveError> {
+        self.refresh_fv_geometry_caches()?;
         let changed_cells = match action {
             MetricAdaptationAction::Refined { mesh } => mesh.cell_refinement.len(),
             MetricAdaptationAction::Coarsened { mesh } => mesh.transfer_map.len(),
@@ -472,6 +527,17 @@ where
             }
         }
         Ok(diagnostics)
+    }
+
+    fn refresh_fv_geometry_caches(&mut self) -> Result<(), MeshSieveError> {
+        let _ = compute_strata(&self.mesh_data.sieve)?;
+        if let (Some(coords), Some(cell_types)) = (
+            self.mesh_data.coordinates.as_ref(),
+            self.mesh_data.cell_types.as_ref(),
+        ) {
+            let _ = build_fvm_face_metrics(&self.mesh_data.sieve, cell_types, coords)?;
+        }
+        Ok(())
     }
 }
 
