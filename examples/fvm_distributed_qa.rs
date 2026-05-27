@@ -1,19 +1,20 @@
-//! Distributed FVM QA mini-example.
+//! Compare the focused FVM distributed QA case across communication modes.
 //!
-//! This mirrors the communicator/distribution test cases used in CI:
-//! - serial baseline (`NoComm`)
-//! - threaded distributed path (`RayonComm`, two ranks)
-//! - optional MPI distributed path (`MpiComm`, run with `mpirun -n 2`)
+//! ```bash
+//! # 1) Serial-style baseline and threaded distributed checks
+//! cargo test --test fvm_distributed_qa
 //!
-//! It demonstrates global residual conservation, interface flux cancellation,
-//! and ghost synchronization for cell-centered and face-centered values.
-
-use mesh_sieve::algs::communicator::{Communicator, NoComm};
+//! # 2) MPI variant (same tiny case, two ranks)
+//! cargo test --features mpi-support --test mpi_fvm_distributed_qa
+//! # or with launcher:
+//! mpirun -n 2 cargo test --features mpi-support --test mpi_fvm_distributed_qa -- --nocapture
+//! ```
+//!
+//! The two tests validate:
+//! - global conservation parity
+//! - interface flux cancellation
+//! - near-identical per-cell residuals across partitionings
 
 fn main() {
-    let no = NoComm;
-    println!("NoComm baseline active: {}", no.is_no_comm());
-    println!(
-        "See tests/fvm_distributed_qa.rs and tests/mpi_fvm_distributed_qa.rs for executable QA assertions."
-    );
+    println!("Run the commands in this file's docs to compare NoComm, RayonComm, and MpiComm modes.");
 }
