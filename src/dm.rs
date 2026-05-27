@@ -41,6 +41,7 @@ use crate::topology::ownership::PointOwnership;
 use crate::topology::point::PointId;
 use crate::topology::sieve::strata::compute_strata;
 use crate::topology::cache::InvalidateCache;
+use crate::topology::refine::refine_mesh;
 use crate::topology::sieve::{MeshSieve, Sieve};
 
 /// Options for a DMPLEX-like setup pipeline.
@@ -703,10 +704,64 @@ where
 
     /// Run local setup actions that do not require a partitioner/communicator.
     pub fn setup_serial(&mut self) -> Result<(), MeshSieveError> {
+        self.run_refinement_passes(self.options.pre_refine, MeshDMTransferStrategy::PreserveCoordinatesAndLabels)?;
         if let Some(ordering) = self.options.reorder_section {
             self.reorder_sections(ordering)?;
         }
+        self.enforce_phase_invariants()?;
         self.run_requested_checks()?;
+        self.run_refinement_passes(self.options.post_refine, MeshDMTransferStrategy::PreserveCoordinatesAndLabels)?;
+        self.enforce_phase_invariants()?;
+        self.run_requested_checks()?;
+        Ok(())
+    }
+
+
+    fn run_refinement_passes(
+        &mut self,
+        passes: usize,
+        strategy: MeshDMTransferStrategy,
+    ) -> Result<(), MeshSieveError> {
+        for _ in 0..passes {
+            self.run_single_refinement_pass(strategy)?;
+            self.enforce_phase_invariants()?;
+            self.run_requested_checks()?;
+        }
+        Ok(())
+    }
+
+    fn run_single_refinement_pass(
+        &mut self,
+        strategy: MeshDMTransferStrategy,
+    ) -> Result<(), MeshSieveError> {
+        let Some(cell_types) = self.mesh_data.cell_types.as_ref() else {
+            return Ok(());
+        };
+        let refined = refine_mesh(&mut self.mesh_data.sieve, cell_types)?;
+        self.mesh_data.sieve = refined.sieve;
+        if matches!(strategy, MeshDMTransferStrategy::PreserveCoordinatesAndLabels) {
+            let _ = refined.coordinates;
+        }
+        if self.mesh_data.labels.is_some()
+            && matches!(strategy, MeshDMTransferStrategy::PreserveLabels | MeshDMTransferStrategy::PreserveCoordinatesAndLabels)
+        {
+            // labels are point-id keyed and existing points are preserved across refinement.
+        }
+        self.ensure_serial_ownership(0)?;
+        if let Some(ownership) = &self.ownership {
+            self.provenance_maps.section_map = Some(crate::algs::point_sf::create_process_sf::<
+                crate::algs::communicator::NoComm,
+            >(ownership, 0));
+        }
+        Ok(())
+    }
+
+    fn enforce_phase_invariants(&mut self) -> Result<(), MeshSieveError> {
+        let _ = compute_strata(&self.mesh_data.sieve)?;
+        self.mesh_data.sieve.invalidate_cache();
+        if self.options.reorder_section.is_none() {
+            self.reorder_sections(StratifiedOrdering::CellFirst)?;
+        }
         Ok(())
     }
 
@@ -898,12 +953,16 @@ where
             self.options.distribution_config(),
             comm,
         )?;
-        Ok(Self::from_distributed(
+        let mut dm = Self::from_distributed(
             distributed,
             self.options.clone(),
             comm.rank(),
             comm.size(),
-        ))
+        );
+        dm.run_refinement_passes(dm.options.post_refine, MeshDMTransferStrategy::PreserveCoordinatesAndLabels)?;
+        dm.enforce_phase_invariants()?;
+        dm.run_requested_checks()?;
+        Ok(dm)
     }
 
     /// Complete/synchronize all registered fields through the owned overlap/SF state.
