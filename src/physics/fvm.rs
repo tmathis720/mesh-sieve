@@ -1629,4 +1629,105 @@ mod tests {
             FvmAssemblyError::LabelMappedToUnknownFace { .. }
         ));
     }
+
+    #[test]
+    fn preflight_reports_missing_metrics_and_internal_label_mapping() {
+        let c0 = pid(1);
+        let c1 = pid(2);
+        let fi = pid(41);
+        let fb = pid(42);
+
+        let inputs_missing_face_metric = FvmInputs::new(
+            [FluxStencil {
+                face: fb,
+                left: c0,
+                right: None,
+            }],
+            vec![(
+                c0,
+                CellGeometry {
+                    centroid: vec![0.0, 0.0],
+                    volume: 1.0,
+                },
+            )],
+            vec![],
+        );
+        let err = preflight_fv_assembly(
+            &inputs_missing_face_metric,
+            &HashMap::new(),
+            &HashSet::new(),
+        )
+        .unwrap_err();
+        assert_eq!(err, FvmAssemblyError::MissingFaceMetric { face: fb });
+
+        let inputs_missing_cell_metric = FvmInputs::new(
+            [FluxStencil {
+                face: fb,
+                left: c0,
+                right: None,
+            }],
+            vec![],
+            vec![(
+                fb,
+                FaceGeometry {
+                    face: fb,
+                    centroid: vec![0.0, 0.0],
+                    normal: vec![1.0, 0.0],
+                    area: 1.0,
+                    neighbors: vec![c0],
+                },
+            )],
+        );
+        let err = preflight_fv_assembly(
+            &inputs_missing_cell_metric,
+            &HashMap::new(),
+            &HashSet::new(),
+        )
+        .unwrap_err();
+        assert_eq!(err, FvmAssemblyError::MissingCellMetric { cell: c0 });
+
+        let inputs_internal_face_label = FvmInputs::new(
+            [FluxStencil {
+                face: fi,
+                left: c0,
+                right: Some(c1),
+            }],
+            vec![
+                (
+                    c0,
+                    CellGeometry {
+                        centroid: vec![0.0, 0.0],
+                        volume: 1.0,
+                    },
+                ),
+                (
+                    c1,
+                    CellGeometry {
+                        centroid: vec![1.0, 0.0],
+                        volume: 1.0,
+                    },
+                ),
+            ],
+            vec![(
+                fi,
+                FaceGeometry {
+                    face: fi,
+                    centroid: vec![0.5, 0.0],
+                    normal: vec![1.0, 0.0],
+                    area: 1.0,
+                    neighbors: vec![c0, c1],
+                },
+            )],
+        );
+        let err = preflight_fv_assembly(
+            &inputs_internal_face_label,
+            &HashMap::from([(fi, FvBoundaryBranch::Open)]),
+            &HashSet::new(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            FvmAssemblyError::LabelMappedToInternalFace { face: fi }
+        );
+    }
 }
