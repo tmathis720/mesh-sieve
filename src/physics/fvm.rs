@@ -229,7 +229,68 @@ pub enum FvmAssemblyError {
         face: PointId,
         branch: FvBoundaryBranch,
     },
+    MissingBoundaryClosure {
+        face: PointId,
+        branch: FvBoundaryBranch,
+        kind: FaceKind,
+    },
     Kernel(MeshSieveError),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnsupportedBoundaryBehavior {
+    Error,
+    Ignore,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FvBoundaryPolicy {
+    pub boundary_face_branches: HashMap<PointId, FvBoundaryBranch>,
+    pub allowed_branches: HashSet<FvBoundaryBranch>,
+    pub convective_branch_hooks: HashMap<FvBoundaryBranch, BoundaryCondition>,
+    pub diffusive_branch_hooks: HashMap<FvBoundaryBranch, BoundaryCondition>,
+    pub unsupported_behavior: UnsupportedBoundaryBehavior,
+}
+
+impl FvBoundaryPolicy {
+    fn build_face_bcs(
+        &self,
+        kind: FaceKind,
+    ) -> Result<HashMap<PointId, BoundaryCondition>, FvmAssemblyError> {
+        let branch_hooks = match kind {
+            FaceKind::Internal => return Ok(HashMap::new()),
+            FaceKind::Boundary => &self.convective_branch_hooks,
+        };
+        let mut result = HashMap::with_capacity(self.boundary_face_branches.len());
+        for (face, branch) in &self.boundary_face_branches {
+            if let Some(bc) = branch_hooks.get(branch) {
+                result.insert(*face, *bc);
+            } else if self.unsupported_behavior == UnsupportedBoundaryBehavior::Error {
+                return Err(FvmAssemblyError::MissingBoundaryClosure {
+                    face: *face,
+                    branch: *branch,
+                    kind,
+                });
+            }
+        }
+        Ok(result)
+    }
+
+    fn build_diffusive_face_bcs(&self) -> Result<HashMap<PointId, BoundaryCondition>, FvmAssemblyError> {
+        let mut result = HashMap::with_capacity(self.boundary_face_branches.len());
+        for (face, branch) in &self.boundary_face_branches {
+            if let Some(bc) = self.diffusive_branch_hooks.get(branch) {
+                result.insert(*face, *bc);
+            } else if self.unsupported_behavior == UnsupportedBoundaryBehavior::Error {
+                return Err(FvmAssemblyError::MissingBoundaryClosure {
+                    face: *face,
+                    branch: *branch,
+                    kind: FaceKind::Boundary,
+                });
+            }
+        }
+        Ok(result)
+    }
 }
 
 impl From<MeshSieveError> for FvmAssemblyError {
@@ -241,18 +302,17 @@ impl From<MeshSieveError> for FvmAssemblyError {
 pub fn assemble_fv_system(
     inputs: &FvmInputs,
     fields: &FvmFieldSections,
-    convective_bcs: &HashMap<PointId, BoundaryCondition>,
-    diffusive_bcs: &HashMap<PointId, BoundaryCondition>,
-    boundary_face_branches: &HashMap<PointId, FvBoundaryBranch>,
-    supported_boundary_branches: &HashSet<FvBoundaryBranch>,
+    boundary_policy: &FvBoundaryPolicy,
     schemes: FvmSchemeSettings,
 ) -> Result<FvmAssemblyOutput, FvmAssemblyError> {
-    preflight_fv_assembly(inputs, boundary_face_branches, supported_boundary_branches)?;
+    preflight_fv_assembly(inputs, boundary_policy)?;
+    let convective_bcs = boundary_policy.build_face_bcs(FaceKind::Boundary)?;
+    let diffusive_bcs = boundary_policy.build_diffusive_face_bcs()?;
     let convective = assemble_convective_fluxes_with_reconstruction(
         inputs,
         &fields.cell_scalar,
         &fields.face_mass_flux,
-        convective_bcs,
+        &convective_bcs,
         schemes.convective,
         schemes.reconstruction,
     )?;
@@ -260,7 +320,7 @@ pub fn assemble_fv_system(
         inputs,
         &fields.cell_scalar,
         &fields.cell_gradient,
-        diffusive_bcs,
+        &diffusive_bcs,
         schemes.diffusion,
     )?;
     let mut total = FluxAssembly::default();
@@ -279,8 +339,7 @@ pub fn assemble_fv_system(
 
 fn preflight_fv_assembly(
     inputs: &FvmInputs,
-    boundary_face_branches: &HashMap<PointId, FvBoundaryBranch>,
-    supported_boundary_branches: &HashSet<FvBoundaryBranch>,
+    boundary_policy: &FvBoundaryPolicy,
 ) -> Result<(), FvmAssemblyError> {
     for stencil in inputs.internal_faces() {
         if inputs.face_metrics(stencil.face).is_none() {
@@ -302,18 +361,22 @@ fn preflight_fv_assembly(
         if inputs.cell_metrics(stencil.left).is_none() {
             return Err(FvmAssemblyError::MissingCellMetric { cell: stencil.left });
         }
-        let branch = boundary_face_branches
+        let branch = boundary_policy
+            .boundary_face_branches
             .get(&stencil.face)
             .copied()
             .ok_or(FvmAssemblyError::MissingBoundaryFaceLabel { face: stencil.face })?;
-        if !supported_boundary_branches.contains(&branch) {
-            return Err(FvmAssemblyError::UnsupportedBoundaryBranch {
-                face: stencil.face,
-                branch,
-            });
+        if !boundary_policy.allowed_branches.contains(&branch) {
+            if boundary_policy.unsupported_behavior == UnsupportedBoundaryBehavior::Error {
+                return Err(FvmAssemblyError::UnsupportedBoundaryBranch {
+                    face: stencil.face,
+                    branch,
+                });
+            }
+            continue;
         }
     }
-    for (face, _) in boundary_face_branches {
+    for (face, _) in &boundary_policy.boundary_face_branches {
         if inputs.face_metrics(*face).is_none() {
             return Err(FvmAssemblyError::LabelMappedToUnknownFace { face: *face });
         }
@@ -1099,6 +1162,19 @@ mod tests {
         PointId::new(id).unwrap()
     }
 
+    fn policy(
+        branches: HashMap<PointId, FvBoundaryBranch>,
+        allowed: HashSet<FvBoundaryBranch>,
+    ) -> FvBoundaryPolicy {
+        FvBoundaryPolicy {
+            boundary_face_branches: branches,
+            allowed_branches: allowed,
+            convective_branch_hooks: HashMap::new(),
+            diffusive_branch_hooks: HashMap::new(),
+            unsupported_behavior: UnsupportedBoundaryBehavior::Error,
+        }
+    }
+
     #[test]
     fn convective_two_cell_conservation() {
         let c0 = pid(1);
@@ -1481,10 +1557,7 @@ mod tests {
                 cell_gradient: HashMap::from([(c0, vec![2.0, 0.0]), (c1, vec![2.0, 0.0])]),
                 face_mass_flux: HashMap::from([(f, 1.0)]),
             },
-            &HashMap::new(),
-            &HashMap::new(),
-            &HashMap::new(),
-            &HashSet::new(),
+            &policy(HashMap::new(), HashSet::new()),
             FvmSchemeSettings {
                 convective: ConvectiveScheme::Central,
                 reconstruction: ReconstructionSettings::default(),
@@ -1554,7 +1627,15 @@ mod tests {
             ],
         );
         let branches = HashMap::from([(fb, FvBoundaryBranch::Inflow)]);
-        let supported = HashSet::from([FvBoundaryBranch::Inflow]);
+        let mut boundary_policy = policy(branches, HashSet::from([FvBoundaryBranch::Inflow]));
+        boundary_policy.convective_branch_hooks.insert(
+            FvBoundaryBranch::Inflow,
+            BoundaryCondition::Dirichlet { value: 5.0 },
+        );
+        boundary_policy.diffusive_branch_hooks.insert(
+            FvBoundaryBranch::Inflow,
+            BoundaryCondition::Neumann { gradient: 0.0 },
+        );
         let err = assemble_fv_system(
             &inputs,
             &FvmFieldSections {
@@ -1562,10 +1643,7 @@ mod tests {
                 cell_gradient: HashMap::from([(c0, vec![1.0, 0.0]), (c1, vec![1.0, 0.0])]),
                 face_mass_flux: HashMap::from([(fi, 1.0), (fb, 1.0)]),
             },
-            &HashMap::from([(fb, BoundaryCondition::Dirichlet { value: 5.0 })]),
-            &HashMap::from([(fb, BoundaryCondition::Neumann { gradient: 0.0 })]),
-            &branches,
-            &supported,
+            &boundary_policy,
             FvmSchemeSettings {
                 convective: ConvectiveScheme::Upwind,
                 reconstruction: ReconstructionSettings::default(),
@@ -1605,7 +1683,6 @@ mod tests {
             )],
         );
         let bad_map = HashMap::from([(pid(99), FvBoundaryBranch::Open)]);
-        let supported = HashSet::from([FvBoundaryBranch::Open]);
         let err = assemble_fv_system(
             &inputs,
             &FvmFieldSections {
@@ -1613,10 +1690,7 @@ mod tests {
                 cell_gradient: HashMap::from([(c0, vec![0.0, 1.0])]),
                 face_mass_flux: HashMap::from([(fb, 1.0)]),
             },
-            &HashMap::from([(fb, BoundaryCondition::Dirichlet { value: 1.0 })]),
-            &HashMap::from([(fb, BoundaryCondition::Dirichlet { value: 1.0 })]),
-            &bad_map,
-            &supported,
+            &policy(bad_map, HashSet::from([FvBoundaryBranch::Open])),
             FvmSchemeSettings {
                 convective: ConvectiveScheme::Central,
                 reconstruction: ReconstructionSettings::default(),
@@ -1652,11 +1726,7 @@ mod tests {
             )],
             vec![],
         );
-        let err = preflight_fv_assembly(
-            &inputs_missing_face_metric,
-            &HashMap::new(),
-            &HashSet::new(),
-        )
+        let err = preflight_fv_assembly(&inputs_missing_face_metric, &policy(HashMap::new(), HashSet::new()))
         .unwrap_err();
         assert_eq!(err, FvmAssemblyError::MissingFaceMetric { face: fb });
 
@@ -1678,11 +1748,7 @@ mod tests {
                 },
             )],
         );
-        let err = preflight_fv_assembly(
-            &inputs_missing_cell_metric,
-            &HashMap::new(),
-            &HashSet::new(),
-        )
+        let err = preflight_fv_assembly(&inputs_missing_cell_metric, &policy(HashMap::new(), HashSet::new()))
         .unwrap_err();
         assert_eq!(err, FvmAssemblyError::MissingCellMetric { cell: c0 });
 
@@ -1721,8 +1787,7 @@ mod tests {
         );
         let err = preflight_fv_assembly(
             &inputs_internal_face_label,
-            &HashMap::from([(fi, FvBoundaryBranch::Open)]),
-            &HashSet::new(),
+            &policy(HashMap::from([(fi, FvBoundaryBranch::Open)]), HashSet::new()),
         )
         .unwrap_err();
         assert_eq!(

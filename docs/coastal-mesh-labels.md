@@ -80,37 +80,67 @@ Use `data::bc::coastal_boundary_face_sets(...)` to fetch per-class/role boundary
 
 Use `data::bc::map_coastal_boundary_conditions(...)` to produce per-face `BoundaryCondition` values from a closure over `FvBoundaryBranch`.
 
-### Example: coastal labels + FV assembly
+### Example: coastal labels → boundary policy → FV assembly
 
 ```rust
 use mesh_sieve::data::bc::{coastal_boundary_face_sets, map_coastal_boundary_conditions};
 use mesh_sieve::physics::fvm::{
-    ConvectiveScheme, assemble_convective_fluxes_masked, flux_activity_mask_from_wet_dry,
+    assemble_fv_system, BoundaryCondition, ConvectiveScheme, DiffusionSettings, FvBoundaryPolicy,
+    FvBoundaryBranch, FvmFieldSections, FvmSchemeSettings, ReconstructionSettings,
+    UnsupportedBoundaryBehavior,
 };
+use std::collections::{HashMap, HashSet};
 
 let face_sets = coastal_boundary_face_sets(&labels, inputs.boundary_faces().map(|s| s.face));
 assert!(!face_sets.open.is_empty() || !face_sets.bed.is_empty() || !face_sets.free_surface.is_empty());
 
-let bcs = map_coastal_boundary_conditions(&labels, inputs.boundary_faces().map(|s| s.face), |branch, _face| {
-    match branch {
-        mesh_sieve::physics::fvm::FvBoundaryBranch::Inflow => mesh_sieve::physics::fvm::BoundaryCondition::Dirichlet { value: 1.0 },
-        mesh_sieve::physics::fvm::FvBoundaryBranch::Outflow => mesh_sieve::physics::fvm::BoundaryCondition::Neumann { gradient: 0.0 },
-        mesh_sieve::physics::fvm::FvBoundaryBranch::Tidal => mesh_sieve::physics::fvm::BoundaryCondition::Dirichlet { value: 0.2 },
-        mesh_sieve::physics::fvm::FvBoundaryBranch::Bed => mesh_sieve::physics::fvm::BoundaryCondition::Neumann { gradient: 0.0 },
-        mesh_sieve::physics::fvm::FvBoundaryBranch::FreeSurface => mesh_sieve::physics::fvm::BoundaryCondition::Neumann { gradient: 0.0 },
-        mesh_sieve::physics::fvm::FvBoundaryBranch::Open => mesh_sieve::physics::fvm::BoundaryCondition::Neumann { gradient: 0.0 },
-    }
-});
+let boundary_face_branches = map_coastal_boundary_conditions(
+    &labels,
+    inputs.boundary_faces().map(|s| s.face),
+    |branch, _face| branch,
+);
 
-let wet_dry_mask = flux_activity_mask_from_wet_dry(&inputs, &labels);
-let flux = assemble_convective_fluxes_masked(
+let boundary_policy = FvBoundaryPolicy {
+    boundary_face_branches,
+    allowed_branches: HashSet::from([
+        FvBoundaryBranch::Inflow,
+        FvBoundaryBranch::Outflow,
+        FvBoundaryBranch::Tidal,
+        FvBoundaryBranch::Bed,
+        FvBoundaryBranch::FreeSurface,
+        FvBoundaryBranch::Open,
+    ]),
+    convective_branch_hooks: HashMap::from([
+        (FvBoundaryBranch::Inflow, BoundaryCondition::Dirichlet { value: 1.0 }),
+        (FvBoundaryBranch::Outflow, BoundaryCondition::Neumann { gradient: 0.0 }),
+        (FvBoundaryBranch::Tidal, BoundaryCondition::Dirichlet { value: 0.2 }),
+        (FvBoundaryBranch::Bed, BoundaryCondition::Neumann { gradient: 0.0 }),
+        (FvBoundaryBranch::FreeSurface, BoundaryCondition::Neumann { gradient: 0.0 }),
+        (FvBoundaryBranch::Open, BoundaryCondition::Neumann { gradient: 0.0 }),
+    ]),
+    diffusive_branch_hooks: HashMap::from([
+        (FvBoundaryBranch::Inflow, BoundaryCondition::Neumann { gradient: 0.0 }),
+        (FvBoundaryBranch::Outflow, BoundaryCondition::Neumann { gradient: 0.0 }),
+        (FvBoundaryBranch::Tidal, BoundaryCondition::Neumann { gradient: 0.0 }),
+        (FvBoundaryBranch::Bed, BoundaryCondition::Neumann { gradient: 0.0 }),
+        (FvBoundaryBranch::FreeSurface, BoundaryCondition::Neumann { gradient: 0.0 }),
+        (FvBoundaryBranch::Open, BoundaryCondition::Neumann { gradient: 0.0 }),
+    ]),
+    unsupported_behavior: UnsupportedBoundaryBehavior::Error,
+};
+
+let out = assemble_fv_system(
     &inputs,
-    &cell_scalar,
-    &face_mass_flux,
-    &bcs,
-    ConvectiveScheme::Upwind,
-    Some(&wet_dry_mask),
+    &FvmFieldSections {
+        cell_scalar,
+        cell_gradient,
+        face_mass_flux,
+    },
+    &boundary_policy,
+    FvmSchemeSettings {
+        convective: ConvectiveScheme::Upwind,
+        reconstruction: ReconstructionSettings::default(),
+        diffusion: DiffusionSettings::default(),
+    },
 )?;
 ```
-
-`FluxActivityMask` gates both boundary faces and near-boundary internal faces, so dry cells can suppress boundary and adjacent flux contributions.
