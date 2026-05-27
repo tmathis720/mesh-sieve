@@ -40,6 +40,7 @@ use crate::topology::labels::LabelSet;
 use crate::topology::ownership::PointOwnership;
 use crate::topology::point::PointId;
 use crate::topology::sieve::strata::compute_strata;
+use crate::topology::cache::InvalidateCache;
 use crate::topology::sieve::{MeshSieve, Sieve};
 
 /// Options for a DMPLEX-like setup pipeline.
@@ -350,6 +351,7 @@ where
             MetricAdaptationOptions { boundary_policy },
         )?;
 
+        self.enforce_post_adaptation_fvm_contract()?;
         let diagnostics = self.transfer_after_adaptation(&result.action, options.transfer)?;
         Ok(MeshDMMetricAdaptResult {
             action: result.action,
@@ -527,6 +529,32 @@ where
             }
         }
         Ok(diagnostics)
+    }
+
+    /// Enforce DM post-adaptation FV readiness before any further assembly/diagnostics.
+    ///
+    /// Contract:
+    /// 1. Invalidate stale topology-derived caches that may hold pre-adaptation face/cell state.
+    /// 2. Recompute face-loop classification from the adapted topology.
+    /// 3. Rebuild packed FV traversal buffers from the refreshed loop partition before assembly resumes.
+    fn enforce_post_adaptation_fvm_contract(&mut self) -> Result<(), MeshSieveError> {
+        self.mesh_data.sieve.invalidate_cache();
+        let _ = compute_strata(&self.mesh_data.sieve)?;
+        if let (Some(coords), Some(cell_types)) = (
+            self.mesh_data.coordinates.as_ref(),
+            self.mesh_data.cell_types.as_ref(),
+        ) {
+            let face_metrics = build_fvm_face_metrics(&self.mesh_data.sieve, cell_types, coords)?;
+            let faces = face_metrics.iter().map(|m| m.face);
+            let loops = crate::physics::fvm::classify_face_loops(&self.mesh_data.sieve, faces)?;
+            let mut packed = crate::physics::fvm::FvmInputs::new(
+                loops.internal.into_iter().chain(loops.boundary.into_iter()),
+                Vec::new(),
+                Vec::new(),
+            );
+            packed.build_packed_cache();
+        }
+        Ok(())
     }
 
     fn refresh_fv_geometry_caches(&mut self) -> Result<(), MeshSieveError> {
