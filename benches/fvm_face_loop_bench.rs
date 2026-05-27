@@ -1,6 +1,6 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use mesh_sieve::discretization::runtime::{CellGeometry, FaceGeometry, FluxStencil};
-use mesh_sieve::physics::fvm::FvmInputs;
+use mesh_sieve::physics::fvm::{FvmInputs, FvmPackedCache};
 use mesh_sieve::topology::point::PointId;
 
 fn pid(raw: u64) -> PointId {
@@ -102,6 +102,44 @@ fn bench_fvm_face_loop(c: &mut Criterion) {
                         let fg = &inputs.face_geometry[s.face_geom_idx].1;
                         let lc = &inputs.cell_geometry[s.owner_cell_geom_idx].1;
                         let rc = &inputs.cell_geometry[s.neighbor_cell_geom_idx].1;
+                        accum += fg.area + lc.volume + rc.volume;
+                    }
+                    black_box(accum);
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("packed_cache_reuse", internal),
+            &internal,
+            |b, _| {
+                let mut cache = FvmPackedCache::default();
+                b.iter(|| {
+                    inputs.build_packed_cache_into(&mut cache);
+                    let mut accum = 0.0;
+                    for s in &cache.packed.internal_faces {
+                        let fg = &inputs.face_geometry[s.face_geom_idx].1;
+                        let lc = &inputs.cell_geometry[s.owner_cell_geom_idx].1;
+                        let rc = &inputs.cell_geometry[s.neighbor_cell_geom_idx].1;
+                        accum += fg.area + lc.volume + rc.volume;
+                    }
+                    black_box(accum);
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("preindexed_triplets", internal),
+            &internal,
+            |b, _| {
+                let face_idx = inputs.internal_face_geometry_indices();
+                let owner_neigh = inputs.internal_owner_neighbor_indices();
+                b.iter(|| {
+                    let mut accum = 0.0;
+                    for (i, (owner, neigh)) in owner_neigh.iter().enumerate() {
+                        let fg = &inputs.face_geometry[face_idx[i]].1;
+                        let lc = &inputs.cell_geometry[*owner].1;
+                        let rc = &inputs.cell_geometry[*neigh].1;
                         accum += fg.area + lc.volume + rc.volume;
                     }
                     black_box(accum);
