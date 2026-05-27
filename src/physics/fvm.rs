@@ -3,6 +3,15 @@
 //! This module is the canonical entrypoint for finite-volume (FV) callers.
 //! It intentionally exposes FV-ready mesh loops and interpolation helpers without
 //! requiring users to couple directly to finite-element runtime APIs.
+//!
+//! # API tradeoffs: ergonomic maps vs packed arrays
+//! - `cell_metrics(point)` / `face_metrics(point)` provide ergonomic point-addressed access and are
+//!   convenient for setup/validation/debug flows.
+//! - Hot loops should prefer pre-indexed contiguous arrays (`internal_owner_neighbor_indices`,
+//!   `internal_face_geometry_indices`, `boundary_owner_indices`, `boundary_face_geometry_indices`)
+//!   or `PackedFvmInputs` to avoid repeated map lookups and branch-heavy access.
+//! - `FvmPackedCache` allows allocating packed buffers once and rebuilding content across
+//!   timesteps/iterations, reducing allocator churn while preserving a stable high-level API.
 
 use crate::data::section::Section;
 use crate::data::storage::Storage;
@@ -201,12 +210,25 @@ pub struct FvmAssemblyOutput {
 
 #[derive(Debug, PartialEq)]
 pub enum FvmAssemblyError {
-    MissingFaceMetric { face: PointId },
-    MissingCellMetric { cell: PointId },
-    MissingBoundaryFaceLabel { face: PointId },
-    LabelMappedToUnknownFace { face: PointId },
-    LabelMappedToInternalFace { face: PointId },
-    UnsupportedBoundaryBranch { face: PointId, branch: FvBoundaryBranch },
+    MissingFaceMetric {
+        face: PointId,
+    },
+    MissingCellMetric {
+        cell: PointId,
+    },
+    MissingBoundaryFaceLabel {
+        face: PointId,
+    },
+    LabelMappedToUnknownFace {
+        face: PointId,
+    },
+    LabelMappedToInternalFace {
+        face: PointId,
+    },
+    UnsupportedBoundaryBranch {
+        face: PointId,
+        branch: FvBoundaryBranch,
+    },
     Kernel(MeshSieveError),
 }
 
@@ -225,11 +247,7 @@ pub fn assemble_fv_system(
     supported_boundary_branches: &HashSet<FvBoundaryBranch>,
     schemes: FvmSchemeSettings,
 ) -> Result<FvmAssemblyOutput, FvmAssemblyError> {
-    preflight_fv_assembly(
-        inputs,
-        boundary_face_branches,
-        supported_boundary_branches,
-    )?;
+    preflight_fv_assembly(inputs, boundary_face_branches, supported_boundary_branches)?;
     let convective = assemble_convective_fluxes_with_reconstruction(
         inputs,
         &fields.cell_scalar,
@@ -330,13 +348,20 @@ pub struct FvmInputs {
     face_index: HashMap<PointId, usize>,
     internal_owner_neighbor_idx: Vec<(usize, usize)>,
     boundary_owner_idx: Vec<usize>,
+    internal_face_geom_idx: Vec<usize>,
+    boundary_face_geom_idx: Vec<usize>,
     packed_cache: Option<PackedFvmInputs>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct PackedFvmInputs {
     pub internal_faces: Vec<PackedInternalFace>,
     pub boundary_faces: Vec<PackedBoundaryFace>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct FvmPackedCache {
+    pub packed: PackedFvmInputs,
 }
 
 #[derive(Clone, Debug)]
@@ -379,6 +404,8 @@ impl FvmInputs {
             face_index: HashMap::new(),
             internal_owner_neighbor_idx: Vec::new(),
             boundary_owner_idx: Vec::new(),
+            internal_face_geom_idx: Vec::new(),
+            boundary_face_geom_idx: Vec::new(),
             packed_cache: None,
         };
         inputs.rebuild_indices();
@@ -408,6 +435,14 @@ impl FvmInputs {
 
     pub fn boundary_owner_indices(&self) -> &[usize] {
         &self.boundary_owner_idx
+    }
+
+    pub fn internal_face_geometry_indices(&self) -> &[usize] {
+        &self.internal_face_geom_idx
+    }
+
+    pub fn boundary_face_geometry_indices(&self) -> &[usize] {
+        &self.boundary_face_geom_idx
     }
 
     pub fn packed(&self) -> Option<&PackedFvmInputs> {
@@ -453,6 +488,49 @@ impl FvmInputs {
         });
     }
 
+    pub fn build_packed_cache_into(&self, cache: &mut FvmPackedCache) {
+        cache.packed.internal_faces.clear();
+        cache.packed.boundary_faces.clear();
+        cache
+            .packed
+            .internal_faces
+            .reserve(self.loops.internal.len());
+        cache
+            .packed
+            .boundary_faces
+            .reserve(self.loops.boundary.len());
+        for stencil in &self.loops.internal {
+            if let (Some(&fi), Some(&oi), Some(neighbor), Some(&ni)) = (
+                self.face_index.get(&stencil.face),
+                self.cell_index.get(&stencil.left),
+                stencil.right,
+                stencil.right.and_then(|r| self.cell_index.get(&r)),
+            ) {
+                cache.packed.internal_faces.push(PackedInternalFace {
+                    face: stencil.face,
+                    owner: stencil.left,
+                    neighbor,
+                    face_geom_idx: fi,
+                    owner_cell_geom_idx: oi,
+                    neighbor_cell_geom_idx: ni,
+                });
+            }
+        }
+        for stencil in &self.loops.boundary {
+            if let (Some(&fi), Some(&oi)) = (
+                self.face_index.get(&stencil.face),
+                self.cell_index.get(&stencil.left),
+            ) {
+                cache.packed.boundary_faces.push(PackedBoundaryFace {
+                    face: stencil.face,
+                    owner: stencil.left,
+                    face_geom_idx: fi,
+                    owner_cell_geom_idx: oi,
+                });
+            }
+        }
+    }
+
     fn rebuild_indices(&mut self) {
         self.cell_index.clear();
         self.face_index.clear();
@@ -463,7 +541,10 @@ impl FvmInputs {
             self.face_index.insert(*id, idx);
         }
         self.internal_owner_neighbor_idx.clear();
+        self.internal_face_geom_idx.clear();
         self.internal_owner_neighbor_idx
+            .reserve(self.loops.internal.len());
+        self.internal_face_geom_idx
             .reserve(self.loops.internal.len());
         for stencil in &self.loops.internal {
             if let (Some(&owner), Some(neighbor), Some(&neigh)) = (
@@ -474,12 +555,21 @@ impl FvmInputs {
                 let _ = neighbor;
                 self.internal_owner_neighbor_idx.push((owner, neigh));
             }
+            if let Some(&fidx) = self.face_index.get(&stencil.face) {
+                self.internal_face_geom_idx.push(fidx);
+            }
         }
         self.boundary_owner_idx.clear();
+        self.boundary_face_geom_idx.clear();
         self.boundary_owner_idx.reserve(self.loops.boundary.len());
+        self.boundary_face_geom_idx
+            .reserve(self.loops.boundary.len());
         for stencil in &self.loops.boundary {
             if let Some(&owner) = self.cell_index.get(&stencil.left) {
                 self.boundary_owner_idx.push(owner);
+            }
+            if let Some(&fidx) = self.face_index.get(&stencil.face) {
+                self.boundary_face_geom_idx.push(fidx);
             }
         }
     }
@@ -1211,7 +1301,11 @@ mod tests {
         let c1 = pid(2);
         let f = pid(44);
         let inputs = FvmInputs::new(
-            [FluxStencil { face: f, left: c0, right: Some(c1) }],
+            [FluxStencil {
+                face: f,
+                left: c0,
+                right: Some(c1),
+            }],
             vec![],
             vec![],
         );
@@ -1250,17 +1344,61 @@ mod tests {
         let f12 = pid(102);
         let inputs = FvmInputs::new(
             [
-                FluxStencil { face: f01, left: c0, right: Some(c1) },
-                FluxStencil { face: f12, left: c1, right: Some(c2) },
+                FluxStencil {
+                    face: f01,
+                    left: c0,
+                    right: Some(c1),
+                },
+                FluxStencil {
+                    face: f12,
+                    left: c1,
+                    right: Some(c2),
+                },
             ],
             vec![
-                (c0, CellGeometry { centroid: vec![0.0, 0.0], volume: 1.0 }),
-                (c1, CellGeometry { centroid: vec![1.0, 0.35], volume: 1.0 }),
-                (c2, CellGeometry { centroid: vec![2.1, 0.05], volume: 1.0 }),
+                (
+                    c0,
+                    CellGeometry {
+                        centroid: vec![0.0, 0.0],
+                        volume: 1.0,
+                    },
+                ),
+                (
+                    c1,
+                    CellGeometry {
+                        centroid: vec![1.0, 0.35],
+                        volume: 1.0,
+                    },
+                ),
+                (
+                    c2,
+                    CellGeometry {
+                        centroid: vec![2.1, 0.05],
+                        volume: 1.0,
+                    },
+                ),
             ],
             vec![
-                (f01, FaceGeometry { face: f01, centroid: vec![0.45, 0.21], normal: vec![0.75, 0.62], area: 1.0, neighbors: vec![c0, c1] }),
-                (f12, FaceGeometry { face: f12, centroid: vec![1.55, 0.16], normal: vec![0.68, 0.71], area: 1.0, neighbors: vec![c1, c2] }),
+                (
+                    f01,
+                    FaceGeometry {
+                        face: f01,
+                        centroid: vec![0.45, 0.21],
+                        normal: vec![0.75, 0.62],
+                        area: 1.0,
+                        neighbors: vec![c0, c1],
+                    },
+                ),
+                (
+                    f12,
+                    FaceGeometry {
+                        face: f12,
+                        centroid: vec![1.55, 0.16],
+                        normal: vec![0.68, 0.71],
+                        area: 1.0,
+                        neighbors: vec![c1, c2],
+                    },
+                ),
             ],
         );
         let phi = HashMap::from([(c0, 0.0), (c1, 1.0), (c2, 2.0)]);
@@ -1269,8 +1407,28 @@ mod tests {
             (c1, vec![1.0, -0.15]),
             (c2, vec![1.0, 0.1]),
         ]);
-        let ortho = assemble_diffusive_fluxes(&inputs, &phi, &grad, &HashMap::new(), DiffusionSettings { diffusivity: 1.0, non_orthogonal_mode: NonOrthogonalCorrectionMode::OrthogonalOnly }).unwrap();
-        let full = assemble_diffusive_fluxes(&inputs, &phi, &grad, &HashMap::new(), DiffusionSettings { diffusivity: 1.0, non_orthogonal_mode: NonOrthogonalCorrectionMode::FullyCorrected }).unwrap();
+        let ortho = assemble_diffusive_fluxes(
+            &inputs,
+            &phi,
+            &grad,
+            &HashMap::new(),
+            DiffusionSettings {
+                diffusivity: 1.0,
+                non_orthogonal_mode: NonOrthogonalCorrectionMode::OrthogonalOnly,
+            },
+        )
+        .unwrap();
+        let full = assemble_diffusive_fluxes(
+            &inputs,
+            &phi,
+            &grad,
+            &HashMap::new(),
+            DiffusionSettings {
+                diffusivity: 1.0,
+                non_orthogonal_mode: NonOrthogonalCorrectionMode::FullyCorrected,
+            },
+        )
+        .unwrap();
         let sum_ortho: f64 = ortho.residual.values().sum();
         let sum_full: f64 = full.residual.values().sum();
         assert!(sum_ortho.abs() < 1e-12);
@@ -1284,12 +1442,37 @@ mod tests {
         let c1 = pid(2);
         let f = pid(11);
         let inputs = FvmInputs::new(
-            [FluxStencil { face: f, left: c0, right: Some(c1) }],
+            [FluxStencil {
+                face: f,
+                left: c0,
+                right: Some(c1),
+            }],
             vec![
-                (c0, CellGeometry { centroid: vec![0.0, 0.0], volume: 1.0 }),
-                (c1, CellGeometry { centroid: vec![1.0, 0.0], volume: 1.0 }),
+                (
+                    c0,
+                    CellGeometry {
+                        centroid: vec![0.0, 0.0],
+                        volume: 1.0,
+                    },
+                ),
+                (
+                    c1,
+                    CellGeometry {
+                        centroid: vec![1.0, 0.0],
+                        volume: 1.0,
+                    },
+                ),
             ],
-            vec![(f, FaceGeometry { face: f, centroid: vec![0.5, 0.0], normal: vec![1.0, 0.0], area: 1.0, neighbors: vec![c0, c1] })],
+            vec![(
+                f,
+                FaceGeometry {
+                    face: f,
+                    centroid: vec![0.5, 0.0],
+                    normal: vec![1.0, 0.0],
+                    area: 1.0,
+                    neighbors: vec![c0, c1],
+                },
+            )],
         );
         let out = assemble_fv_system(
             &inputs,
@@ -1302,8 +1485,13 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &HashSet::new(),
-            FvmSchemeSettings { convective: ConvectiveScheme::Central, reconstruction: ReconstructionSettings::default(), diffusion: DiffusionSettings::default() },
-        ).unwrap();
+            FvmSchemeSettings {
+                convective: ConvectiveScheme::Central,
+                reconstruction: ReconstructionSettings::default(),
+                diffusion: DiffusionSettings::default(),
+            },
+        )
+        .unwrap();
         assert!((out.total.residual[&c0] + out.total.residual[&c1]).abs() < 1e-12);
     }
 
@@ -1314,14 +1502,55 @@ mod tests {
         let fi = pid(20);
         let fb = pid(21);
         let inputs = FvmInputs::new(
-            [FluxStencil { face: fi, left: c0, right: Some(c1) }, FluxStencil { face: fb, left: c0, right: None }],
-            vec![
-                (c0, CellGeometry { centroid: vec![0.0, 0.0], volume: 1.0 }),
-                (c1, CellGeometry { centroid: vec![1.0, 0.0], volume: 1.0 }),
+            [
+                FluxStencil {
+                    face: fi,
+                    left: c0,
+                    right: Some(c1),
+                },
+                FluxStencil {
+                    face: fb,
+                    left: c0,
+                    right: None,
+                },
             ],
             vec![
-                (fi, FaceGeometry { face: fi, centroid: vec![0.5, 0.0], normal: vec![1.0, 0.0], area: 1.0, neighbors: vec![c0, c1] }),
-                (fb, FaceGeometry { face: fb, centroid: vec![-0.5, 0.0], normal: vec![-1.0, 0.0], area: 1.0, neighbors: vec![c0] }),
+                (
+                    c0,
+                    CellGeometry {
+                        centroid: vec![0.0, 0.0],
+                        volume: 1.0,
+                    },
+                ),
+                (
+                    c1,
+                    CellGeometry {
+                        centroid: vec![1.0, 0.0],
+                        volume: 1.0,
+                    },
+                ),
+            ],
+            vec![
+                (
+                    fi,
+                    FaceGeometry {
+                        face: fi,
+                        centroid: vec![0.5, 0.0],
+                        normal: vec![1.0, 0.0],
+                        area: 1.0,
+                        neighbors: vec![c0, c1],
+                    },
+                ),
+                (
+                    fb,
+                    FaceGeometry {
+                        face: fb,
+                        centroid: vec![-0.5, 0.0],
+                        normal: vec![-1.0, 0.0],
+                        area: 1.0,
+                        neighbors: vec![c0],
+                    },
+                ),
             ],
         );
         let branches = HashMap::from([(fb, FvBoundaryBranch::Inflow)]);
@@ -1337,8 +1566,13 @@ mod tests {
             &HashMap::from([(fb, BoundaryCondition::Neumann { gradient: 0.0 })]),
             &branches,
             &supported,
-            FvmSchemeSettings { convective: ConvectiveScheme::Upwind, reconstruction: ReconstructionSettings::default(), diffusion: DiffusionSettings::default() },
-        ).unwrap();
+            FvmSchemeSettings {
+                convective: ConvectiveScheme::Upwind,
+                reconstruction: ReconstructionSettings::default(),
+                diffusion: DiffusionSettings::default(),
+            },
+        )
+        .unwrap();
         assert!(err.total.residual.contains_key(&c0));
     }
 
@@ -1347,9 +1581,28 @@ mod tests {
         let c0 = pid(1);
         let fb = pid(31);
         let inputs = FvmInputs::new(
-            [FluxStencil { face: fb, left: c0, right: None }],
-            vec![(c0, CellGeometry { centroid: vec![0.0, 0.0], volume: 1.0 })],
-            vec![(fb, FaceGeometry { face: fb, centroid: vec![0.0, 1.0], normal: vec![0.0, 1.0], area: 1.0, neighbors: vec![c0] })],
+            [FluxStencil {
+                face: fb,
+                left: c0,
+                right: None,
+            }],
+            vec![(
+                c0,
+                CellGeometry {
+                    centroid: vec![0.0, 0.0],
+                    volume: 1.0,
+                },
+            )],
+            vec![(
+                fb,
+                FaceGeometry {
+                    face: fb,
+                    centroid: vec![0.0, 1.0],
+                    normal: vec![0.0, 1.0],
+                    area: 1.0,
+                    neighbors: vec![c0],
+                },
+            )],
         );
         let bad_map = HashMap::from([(pid(99), FvBoundaryBranch::Open)]);
         let supported = HashSet::from([FvBoundaryBranch::Open]);
@@ -1364,8 +1617,16 @@ mod tests {
             &HashMap::from([(fb, BoundaryCondition::Dirichlet { value: 1.0 })]),
             &bad_map,
             &supported,
-            FvmSchemeSettings { convective: ConvectiveScheme::Central, reconstruction: ReconstructionSettings::default(), diffusion: DiffusionSettings::default() },
-        ).unwrap_err();
-        assert!(matches!(err, FvmAssemblyError::LabelMappedToUnknownFace { .. }));
+            FvmSchemeSettings {
+                convective: ConvectiveScheme::Central,
+                reconstruction: ReconstructionSettings::default(),
+                diffusion: DiffusionSettings::default(),
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            FvmAssemblyError::LabelMappedToUnknownFace { .. }
+        ));
     }
 }
