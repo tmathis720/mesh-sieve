@@ -13,6 +13,7 @@ use mesh_sieve::topology::labels::LabelSet;
 use mesh_sieve::topology::point::PointId;
 use mesh_sieve::topology::sieve::{MeshSieve, OrientedSieve, Sieve};
 use std::collections::BTreeMap;
+use std::str::FromStr;
 
 fn p(id: u64) -> PointId {
     PointId::new(id).unwrap()
@@ -209,5 +210,67 @@ fn permissive_mode_tolerates_vector_layout_mismatch() {
         filter: PetscLoadFilter::default(),
     };
     assert!(read_mesh_from_petsc_hdf5_with_options(&file, "mesh", "dm", &permissive).is_ok());
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn strict_mode_accepts_legacy_storage_version_2() {
+    let mesh = fixture_mesh(false);
+    let path = std::env::temp_dir().join("mesh_sieve_legacy_version2_fixture.h5");
+    let _ = std::fs::remove_file(&path);
+    let file = File::create(&path).unwrap();
+    write_mesh_to_petsc_hdf5(&file, &mesh, "mesh", "dm").unwrap();
+    file.dataset("dmplex_storage_version")
+        .unwrap()
+        .write(&[2i32])
+        .unwrap();
+    assert!(read_mesh_from_petsc_hdf5(&file, "mesh", "dm").is_ok());
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn reader_supports_topology_dataset_layout_at_mesh_root() {
+    let mesh = fixture_mesh(false);
+    let path = std::env::temp_dir().join("mesh_sieve_mesh_root_layout_fixture.h5");
+    let _ = std::fs::remove_file(&path);
+    let file = File::create(&path).unwrap();
+    write_mesh_to_petsc_hdf5(&file, &mesh, "mesh", "dm").unwrap();
+    let root = file.group("/topologies/mesh").unwrap();
+    root.link_hard("topology/permutation", "permutation").unwrap();
+    root.link_hard("topology/strata", "strata").unwrap();
+    root.link_hard("topology/cell_types", "cell_types").unwrap();
+    root.unlink("topology").unwrap();
+    assert!(read_mesh_from_petsc_hdf5(&file, "mesh", "dm").is_ok());
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn reads_additional_dmplex_cell_type_codes_and_provenance_map_id() {
+    let mesh = fixture_mesh(false);
+    let path = std::env::temp_dir().join("mesh_sieve_dmplex_celltype_compat_fixture.h5");
+    let _ = std::fs::remove_file(&path);
+    let file = File::create(&path).unwrap();
+    write_mesh_to_petsc_hdf5(&file, &mesh, "mesh", "dm").unwrap();
+    let mut codes = file
+        .dataset("/topologies/mesh/topology/cell_types")
+        .unwrap()
+        .read_raw::<i32>()
+        .unwrap();
+    if let Some(first) = codes.first_mut() {
+        *first = 8;
+    }
+    file.dataset("/topologies/mesh/topology/cell_types")
+        .unwrap()
+        .write(&codes)
+        .unwrap();
+    file.new_dataset_builder()
+        .with_data(&[hdf5::types::VarLenUnicode::from_str("redistribute:rank0").unwrap()])
+        .create("redistribution_map_id")
+        .unwrap();
+    let (_loaded, provenance) =
+        read_mesh_from_petsc_hdf5_with_options(&file, "mesh", "dm", &PetscLoadOptions::default())
+            .unwrap();
+    assert_eq!(provenance.storage_version, DMPLEX_STORAGE_VERSION);
+    assert_eq!(provenance.redistribution_map_id.as_deref(), Some("redistribute:rank0"));
     let _ = std::fs::remove_file(&path);
 }

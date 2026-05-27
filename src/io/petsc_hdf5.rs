@@ -92,6 +92,7 @@ const DATASET_SECTION_POINTS: &str = "points";
 const DATASET_SECTION_DOFS: &str = "dofs";
 const DATASET_SECTION_OFFSETS: &str = "offsets";
 const DATASET_CELL_TYPES: &str = "cell_types";
+const DATASET_REDISTRIBUTION_MAP_ID: &str = "redistribution_map_id";
 
 /// Options controlling DMPlex HDF5 path names.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -292,21 +293,26 @@ pub fn read_mesh_from_petsc_hdf5_with_options(
     ),
     MeshSieveError,
 > {
-    if let Ok(dataset) = file.dataset(DATASET_VERSION) {
-        let version: Vec<i32> = dataset.read_raw()?;
-        if matches!(options.mode, PetscLoadMode::Strict)
-            && !version.is_empty()
-            && version[0] != DMPLEX_STORAGE_VERSION
-        {
-            return Err(MeshSieveError::MeshIoParse(format!(
-                "unsupported DMPlex HDF5 storage version {}; expected {DMPLEX_STORAGE_VERSION}",
-                version[0]
-            )));
-        }
+    let file_storage_version = file
+        .dataset(DATASET_VERSION)
+        .ok()
+        .and_then(|d| d.read_raw::<i32>().ok())
+        .and_then(|v| v.first().copied())
+        .unwrap_or(DMPLEX_STORAGE_VERSION);
+    if matches!(options.mode, PetscLoadMode::Strict) && !matches!(file_storage_version, 2 | 3) {
+        return Err(MeshSieveError::MeshIoParse(format!(
+            "unsupported DMPlex HDF5 storage version {file_storage_version}; expected one of [2, 3]"
+        )));
     }
 
     let topology_root = file.group(&format!("/{GROUP_TOPOLOGIES}/{mesh_name}"))?;
-    let topology = topology_root.group(GROUP_TOPOLOGY)?;
+    let topology = if let Ok(group) = topology_root.group(GROUP_TOPOLOGY) {
+        group
+    } else if let Ok(group) = topology_root.group("mesh") {
+        group
+    } else {
+        topology_root.clone()
+    };
     let order = read_permutation_checked(&topology, options.mode)?;
     let mut sieve = MeshSieve::default();
     read_strata(&topology, &order, &mut sieve)?;
@@ -334,16 +340,15 @@ pub fn read_mesh_from_petsc_hdf5_with_options(
             discretization: None,
         },
         PetscProvenance {
-            storage_version: file
-                .dataset(DATASET_VERSION)
-                .ok()
-                .and_then(|d| d.read_raw::<i32>().ok())
-                .and_then(|v| v.first().copied())
-                .unwrap_or(DMPLEX_STORAGE_VERSION),
+            storage_version: file_storage_version,
             permutation_source: format!(
                 "/{GROUP_TOPOLOGIES}/{mesh_name}/{GROUP_TOPOLOGY}/{DATASET_PERMUTATION}"
             ),
-            redistribution_map_id: None,
+            redistribution_map_id: file
+                .dataset(DATASET_REDISTRIBUTION_MAP_ID)
+                .ok()
+                .and_then(|d| d.read_raw::<hdf5::types::VarLenUnicode>().ok())
+                .and_then(|v| v.first().map(|s| s.as_str().to_owned())),
         },
     ))
 }
@@ -788,6 +793,10 @@ fn dmplex_to_cell_type(code: i32) -> Result<CellType, MeshSieveError> {
         5 => Ok(CellType::Hexahedron),
         6 => Ok(CellType::Prism),
         7 => Ok(CellType::Pyramid),
+        8 => Ok(CellType::Polygon(0)),
+        9 => Ok(CellType::Polyhedron),
+        10 => Ok(CellType::Simplex(4)),
+        11 => Ok(CellType::Simplex(5)),
         _ => Err(MeshSieveError::MeshIoParse(format!(
             "unknown DMPlex cell type code {code}"
         ))),
