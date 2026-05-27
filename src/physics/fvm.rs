@@ -46,6 +46,12 @@ pub enum ReconstructionGradient {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReconstructionMode {
+    GradientOnly(ReconstructionGradient),
+    LeastSquaresWithGreenGaussFallback,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SlopeLimiterFamily {
     None,
     Minmod,
@@ -55,15 +61,34 @@ pub enum SlopeLimiterFamily {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ReconstructionSettings {
-    pub gradient: ReconstructionGradient,
-    pub limiter: SlopeLimiterFamily,
+    pub mode: ReconstructionMode,
+    pub limiter: LimiterOption,
 }
 
 impl Default for ReconstructionSettings {
     fn default() -> Self {
         Self {
-            gradient: ReconstructionGradient::LeastSquares,
-            limiter: SlopeLimiterFamily::None,
+            mode: ReconstructionMode::LeastSquaresWithGreenGaussFallback,
+            limiter: LimiterOption::Family(SlopeLimiterFamily::None),
+        }
+    }
+}
+
+pub trait BoundedReconstructionLimiter {
+    fn limiter_factor(&self, upwind: f64, downwind: f64) -> f64;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LimiterOption {
+    None,
+    Family(SlopeLimiterFamily),
+}
+
+impl BoundedReconstructionLimiter for LimiterOption {
+    fn limiter_factor(&self, upwind: f64, downwind: f64) -> f64 {
+        match self {
+            LimiterOption::None => 1.0,
+            LimiterOption::Family(f) => slope_limiter(*f, upwind, downwind),
         }
     }
 }
@@ -134,6 +159,15 @@ pub trait FvmPhysicsHooks {
         0.0
     }
     fn free_surface_source(&self, _cell: PointId, _inputs: &FvmInputs) -> f64 {
+        0.0
+    }
+}
+
+pub trait FvmSourceFluxHook {
+    fn additional_face_flux(&self, _stencil: &FluxStencil, _inputs: &FvmInputs) -> f64 {
+        0.0
+    }
+    fn additional_cell_source(&self, _cell: PointId, _inputs: &FvmInputs) -> f64 {
         0.0
     }
 }
@@ -890,7 +924,7 @@ fn convective_face_value(
     r: f64,
     mdot: f64,
     scheme: ConvectiveScheme,
-    _limiter: SlopeLimiterFamily,
+    limiter: LimiterOption,
 ) -> f64 {
     let up = if mdot >= 0.0 { l } else { r };
     let dn = if mdot >= 0.0 { r } else { l };
@@ -909,7 +943,7 @@ fn convective_face_value(
             blend,
             limiter: lim,
         } => {
-            let psi = slope_limiter(lim, up, dn);
+            let psi = limiter.limiter_factor(up, dn) * slope_limiter(lim, up, dn);
             let hr = up + 0.5 * psi * (dn - up);
             let b = clamp01(blend);
             clamp((1.0 - b) * up + b * hr, mn, mx)
@@ -1101,8 +1135,8 @@ mod tests {
             &HashMap::new(),
             ConvectiveScheme::BoundedLinear { blend: 1.0 },
             ReconstructionSettings {
-                gradient: ReconstructionGradient::GreenGauss,
-                limiter: SlopeLimiterFamily::VanLeer,
+                mode: ReconstructionMode::GradientOnly(ReconstructionGradient::GreenGauss),
+                limiter: LimiterOption::Family(SlopeLimiterFamily::VanLeer),
             },
         )
         .unwrap();
@@ -1169,6 +1203,79 @@ mod tests {
             .unwrap();
             assert!((r.residual[&c0] + r.residual[&c1]).abs() < 1e-12);
         }
+    }
+
+    #[test]
+    fn limiter_options_bias_toward_bounded_face_values() {
+        let c0 = pid(1);
+        let c1 = pid(2);
+        let f = pid(44);
+        let inputs = FvmInputs::new(
+            [FluxStencil { face: f, left: c0, right: Some(c1) }],
+            vec![],
+            vec![],
+        );
+        let phi = HashMap::from([(c0, -1.0), (c1, 3.0)]);
+        let mdot = HashMap::from([(f, 2.0)]);
+        let unlimited = convective_face_value(
+            phi[&c0],
+            phi[&c1],
+            mdot[&f],
+            ConvectiveScheme::HighResolution {
+                blend: 1.0,
+                limiter: SlopeLimiterFamily::Superbee,
+            },
+            LimiterOption::None,
+        );
+        let bounded = convective_face_value(
+            phi[&c0],
+            phi[&c1],
+            mdot[&f],
+            ConvectiveScheme::HighResolution {
+                blend: 1.0,
+                limiter: SlopeLimiterFamily::Superbee,
+            },
+            LimiterOption::Family(SlopeLimiterFamily::Minmod),
+        );
+        assert!(bounded <= unlimited + 1e-12);
+        let _ = inputs;
+    }
+
+    #[test]
+    fn diffusive_non_orthogonality_mode_sensitivity_on_skew_patch() {
+        let c0 = pid(1);
+        let c1 = pid(2);
+        let c2 = pid(3);
+        let f01 = pid(101);
+        let f12 = pid(102);
+        let inputs = FvmInputs::new(
+            [
+                FluxStencil { face: f01, left: c0, right: Some(c1) },
+                FluxStencil { face: f12, left: c1, right: Some(c2) },
+            ],
+            vec![
+                (c0, CellGeometry { centroid: vec![0.0, 0.0], volume: 1.0 }),
+                (c1, CellGeometry { centroid: vec![1.0, 0.35], volume: 1.0 }),
+                (c2, CellGeometry { centroid: vec![2.1, 0.05], volume: 1.0 }),
+            ],
+            vec![
+                (f01, FaceGeometry { face: f01, centroid: vec![0.45, 0.21], normal: vec![0.75, 0.62], area: 1.0, neighbors: vec![c0, c1] }),
+                (f12, FaceGeometry { face: f12, centroid: vec![1.55, 0.16], normal: vec![0.68, 0.71], area: 1.0, neighbors: vec![c1, c2] }),
+            ],
+        );
+        let phi = HashMap::from([(c0, 0.0), (c1, 1.0), (c2, 2.0)]);
+        let grad = HashMap::from([
+            (c0, vec![1.0, 0.2]),
+            (c1, vec![1.0, -0.15]),
+            (c2, vec![1.0, 0.1]),
+        ]);
+        let ortho = assemble_diffusive_fluxes(&inputs, &phi, &grad, &HashMap::new(), DiffusionSettings { diffusivity: 1.0, non_orthogonal_mode: NonOrthogonalCorrectionMode::OrthogonalOnly }).unwrap();
+        let full = assemble_diffusive_fluxes(&inputs, &phi, &grad, &HashMap::new(), DiffusionSettings { diffusivity: 1.0, non_orthogonal_mode: NonOrthogonalCorrectionMode::FullyCorrected }).unwrap();
+        let sum_ortho: f64 = ortho.residual.values().sum();
+        let sum_full: f64 = full.residual.values().sum();
+        assert!(sum_ortho.abs() < 1e-12);
+        assert!(sum_full.abs() < 1e-12);
+        assert_ne!(ortho.residual, full.residual);
     }
 
     #[test]
