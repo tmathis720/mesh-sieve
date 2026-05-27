@@ -209,6 +209,23 @@ pub struct FvStabilityThresholds {
     pub coarsen_min_char_length: f64,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct FvmQualityOutputs {
+    pub non_orthogonality_deg: f64,
+    pub skewness: f64,
+    pub characteristic_length: f64,
+}
+
+impl From<&FvmCellDiagnostic> for FvmQualityOutputs {
+    fn from(value: &FvmCellDiagnostic) -> Self {
+        Self {
+            non_orthogonality_deg: value.max_non_orthogonality_deg,
+            skewness: value.max_skewness,
+            characteristic_length: value.char_length,
+        }
+    }
+}
+
 impl Default for FvStabilityThresholds {
     fn default() -> Self {
         Self {
@@ -228,19 +245,32 @@ pub fn select_cells_from_fvm_diagnostics(
 ) -> AdaptivitySelection {
     let mut selection = AdaptivitySelection::default();
     for d in cell_diags {
-        if d.max_non_orthogonality_deg > thresholds.refine_non_orthogonality_deg
-            || d.max_skewness > thresholds.refine_skewness
-            || d.char_length < thresholds.refine_min_char_length
-        {
+        let q = FvmQualityOutputs::from(d);
+        if should_refine_from_fvm_quality(q, thresholds) {
             selection.refine_cells.push(d.cell);
-        } else if d.max_non_orthogonality_deg <= thresholds.coarsen_non_orthogonality_deg
-            && d.max_skewness <= thresholds.coarsen_skewness
-            && d.char_length >= thresholds.coarsen_min_char_length
-        {
+        } else if should_coarsen_from_fvm_quality(q, thresholds) {
             selection.coarsen_cells.push(d.cell);
         }
     }
     selection
+}
+
+pub fn should_refine_from_fvm_quality(
+    quality: FvmQualityOutputs,
+    thresholds: FvStabilityThresholds,
+) -> bool {
+    quality.non_orthogonality_deg > thresholds.refine_non_orthogonality_deg
+        || quality.skewness > thresholds.refine_skewness
+        || quality.characteristic_length < thresholds.refine_min_char_length
+}
+
+pub fn should_coarsen_from_fvm_quality(
+    quality: FvmQualityOutputs,
+    thresholds: FvStabilityThresholds,
+) -> bool {
+    quality.non_orthogonality_deg <= thresholds.coarsen_non_orthogonality_deg
+        && quality.skewness <= thresholds.coarsen_skewness
+        && quality.characteristic_length >= thresholds.coarsen_min_char_length
 }
 
 impl Default for MetricThresholds {
@@ -1348,4 +1378,35 @@ where
         action: MetricAdaptationAction::NoChange,
         data: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fvm_threshold_selector_reduces_refine_pressure_over_passes() {
+        let thresholds = FvStabilityThresholds::default();
+        let pass0 = [
+            FvmQualityOutputs { non_orthogonality_deg: 89.0, skewness: 5.0, characteristic_length: 1.0e-10 },
+            FvmQualityOutputs { non_orthogonality_deg: 80.0, skewness: 2.5, characteristic_length: 1.0e-7 },
+            FvmQualityOutputs { non_orthogonality_deg: 20.0, skewness: 0.9, characteristic_length: 1.0e-3 },
+        ];
+        let pass1 = [
+            FvmQualityOutputs { non_orthogonality_deg: 74.0, skewness: 3.9, characteristic_length: 1.0e-6 },
+            FvmQualityOutputs { non_orthogonality_deg: 68.0, skewness: 2.2, characteristic_length: 1.0e-5 },
+            FvmQualityOutputs { non_orthogonality_deg: 19.0, skewness: 0.7, characteristic_length: 1.0e-3 },
+        ];
+        let pass2 = [
+            FvmQualityOutputs { non_orthogonality_deg: 40.0, skewness: 1.2, characteristic_length: 1.0e-4 },
+            FvmQualityOutputs { non_orthogonality_deg: 33.0, skewness: 1.1, characteristic_length: 1.0e-4 },
+            FvmQualityOutputs { non_orthogonality_deg: 17.0, skewness: 0.5, characteristic_length: 1.0e-3 },
+        ];
+
+        let refine0 = pass0.iter().filter(|q| should_refine_from_fvm_quality(**q, thresholds)).count();
+        let refine1 = pass1.iter().filter(|q| should_refine_from_fvm_quality(**q, thresholds)).count();
+        let refine2 = pass2.iter().filter(|q| should_refine_from_fvm_quality(**q, thresholds)).count();
+        assert!(refine0 >= refine1 && refine1 >= refine2);
+        assert_eq!(refine2, 0);
+    }
 }
