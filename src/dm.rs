@@ -7,7 +7,7 @@
 //! "build topology → attach data → validate → distribute → number sections →
 //! assemble vectors/matrices" workflow.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use crate::adapt::{
     BoundaryRemeshingPolicy, FvStabilityThresholds, MetricAdaptationAction,
@@ -20,8 +20,11 @@ use crate::algs::distribute::{
 };
 use crate::algs::dual_graph::{DualGraph, build_dual};
 use crate::algs::point_sf::PointSF;
+use crate::algs::point_sf::{PointSfLeaf, RemotePoint};
 use crate::algs::renumber::{StratifiedOrdering, stratified_permutation};
+use crate::algs::submesh::{SubmeshMaps, SubmeshSelection, extract_by_label};
 use crate::data::atlas::Atlas;
+use crate::data::closure::{ClosureIndex, ClosureOrder, IdentitySectionSym, build_closure_index};
 use crate::data::coordinates::Coordinates;
 use crate::data::discretization::Discretization;
 use crate::data::global_map::{LocalToGlobalMap, global_vector_for_map};
@@ -29,19 +32,23 @@ use crate::data::multi_section::constrained_section_from_label_specs;
 use crate::data::section::Section;
 use crate::data::storage::{Storage, VecStorage};
 use crate::data::{ConstrainedSection, LabelConstraintSpec};
-use crate::diagnostics::{FvmQualityDiagnostics, MeshCheckOptions, fvm_cell_diagnostics, fvm_quality_diagnostics, run_mesh_checks};
+use crate::diagnostics::{
+    FvmQualityDiagnostics, MeshCheckOptions, fvm_cell_diagnostics, fvm_quality_diagnostics,
+    run_mesh_checks,
+};
 use crate::geometry::fvm::build_fvm_face_metrics;
 use crate::io::MeshData;
 use crate::mesh_error::MeshSieveError;
 use crate::mesh_graph::{AdjacencyWeighting, MeshGraph, cell_adjacency_graph_with_cells};
 use crate::overlap::overlap::Overlap;
+use crate::physics::fe::{ElementClosureData, extract_oriented_element_closure};
+use crate::topology::cache::InvalidateCache;
 use crate::topology::cell_type::CellType;
 use crate::topology::labels::LabelSet;
 use crate::topology::ownership::PointOwnership;
 use crate::topology::point::PointId;
-use crate::topology::sieve::strata::compute_strata;
-use crate::topology::cache::InvalidateCache;
 use crate::topology::refine::refine_mesh;
+use crate::topology::sieve::strata::compute_strata;
 use crate::topology::sieve::{MeshSieve, Sieve};
 
 /// Options for a DMPLEX-like setup pipeline.
@@ -216,6 +223,56 @@ pub struct PreallocationGraph {
     pub row_nnz: Vec<usize>,
 }
 
+/// Label-driven point/submesh extraction policy for DM helper methods.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MeshDMLabelSelection {
+    /// Label name to query.
+    pub label_name: String,
+    /// Integer label value to query.
+    pub label_value: i32,
+    /// Topological subset to retain from labeled seed points.
+    pub topology: SubmeshSelection,
+    /// Optional named section whose atlas filters the selected points.
+    pub section: Option<String>,
+}
+
+impl MeshDMLabelSelection {
+    /// Select a label value and its full downward closure.
+    pub fn new(label_name: impl Into<String>, label_value: i32) -> Self {
+        Self {
+            label_name: label_name.into(),
+            label_value,
+            topology: SubmeshSelection::FullClosure,
+            section: None,
+        }
+    }
+
+    /// Override the topology subsetting policy.
+    pub fn topology(mut self, topology: SubmeshSelection) -> Self {
+        self.topology = topology;
+        self
+    }
+
+    /// Retain only selected points present in a named section atlas.
+    pub fn section(mut self, section: impl Into<String>) -> Self {
+        self.section = Some(section.into());
+        self
+    }
+}
+
+/// DM slice built by label/topology extraction.
+#[derive(Debug)]
+pub struct MeshDMSubmesh<V, St = VecStorage<V>, CtSt = VecStorage<CellType>>
+where
+    St: Storage<V>,
+    CtSt: Storage<CellType>,
+{
+    /// Extracted DM with compact point numbering.
+    pub dm: MeshDM<V, St, CtSt>,
+    /// Bidirectional parent/submesh point map.
+    pub maps: SubmeshMaps,
+}
+
 /// Distribution state owned by a [`MeshDM`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MeshDMDistribution {
@@ -382,11 +439,22 @@ where
                 coarsen_plan,
                 options.clone(),
             )?;
-            let coords = self.mesh_data.coordinates.as_ref().ok_or_else(|| MeshSieveError::MissingSectionName { name: "coordinates".into() })?;
-            let cell_types = self.mesh_data.cell_types.as_ref().ok_or_else(|| MeshSieveError::MissingSectionName { name: "cell_types".into() })?;
+            let coords = self.mesh_data.coordinates.as_ref().ok_or_else(|| {
+                MeshSieveError::MissingSectionName {
+                    name: "coordinates".into(),
+                }
+            })?;
+            let cell_types = self.mesh_data.cell_types.as_ref().ok_or_else(|| {
+                MeshSieveError::MissingSectionName {
+                    name: "cell_types".into(),
+                }
+            })?;
             let cell_diags = fvm_cell_diagnostics(&self.mesh_data.sieve, cell_types, coords)?;
             let selection = select_cells_from_fvm_diagnostics(&cell_diags, fv_thresholds);
-            pass.fv_selection = Some((selection.refine_cells.clone(), selection.coarsen_cells.clone()));
+            pass.fv_selection = Some((
+                selection.refine_cells.clone(),
+                selection.coarsen_cells.clone(),
+            ));
             history.push(pass.clone());
             let stop_by_action = matches!(pass.action, MetricAdaptationAction::NoChange);
             let stop_by_threshold = iter.stop_when_below_threshold
@@ -421,12 +489,23 @@ where
                 options.clone(),
             )?;
             self.refresh_fv_geometry_caches()?;
-            let coords = self.mesh_data.coordinates.as_ref().ok_or_else(|| MeshSieveError::MissingSectionName { name: "coordinates".into() })?;
-            let cell_types = self.mesh_data.cell_types.as_ref().ok_or_else(|| MeshSieveError::MissingSectionName { name: "cell_types".into() })?;
+            let coords = self.mesh_data.coordinates.as_ref().ok_or_else(|| {
+                MeshSieveError::MissingSectionName {
+                    name: "coordinates".into(),
+                }
+            })?;
+            let cell_types = self.mesh_data.cell_types.as_ref().ok_or_else(|| {
+                MeshSieveError::MissingSectionName {
+                    name: "cell_types".into(),
+                }
+            })?;
             let quality = fvm_quality_diagnostics(&self.mesh_data.sieve, cell_types, coords).ok();
             let cell_diags = fvm_cell_diagnostics(&self.mesh_data.sieve, cell_types, coords)?;
             let selection = select_cells_from_fvm_diagnostics(&cell_diags, fv_thresholds);
-            pass.fv_selection = Some((selection.refine_cells.clone(), selection.coarsen_cells.clone()));
+            pass.fv_selection = Some((
+                selection.refine_cells.clone(),
+                selection.coarsen_cells.clone(),
+            ));
             reports.push(MeshDMFvIterationReport {
                 pass_index: pass_idx,
                 fvm_quality: quality,
@@ -504,7 +583,9 @@ where
             .map_or(0, |l| l.iter().count());
         let coords = self.mesh_data.coordinates.as_ref();
         let cell_types = self.mesh_data.cell_types.as_ref();
-        let (fvm_face_metrics_cached, boundary_faces) = if let (Some(coords), Some(cell_types)) = (coords, cell_types) {
+        let (fvm_face_metrics_cached, boundary_faces) = if let (Some(coords), Some(cell_types)) =
+            (coords, cell_types)
+        {
             let face_metrics = build_fvm_face_metrics(&self.mesh_data.sieve, cell_types, coords)?;
             let bfaces = face_metrics.iter().filter(|m| m.neighbor.is_none()).count();
             (face_metrics.len(), bfaces)
@@ -704,18 +785,23 @@ where
 
     /// Run local setup actions that do not require a partitioner/communicator.
     pub fn setup_serial(&mut self) -> Result<(), MeshSieveError> {
-        self.run_refinement_passes(self.options.pre_refine, MeshDMTransferStrategy::PreserveCoordinatesAndLabels)?;
+        self.run_refinement_passes(
+            self.options.pre_refine,
+            MeshDMTransferStrategy::PreserveCoordinatesAndLabels,
+        )?;
         if let Some(ordering) = self.options.reorder_section {
             self.reorder_sections(ordering)?;
         }
         self.enforce_phase_invariants()?;
         self.run_requested_checks()?;
-        self.run_refinement_passes(self.options.post_refine, MeshDMTransferStrategy::PreserveCoordinatesAndLabels)?;
+        self.run_refinement_passes(
+            self.options.post_refine,
+            MeshDMTransferStrategy::PreserveCoordinatesAndLabels,
+        )?;
         self.enforce_phase_invariants()?;
         self.run_requested_checks()?;
         Ok(())
     }
-
 
     fn run_refinement_passes(
         &mut self,
@@ -739,11 +825,18 @@ where
         };
         let refined = refine_mesh(&mut self.mesh_data.sieve, cell_types)?;
         self.mesh_data.sieve = refined.sieve;
-        if matches!(strategy, MeshDMTransferStrategy::PreserveCoordinatesAndLabels) {
+        if matches!(
+            strategy,
+            MeshDMTransferStrategy::PreserveCoordinatesAndLabels
+        ) {
             let _ = refined.coordinates;
         }
         if self.mesh_data.labels.is_some()
-            && matches!(strategy, MeshDMTransferStrategy::PreserveLabels | MeshDMTransferStrategy::PreserveCoordinatesAndLabels)
+            && matches!(
+                strategy,
+                MeshDMTransferStrategy::PreserveLabels
+                    | MeshDMTransferStrategy::PreserveCoordinatesAndLabels
+            )
         {
             // labels are point-id keyed and existing points are preserved across refinement.
         }
@@ -763,6 +856,30 @@ where
             self.reorder_sections(StratifiedOrdering::CellFirst)?;
         }
         Ok(())
+    }
+
+    fn closure_index_for_points(
+        &self,
+        point: PointId,
+        order: &ClosureOrder,
+    ) -> Result<ClosureIndex<i32>, MeshSieveError> {
+        let mut atlas = Atlas::default();
+        let mut closure_points: Vec<_> =
+            self.mesh_data.sieve.closure_iter_sorted([point]).collect();
+        closure_points.sort_unstable();
+        closure_points.dedup();
+        for point in closure_points {
+            atlas.try_insert(point, 1)?;
+        }
+        let section = Section::<(), VecStorage<()>>::new(atlas);
+        build_closure_index(
+            &self.mesh_data.sieve,
+            &section,
+            point,
+            0,
+            order,
+            &IdentitySectionSym,
+        )
     }
 
     /// Run topology/geometry checks requested by [`MeshDMOptions`].
@@ -814,6 +931,201 @@ where
             .collect();
         points.sort_unstable();
         Ok(points)
+    }
+
+    /// Return an FE-compatible point order for the downward transitive closure of `point`.
+    pub fn closure_points(
+        &self,
+        point: PointId,
+        order: &ClosureOrder,
+    ) -> Result<Vec<PointId>, MeshSieveError> {
+        Ok(self
+            .closure_index_for_points(point, order)?
+            .point_order()
+            .collect())
+    }
+
+    /// Alias for [`Self::closure_points`] mirroring DMPLEX transitive-closure terminology.
+    pub fn transitive_closure_points(
+        &self,
+        point: PointId,
+        order: &ClosureOrder,
+    ) -> Result<Vec<PointId>, MeshSieveError> {
+        self.closure_points(point, order)
+    }
+
+    /// Return a deterministic upward star from `point`.
+    pub fn star_points(&self, point: PointId) -> Vec<PointId> {
+        let mut points: Vec<_> = self.mesh_data.sieve.star_iter_sorted([point]).collect();
+        points.sort_unstable();
+        points.dedup();
+        points
+    }
+
+    /// Return a deterministic downward/upward transitive set from `point`.
+    pub fn closure_both_points(&self, point: PointId) -> Vec<PointId> {
+        let mut points: Vec<_> = self
+            .mesh_data
+            .sieve
+            .closure_both_iter_sorted([point])
+            .collect();
+        points.sort_unstable();
+        points.dedup();
+        points
+    }
+
+    /// Extract section values over a cell closure using the same ordering as FE assembly helpers.
+    pub fn get_closure_values(
+        &self,
+        section_name: &str,
+        cell: PointId,
+        order: &ClosureOrder,
+    ) -> Result<ElementClosureData<V>, MeshSieveError> {
+        let section = self.mesh_data.sections.get(section_name).ok_or_else(|| {
+            MeshSieveError::MissingSectionName {
+                name: section_name.to_string(),
+            }
+        })?;
+        let global_map = self.global_sections.get(section_name);
+        extract_oriented_element_closure(
+            &self.mesh_data.sieve,
+            section,
+            global_map,
+            cell,
+            0,
+            order,
+            &IdentitySectionSym,
+        )
+    }
+
+    /// Return points selected by a label, topology policy, and optional section-atlas filter.
+    pub fn points_by_label_selection(
+        &self,
+        selection: &MeshDMLabelSelection,
+    ) -> Result<Vec<PointId>, MeshSieveError> {
+        let labels = self
+            .labels()
+            .ok_or_else(|| MeshSieveError::MissingSectionName {
+                name: "labels".to_string(),
+            })?;
+        let seeds: Vec<PointId> = labels
+            .points_with_label(&selection.label_name, selection.label_value)
+            .collect();
+        let mut points = match selection.topology {
+            SubmeshSelection::FullClosure => {
+                self.mesh_data.sieve.closure_iter_sorted(seeds).collect()
+            }
+            SubmeshSelection::ClosureDepth(depth) => {
+                crate::algs::traversal::TraversalBuilder::new(&self.mesh_data.sieve)
+                    .seeds(seeds)
+                    .dir(crate::algs::traversal::Dir::Down)
+                    .max_depth(Some(depth))
+                    .run()
+            }
+            SubmeshSelection::TargetStratum { axis, index } => {
+                let closure: Vec<PointId> =
+                    self.mesh_data.sieve.closure_iter_sorted(seeds).collect();
+                let strata = compute_strata(&self.mesh_data.sieve)?;
+                let stratum_map = match axis {
+                    crate::topology::sieve::strata::StratumAxis::Height => &strata.height,
+                    crate::topology::sieve::strata::StratumAxis::Depth => &strata.depth,
+                };
+                let target = closure
+                    .into_iter()
+                    .filter(|p| stratum_map.get(p).copied() == Some(index));
+                self.mesh_data.sieve.closure_iter_sorted(target).collect()
+            }
+        };
+        if let Some(section_name) = &selection.section {
+            let section = self.mesh_data.sections.get(section_name).ok_or_else(|| {
+                MeshSieveError::MissingSectionName {
+                    name: section_name.clone(),
+                }
+            })?;
+            points.retain(|point| section.atlas().contains(*point));
+        }
+        points.sort_unstable();
+        points.dedup();
+        Ok(points)
+    }
+
+    /// Convenience label query for points that also have DOFs in a named section.
+    pub fn points_by_label_in_section(
+        &self,
+        label_name: &str,
+        label_value: i32,
+        section_name: &str,
+        topology: SubmeshSelection,
+    ) -> Result<Vec<PointId>, MeshSieveError> {
+        self.points_by_label_selection(
+            &MeshDMLabelSelection::new(label_name, label_value)
+                .topology(topology)
+                .section(section_name),
+        )
+    }
+
+    /// Create a constrained view of an existing section, deriving point DOFs from its atlas.
+    pub fn create_constrained_view_from_labels(
+        &self,
+        section_name: &str,
+        constraints: &[LabelConstraintSpec],
+    ) -> Result<ConstrainedSection<V, St>, MeshSieveError> {
+        let section = self.mesh_data.sections.get(section_name).ok_or_else(|| {
+            MeshSieveError::MissingSectionName {
+                name: section_name.to_string(),
+            }
+        })?;
+        let point_dofs: Vec<_> = section
+            .atlas()
+            .points()
+            .filter_map(|point| section.atlas().get(point).map(|(_, len)| (point, len)))
+            .collect();
+        self.create_constrained_section_from_labels(section_name, &point_dofs, constraints)
+    }
+
+    /// Build a compact sub-DM from labeled points, preserving parent/sub point maps and numbering metadata.
+    pub fn sub_dm_by_label(
+        &self,
+        label_name: &str,
+        label_value: i32,
+        topology: SubmeshSelection,
+    ) -> Result<MeshDMSubmesh<V, St, CtSt>, MeshSieveError> {
+        self.sub_dm_by_label_with_sections(label_name, label_value, topology, None)
+    }
+
+    /// Build a compact sub-DM from labeled points and retain only selected named sections when requested.
+    pub fn sub_dm_by_label_with_sections(
+        &self,
+        label_name: &str,
+        label_value: i32,
+        topology: SubmeshSelection,
+        section_names: Option<&[&str]>,
+    ) -> Result<MeshDMSubmesh<V, St, CtSt>, MeshSieveError> {
+        let labels = self
+            .labels()
+            .ok_or_else(|| MeshSieveError::MissingSectionName {
+                name: "labels".to_string(),
+            })?;
+        let (mut mesh_data, maps) =
+            extract_by_label(&self.mesh_data, labels, label_name, label_value, topology)?;
+        if let Some(names) = section_names {
+            let keep: HashSet<&str> = names.iter().copied().collect();
+            mesh_data
+                .sections
+                .retain(|name, _| keep.contains(name.as_str()));
+        }
+        let mut dm = MeshDM::from_mesh_data_with_options(mesh_data, self.options.clone());
+        dm.ownership = remap_ownership_to_submesh(self.ownership.as_ref(), &maps)?;
+        dm.global_sections = remap_global_sections_to_submesh(&self.global_sections, &maps)?;
+        dm.provenance_maps = MeshDMProvenance {
+            load_map: None,
+            redistribute_map: None,
+            section_map: Some(point_sf_for_submesh_maps(&maps)),
+            storage_version: self.provenance_maps.storage_version,
+            permutation_source: Some("sub_dm_by_label".to_string()),
+            redistribution_map_id: self.provenance_maps.redistribution_map_id.clone(),
+        };
+        Ok(MeshDMSubmesh { dm, maps })
     }
 
     /// Build a dual graph for the provided cells.
@@ -953,13 +1265,12 @@ where
             self.options.distribution_config(),
             comm,
         )?;
-        let mut dm = Self::from_distributed(
-            distributed,
-            self.options.clone(),
-            comm.rank(),
-            comm.size(),
-        );
-        dm.run_refinement_passes(dm.options.post_refine, MeshDMTransferStrategy::PreserveCoordinatesAndLabels)?;
+        let mut dm =
+            Self::from_distributed(distributed, self.options.clone(), comm.rank(), comm.size());
+        dm.run_refinement_passes(
+            dm.options.post_refine,
+            MeshDMTransferStrategy::PreserveCoordinatesAndLabels,
+        )?;
         dm.enforce_phase_invariants()?;
         dm.run_requested_checks()?;
         Ok(dm)
@@ -1096,4 +1407,59 @@ where
         reordered.try_set(point, &values)?;
     }
     Ok(reordered)
+}
+
+fn remap_ownership_to_submesh(
+    ownership: Option<&PointOwnership>,
+    maps: &SubmeshMaps,
+) -> Result<Option<PointOwnership>, MeshSieveError> {
+    let Some(ownership) = ownership else {
+        return Ok(None);
+    };
+    let mut remapped = PointOwnership::default();
+    for (&parent, &sub) in &maps.parent_to_sub {
+        if let Some(entry) = ownership.entry(parent) {
+            remapped.set(sub, entry.owner, entry.is_ghost)?;
+        }
+    }
+    Ok(Some(remapped))
+}
+
+fn remap_global_sections_to_submesh(
+    global_sections: &BTreeMap<String, LocalToGlobalMap>,
+    maps: &SubmeshMaps,
+) -> Result<BTreeMap<String, LocalToGlobalMap>, MeshSieveError> {
+    let new_to_old = maps
+        .sub_to_parent
+        .iter()
+        .enumerate()
+        .map(|(idx, &parent)| PointId::new((idx + 1) as u64).map(|sub| (sub, parent)))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut remapped = BTreeMap::new();
+    for (name, map) in global_sections {
+        remapped.insert(name.clone(), map.remap_points(new_to_old.iter().copied())?);
+    }
+    Ok(remapped)
+}
+
+fn point_sf_for_submesh_maps(
+    maps: &SubmeshMaps,
+) -> PointSF<'static, crate::algs::communicator::NoComm> {
+    let leaves = maps
+        .sub_to_parent
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, &parent)| {
+            PointId::new((idx + 1) as u64).ok().map(|sub| PointSfLeaf {
+                local: sub,
+                remote: RemotePoint {
+                    rank: 0,
+                    point: parent,
+                },
+                owner_rank: 0,
+                is_ghost: false,
+            })
+        })
+        .collect::<Vec<_>>();
+    PointSF::from_leaves(0, maps.sub_to_parent.iter().copied(), leaves)
 }

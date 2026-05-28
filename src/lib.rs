@@ -149,7 +149,8 @@ pub mod prelude {
         local_stiffness_matrix, runtime_from_metadata, tabulate_element,
     };
     pub use crate::dm::{
-        MeshDM, MeshDMBuilder, MeshDMDistribution, MeshDMOptions, MeshVector, PreallocationGraph,
+        MeshDM, MeshDMBuilder, MeshDMDistribution, MeshDMLabelSelection, MeshDMOptions,
+        MeshDMSubmesh, MeshVector, PreallocationGraph,
     };
     pub use crate::geometry::locate::{
         BoundingBox, LocalizedCellCoordinates, LocatedCell, PeriodicDomain, PointLocation,
