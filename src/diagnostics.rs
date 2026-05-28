@@ -19,6 +19,194 @@ use crate::topology::validation::{
     validate_overlap_ownership_topology,
 };
 
+/// Options controlling the DM-level prepare-for-solve diagnostic gate.
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct PrepareForSolveOptions {
+    /// Require coordinate metadata before solve preparation can proceed.
+    pub require_coordinates: bool,
+    /// Require cell-type metadata before solve preparation can proceed.
+    pub require_cell_types: bool,
+    /// Require ownership metadata before solve preparation can proceed.
+    pub require_ownership: bool,
+    /// Require an overlap graph even when no local ghost points are present.
+    pub require_overlap: bool,
+    /// Complete/synchronize coordinate and field sections for ghost points when overlap is available.
+    pub synchronize_ghost_sections: bool,
+    /// In a serial communicator, synthesize rank-local ownership when the DM has none.
+    pub create_serial_ownership: bool,
+}
+
+impl Default for PrepareForSolveOptions {
+    fn default() -> Self {
+        Self {
+            require_coordinates: true,
+            require_cell_types: true,
+            require_ownership: true,
+            require_overlap: false,
+            synchronize_ghost_sections: true,
+            create_serial_ownership: true,
+        }
+    }
+}
+
+/// Structured status for one prepare-for-solve prerequisite.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct PrepareForSolvePrerequisiteDiagnostic {
+    pub name: &'static str,
+    pub required: bool,
+    pub present: bool,
+    pub complete: bool,
+    pub detail: String,
+}
+
+/// Structured status for one prepare-for-solve pipeline step.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct PrepareForSolveStepDiagnostic {
+    pub name: &'static str,
+    pub status: &'static str,
+    pub detail: String,
+}
+
+/// Stable summary of the generated matrix-preallocation graph.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct PrepareForSolvePreallocationDiagnostic {
+    pub rows: usize,
+    pub edges: usize,
+    pub order: Vec<PointId>,
+    pub row_nnz: Vec<usize>,
+}
+
+/// Structured, serializable output of the DM prepare-for-solve pipeline.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct PrepareForSolveDiagnostics {
+    pub ready: bool,
+    pub prerequisites: Vec<PrepareForSolvePrerequisiteDiagnostic>,
+    pub steps: Vec<PrepareForSolveStepDiagnostic>,
+    pub global_sections: Vec<String>,
+    pub preallocation: Option<PrepareForSolvePreallocationDiagnostic>,
+    pub synchronized_sections: Vec<String>,
+}
+
+impl PrepareForSolveDiagnostics {
+    /// Return true if any required prerequisite is absent or incomplete.
+    pub fn has_missing_required_prerequisites(&self) -> bool {
+        self.prerequisites
+            .iter()
+            .any(|p| p.required && (!p.present || !p.complete))
+    }
+}
+
+/// Serialize prepare-for-solve diagnostics with stable field ordering.
+pub fn prepare_for_solve_diagnostics_json(
+    diagnostics: &PrepareForSolveDiagnostics,
+) -> Result<String, MeshSieveError> {
+    serde_json::to_string(diagnostics)
+        .map_err(|e| MeshSieveError::InvalidGeometry(format!("serialize prepare diagnostics: {e}")))
+}
+
+/// Build prerequisite diagnostics for a DM-level solve-preparation gate.
+pub fn prepare_for_solve_prerequisites<V, St, CtSt>(
+    sieve: &MeshSieve,
+    coords: Option<&Coordinates<V, St>>,
+    cell_types: Option<&Section<CellType, CtSt>>,
+    ownership: Option<&PointOwnership>,
+    overlap: Option<&Overlap>,
+    options: PrepareForSolveOptions,
+) -> Result<Vec<PrepareForSolvePrerequisiteDiagnostic>, MeshSieveError>
+where
+    St: Storage<V>,
+    CtSt: Storage<CellType>,
+{
+    let strata = compute_strata(sieve)?;
+    let vertices: Vec<PointId> = strata
+        .depth
+        .iter()
+        .filter_map(|(&point, &depth)| (depth == 0).then_some(point))
+        .collect();
+    let cells = strata.strata.first().cloned().unwrap_or_default();
+    let points = sieve.points_sorted();
+    let ghost_count = ownership
+        .map(|o| o.ghost_points().count())
+        .unwrap_or_default();
+    let overlap_required = options.require_overlap || ghost_count > 0;
+
+    let mut diagnostics = Vec::new();
+
+    let missing_coords = coords.map_or(vertices.len(), |coords| {
+        vertices
+            .iter()
+            .filter(|point| !coords.section().atlas().contains(**point))
+            .count()
+    });
+    diagnostics.push(PrepareForSolvePrerequisiteDiagnostic {
+        name: "coordinates",
+        required: options.require_coordinates,
+        present: coords.is_some(),
+        complete: coords.is_some() && missing_coords == 0,
+        detail: if coords.is_some() {
+            format!(
+                "vertex_points={}, missing_vertex_coordinates={missing_coords}",
+                vertices.len()
+            )
+        } else {
+            "coordinate section is not attached".to_string()
+        },
+    });
+
+    let missing_cell_types = cell_types.map_or(cells.len(), |cell_types| {
+        cells
+            .iter()
+            .filter(|point| !cell_types.atlas().contains(**point))
+            .count()
+    });
+    diagnostics.push(PrepareForSolvePrerequisiteDiagnostic {
+        name: "cell_types",
+        required: options.require_cell_types,
+        present: cell_types.is_some(),
+        complete: cell_types.is_some() && missing_cell_types == 0,
+        detail: if cell_types.is_some() {
+            format!(
+                "cells={}, missing_cell_types={missing_cell_types}",
+                cells.len()
+            )
+        } else {
+            "cell-type section is not attached".to_string()
+        },
+    });
+
+    let missing_ownership = ownership.map_or(points.len(), |ownership| {
+        points
+            .iter()
+            .filter(|point| ownership.entry(**point).is_none())
+            .count()
+    });
+    diagnostics.push(PrepareForSolvePrerequisiteDiagnostic {
+        name: "ownership",
+        required: options.require_ownership,
+        present: ownership.is_some(),
+        complete: ownership.is_some() && missing_ownership == 0,
+        detail: if ownership.is_some() {
+            format!("topology_points={}, missing_ownership={missing_ownership}, ghost_points={ghost_count}", points.len())
+        } else {
+            "ownership map is not attached".to_string()
+        },
+    });
+
+    diagnostics.push(PrepareForSolvePrerequisiteDiagnostic {
+        name: "overlap",
+        required: overlap_required,
+        present: overlap.is_some(),
+        complete: !overlap_required || overlap.is_some(),
+        detail: if overlap.is_some() {
+            format!("ghost_points={ghost_count}, overlap_required={overlap_required}")
+        } else {
+            format!("overlap graph is not attached; ghost_points={ghost_count}, overlap_required={overlap_required}")
+        },
+    });
+
+    Ok(diagnostics)
+}
+
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct MetricSummary {
     pub max: f64,
@@ -318,14 +506,22 @@ where
         }
     }
     for (cell, diag) in &mut by_cell {
-        if let Some(cell_type) = cell_types.try_restrict(*cell).ok().and_then(|v| v.first().copied()) {
+        if let Some(cell_type) = cell_types
+            .try_restrict(*cell)
+            .ok()
+            .and_then(|v| v.first().copied())
+        {
             let mut verts: Vec<_> = sieve
                 .closure_iter([*cell])
                 .filter(|p| sieve.cone_points(*p).next().is_none())
                 .collect();
             verts.sort_unstable();
             verts.dedup();
-            let quality = crate::geometry::quality::cell_quality_from_section(cell_type, &verts, coordinates)?;
+            let quality = crate::geometry::quality::cell_quality_from_section(
+                cell_type,
+                &verts,
+                coordinates,
+            )?;
             let area_sum = *cell_area_sum.get(cell).unwrap_or(&0.0);
             if area_sum > 1e-12 {
                 diag.char_length = quality.jacobian_sign.abs() / area_sum;

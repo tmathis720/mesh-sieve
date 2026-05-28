@@ -140,3 +140,110 @@ fn mesh_dm_label_helpers_filter_sections_and_build_subdm() {
     assert_eq!(sub.maps.sub_to_parent, vec![pid(1), pid(2), pid(3)]);
     assert!(sub.dm.section("u").is_some());
 }
+
+fn tiny_coordinates() -> mesh_sieve::data::coordinates::Coordinates<f64, VecStorage<f64>> {
+    let mut atlas = Atlas::default();
+    for point in [pid(1), pid(2), pid(5)] {
+        atlas.try_insert(point, 1).unwrap();
+    }
+    let mut section = Section::<f64, VecStorage<f64>>::new(atlas);
+    section.try_set(pid(1), &[0.0]).unwrap();
+    section.try_set(pid(2), &[1.0]).unwrap();
+    section.try_set(pid(5), &[2.0]).unwrap();
+    mesh_sieve::data::coordinates::Coordinates::from_section(1, 1, section).unwrap()
+}
+
+fn tiny_cell_types() -> Section<
+    mesh_sieve::topology::cell_type::CellType,
+    VecStorage<mesh_sieve::topology::cell_type::CellType>,
+> {
+    let mut atlas = Atlas::default();
+    atlas.try_insert(pid(3), 1).unwrap();
+    atlas.try_insert(pid(4), 1).unwrap();
+    let mut section = Section::<
+        mesh_sieve::topology::cell_type::CellType,
+        VecStorage<mesh_sieve::topology::cell_type::CellType>,
+    >::new(atlas);
+    section
+        .try_set(
+            pid(3),
+            &[mesh_sieve::topology::cell_type::CellType::Segment],
+        )
+        .unwrap();
+    section
+        .try_set(
+            pid(4),
+            &[mesh_sieve::topology::cell_type::CellType::Segment],
+        )
+        .unwrap();
+    section
+}
+
+fn solve_ready_dm() -> MeshDM<f64> {
+    MeshDM::<f64>::builder(tiny_mesh())
+        .coordinates(tiny_coordinates())
+        .cell_types(tiny_cell_types())
+        .section("u", scalar_section())
+        .build()
+        .unwrap()
+}
+
+#[test]
+fn mesh_dm_prepare_for_solve_reports_missing_prerequisites() {
+    let mut dm = MeshDM::<f64>::builder(tiny_mesh())
+        .section("u", scalar_section())
+        .build()
+        .unwrap();
+
+    let report = dm
+        .prepare_for_solve(
+            &NoComm,
+            mesh_sieve::diagnostics::PrepareForSolveOptions {
+                create_serial_ownership: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+    assert!(!report.ready);
+    assert!(
+        report
+            .prerequisites
+            .iter()
+            .any(|p| p.name == "coordinates" && p.required && !p.present)
+    );
+    assert!(
+        report
+            .prerequisites
+            .iter()
+            .any(|p| p.name == "cell_types" && p.required && !p.present)
+    );
+    assert!(
+        report
+            .prerequisites
+            .iter()
+            .any(|p| p.name == "ownership" && p.required && !p.present)
+    );
+    assert!(report.steps.iter().all(|s| s.status == "skipped"));
+}
+
+#[test]
+fn mesh_dm_prepare_for_solve_is_stable_for_identical_topology_and_partitioning() {
+    let mut left = solve_ready_dm();
+    let mut right = solve_ready_dm();
+
+    let left_report = left.prepare_for_solve(&NoComm, Default::default()).unwrap();
+    let right_report = right
+        .prepare_for_solve(&NoComm, Default::default())
+        .unwrap();
+
+    let left_json =
+        mesh_sieve::diagnostics::prepare_for_solve_diagnostics_json(&left_report).unwrap();
+    let right_json =
+        mesh_sieve::diagnostics::prepare_for_solve_diagnostics_json(&right_report).unwrap();
+    assert_eq!(left_json, right_json);
+    assert_eq!(
+        left_json,
+        "{\"ready\":true,\"prerequisites\":[{\"name\":\"coordinates\",\"required\":true,\"present\":true,\"complete\":true,\"detail\":\"vertex_points=3, missing_vertex_coordinates=0\"},{\"name\":\"cell_types\",\"required\":true,\"present\":true,\"complete\":true,\"detail\":\"cells=2, missing_cell_types=0\"},{\"name\":\"ownership\",\"required\":true,\"present\":true,\"complete\":true,\"detail\":\"topology_points=5, missing_ownership=0, ghost_points=0\"},{\"name\":\"overlap\",\"required\":false,\"present\":false,\"complete\":true,\"detail\":\"overlap graph is not attached; ghost_points=0, overlap_required=false\"}],\"steps\":[{\"name\":\"section_global_numbering\",\"status\":\"completed\",\"detail\":\"numbered_sections=1\"},{\"name\":\"matrix_preallocation_graph\",\"status\":\"completed\",\"detail\":\"rows=2, edges=2\"},{\"name\":\"ownership_overlap_checks\",\"status\":\"completed\",\"detail\":\"ownership and overlap topology are consistent\"},{\"name\":\"section_synchronization\",\"status\":\"skipped\",\"detail\":\"no overlap/ownership state available for ghost synchronization\"}],\"global_sections\":[\"u\"],\"preallocation\":{\"rows\":2,\"edges\":2,\"order\":[3,4],\"row_nnz\":[1,1]},\"synchronized_sections\":[]}"
+    );
+}
