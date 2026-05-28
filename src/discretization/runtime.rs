@@ -1,7 +1,7 @@
 //! Runtime basis/quadrature lookup and element assembly utilities.
 
 use crate::data::closure::{
-    ClosureIndex, ClosureOrder, IdentitySectionSym, build_closure_index_unoriented,
+    build_closure_index_unoriented, ClosureIndex, ClosureOrder, IdentitySectionSym,
 };
 use crate::data::coordinates::Coordinates;
 use crate::data::discretization::DiscretizationMetadata;
@@ -86,25 +86,17 @@ impl Basis {
 
     /// Construct a configurable Lagrange basis for PetscFE-like setup paths.
     pub fn lagrange(cell_type: CellType, degree: usize) -> Result<Self, MeshSieveError> {
-        if degree == 0 {
-            return Err(MeshSieveError::InvalidGeometry(
-                "Lagrange degree must be at least one".to_string(),
-            ));
-        }
-        let family = match cell_type {
-            CellType::Segment
-            | CellType::Triangle
-            | CellType::Tetrahedron
-            | CellType::Simplex(_) => BasisFamily::Simplex,
-            CellType::Quadrilateral | CellType::Hexahedron => BasisFamily::TensorProduct,
-            CellType::Prism => BasisFamily::Prism,
-            CellType::Pyramid => BasisFamily::Pyramid,
-            _ => {
-                return Err(MeshSieveError::InvalidGeometry(format!(
-                    "unsupported cell type {cell_type:?} for Lagrange basis"
-                )));
-            }
-        };
+        let family = default_lagrange_family(cell_type)?;
+        Self::lagrange_with_family(cell_type, degree, family)
+    }
+
+    /// Construct a Lagrange basis with an explicit node-placement family.
+    pub fn lagrange_with_family(
+        cell_type: CellType,
+        degree: usize,
+        family: BasisFamily,
+    ) -> Result<Self, MeshSieveError> {
+        ensure_lagrange_supported(cell_type, degree, family)?;
         Ok(Self::Lagrange {
             cell_type,
             degree,
@@ -196,7 +188,8 @@ impl QuadratureRule {
                 "midpoint" | "centroid" => 1,
                 _ => 2,
             });
-        match cell_type {
+        match canonical_cell_type(cell_type) {
+            CellType::Vertex => Ok(point_quadrature(name)),
             CellType::Segment => Ok(gauss_legendre_1d(order.min(3), name)),
             CellType::Quadrilateral => Ok(tensor_power_quadrature(2, order.min(3), name)),
             CellType::Hexahedron => Ok(tensor_power_quadrature(3, order.min(3), name)),
@@ -204,8 +197,8 @@ impl QuadratureRule {
             CellType::Tetrahedron => simplex_quadrature(3, order, name),
             CellType::Prism => prism_quadrature(order, name),
             CellType::Pyramid => pyramid_quadrature(order, name),
-            _ => Err(MeshSieveError::InvalidGeometry(format!(
-                "unsupported cell type {cell_type:?} for quadrature '{name}'"
+            canonical => Err(MeshSieveError::InvalidGeometry(format!(
+                "unsupported cell topology {canonical:?} for quadrature '{name}'"
             ))),
         }
     }
@@ -832,6 +825,105 @@ fn parse_trailing_degree(name: &str) -> Option<usize> {
     (!digits.is_empty()).then(|| digits.parse().ok()).flatten()
 }
 
+/// Runtime finite-element support policy.
+///
+/// The table below is the single source of truth for combinations implemented by
+/// this module. Unsupported entries are intentionally rejected before node,
+/// quadrature, or Jacobian code is reached.
+///
+/// | Cell topology | Lagrange families | Quadrature | Jacobian |
+/// | --- | --- | --- | --- |
+/// | `Vertex`, `Simplex(0)` | `Simplex`, `TensorProduct` | point rule | 0D |
+/// | `Segment`, `Simplex(1)` | `Simplex`, `TensorProduct` | Gauss-Legendre | 1D |
+/// | `Triangle`, `Simplex(2)` | `Simplex` | simplex triangle | 2D |
+/// | `Quadrilateral` | `TensorProduct` | tensor-product Gauss | 2D |
+/// | `Tetrahedron`, `Simplex(3)` | `Simplex` | simplex tetrahedron | 3D |
+/// | `Hexahedron` | `TensorProduct` | tensor-product Gauss | 3D |
+/// | `Prism` | `Prism` | triangle × segment product | 3D |
+/// | `Pyramid` | `Pyramid` | one-point pyramid rule | 3D |
+const RUNTIME_CAPABILITIES: &[RuntimeCapability] = &[
+    RuntimeCapability::new(
+        CellType::Vertex,
+        &[BasisFamily::Simplex, BasisFamily::TensorProduct],
+    ),
+    RuntimeCapability::new(
+        CellType::Segment,
+        &[BasisFamily::Simplex, BasisFamily::TensorProduct],
+    ),
+    RuntimeCapability::new(CellType::Triangle, &[BasisFamily::Simplex]),
+    RuntimeCapability::new(CellType::Quadrilateral, &[BasisFamily::TensorProduct]),
+    RuntimeCapability::new(CellType::Tetrahedron, &[BasisFamily::Simplex]),
+    RuntimeCapability::new(CellType::Hexahedron, &[BasisFamily::TensorProduct]),
+    RuntimeCapability::new(CellType::Prism, &[BasisFamily::Prism]),
+    RuntimeCapability::new(CellType::Pyramid, &[BasisFamily::Pyramid]),
+];
+
+#[derive(Clone, Copy, Debug)]
+struct RuntimeCapability {
+    cell_type: CellType,
+    families: &'static [BasisFamily],
+}
+
+impl RuntimeCapability {
+    const fn new(cell_type: CellType, families: &'static [BasisFamily]) -> Self {
+        Self {
+            cell_type,
+            families,
+        }
+    }
+}
+
+fn canonical_cell_type(cell_type: CellType) -> CellType {
+    match cell_type {
+        CellType::Simplex(0) => CellType::Vertex,
+        CellType::Simplex(1) => CellType::Segment,
+        CellType::Simplex(2) => CellType::Triangle,
+        CellType::Simplex(3) => CellType::Tetrahedron,
+        other => other,
+    }
+}
+
+fn capability_for(cell_type: CellType) -> Option<&'static RuntimeCapability> {
+    let canonical = canonical_cell_type(cell_type);
+    RUNTIME_CAPABILITIES
+        .iter()
+        .find(|capability| capability.cell_type == canonical)
+}
+
+fn default_lagrange_family(cell_type: CellType) -> Result<BasisFamily, MeshSieveError> {
+    capability_for(cell_type)
+        .and_then(|capability| capability.families.first().copied())
+        .ok_or_else(|| {
+            MeshSieveError::InvalidGeometry(format!(
+                "unsupported cell type {cell_type:?} for Lagrange basis"
+            ))
+        })
+}
+
+fn ensure_lagrange_supported(
+    cell_type: CellType,
+    degree: usize,
+    family: BasisFamily,
+) -> Result<(), MeshSieveError> {
+    if degree == 0 && canonical_cell_type(cell_type) != CellType::Vertex {
+        return Err(MeshSieveError::InvalidGeometry(
+            "Lagrange degree must be at least one for non-vertex cells".to_string(),
+        ));
+    }
+    let capability = capability_for(cell_type).ok_or_else(|| {
+        MeshSieveError::InvalidGeometry(format!(
+            "unsupported cell type {cell_type:?} for Lagrange basis"
+        ))
+    })?;
+    if !capability.families.contains(&family) {
+        return Err(MeshSieveError::InvalidGeometry(format!(
+            "unsupported Lagrange family {family:?} for {cell_type:?}; supported families: {:?}",
+            capability.families
+        )));
+    }
+    Ok(())
+}
+
 fn tabulate_p1_segment(points: &[Vec<f64>]) -> Result<BasisTabulation, MeshSieveError> {
     let mut values = Vec::with_capacity(points.len());
     let mut gradients = Vec::with_capacity(points.len());
@@ -890,7 +982,8 @@ fn tabulate_lagrange(
             )));
         }
     }
-    let exponents = monomial_exponents(dim, nodes.len());
+    let exponents =
+        interpolation_exponents(canonical_cell_type(cell_type), degree, family, nodes.len());
     let vandermonde: Vec<Vec<f64>> = nodes
         .iter()
         .map(|node| monomials(node, &exponents))
@@ -923,10 +1016,13 @@ fn reference_nodes(
     degree: usize,
     family: BasisFamily,
 ) -> Result<Vec<Vec<f64>>, MeshSieveError> {
+    ensure_lagrange_supported(cell_type, degree, family)?;
     let p = degree;
-    let denom = p as f64;
-    let nodes = match (cell_type, family) {
-        (CellType::Segment, _) => (0..=p)
+    let canonical = canonical_cell_type(cell_type);
+    let denom = p.max(1) as f64;
+    let nodes = match (canonical, family) {
+        (CellType::Vertex, BasisFamily::Simplex | BasisFamily::TensorProduct) => vec![Vec::new()],
+        (CellType::Segment, BasisFamily::Simplex | BasisFamily::TensorProduct) => (0..=p)
             .map(|i| vec![-1.0 + 2.0 * i as f64 / denom])
             .collect(),
         (CellType::Triangle, BasisFamily::Simplex) => {
@@ -984,15 +1080,6 @@ fn reference_nodes(
             }
             out
         }
-        (CellType::Simplex(dim), BasisFamily::Simplex) if dim == 1 => {
-            reference_nodes(CellType::Segment, p, family)?
-        }
-        (CellType::Simplex(dim), BasisFamily::Simplex) if dim == 2 => {
-            reference_nodes(CellType::Triangle, p, family)?
-        }
-        (CellType::Simplex(dim), BasisFamily::Simplex) if dim == 3 => {
-            reference_nodes(CellType::Tetrahedron, p, family)?
-        }
         _ => {
             return Err(MeshSieveError::InvalidGeometry(format!(
                 "unsupported node layout for {cell_type:?} / {family:?}"
@@ -1019,7 +1106,78 @@ fn tensor_nodes(dim: usize, degree: usize) -> Vec<Vec<f64>> {
     out
 }
 
+fn interpolation_exponents(
+    cell_type: CellType,
+    degree: usize,
+    family: BasisFamily,
+    count: usize,
+) -> Vec<Vec<usize>> {
+    let exponents = match (cell_type, family) {
+        (CellType::Vertex, BasisFamily::Simplex | BasisFamily::TensorProduct) => vec![Vec::new()],
+        (CellType::Segment, BasisFamily::Simplex | BasisFamily::TensorProduct) => {
+            (0..=degree).map(|i| vec![i]).collect()
+        }
+        (CellType::Triangle, BasisFamily::Simplex) => simplex_exponents(2, degree),
+        (CellType::Tetrahedron, BasisFamily::Simplex) => simplex_exponents(3, degree),
+        (CellType::Quadrilateral, BasisFamily::TensorProduct) => tensor_exponents(2, degree),
+        (CellType::Hexahedron, BasisFamily::TensorProduct) => tensor_exponents(3, degree),
+        (CellType::Prism, BasisFamily::Prism) => {
+            let mut out = Vec::new();
+            for tri in simplex_exponents(2, degree) {
+                for z in 0..=degree {
+                    out.push(vec![tri[0], tri[1], z]);
+                }
+            }
+            out
+        }
+        (CellType::Pyramid, BasisFamily::Pyramid) => {
+            let mut out = Vec::new();
+            for z in 0..=degree {
+                let layer_degree = degree - z;
+                for x in 0..=layer_degree {
+                    for y in 0..=layer_degree {
+                        out.push(vec![x, y, z]);
+                    }
+                }
+            }
+            out
+        }
+        _ => monomial_exponents(cell_type.dimension() as usize, count),
+    };
+    debug_assert_eq!(exponents.len(), count);
+    exponents
+}
+
+fn simplex_exponents(dim: usize, degree: usize) -> Vec<Vec<usize>> {
+    let mut out = Vec::new();
+    for total in 0..=degree {
+        let mut cur = vec![0; dim];
+        gen_exponents_of_total(dim, total, 0, &mut cur, &mut out, usize::MAX);
+    }
+    out
+}
+
+fn tensor_exponents(dim: usize, degree: usize) -> Vec<Vec<usize>> {
+    let mut out = Vec::new();
+    let mut cur = vec![0; dim];
+    fn rec(out: &mut Vec<Vec<usize>>, cur: &mut [usize], axis: usize, degree: usize) {
+        if axis == cur.len() {
+            out.push(cur.to_vec());
+            return;
+        }
+        for i in 0..=degree {
+            cur[axis] = i;
+            rec(out, cur, axis + 1, degree);
+        }
+    }
+    rec(&mut out, &mut cur, 0, degree);
+    out
+}
+
 fn monomial_exponents(dim: usize, count: usize) -> Vec<Vec<usize>> {
+    if dim == 0 {
+        return vec![Vec::new(); count];
+    }
     let mut exps = Vec::new();
     let mut total = 0;
     while exps.len() < count {
@@ -1131,6 +1289,14 @@ fn invert_square(mut a: Vec<Vec<f64>>) -> Result<Vec<Vec<f64>>, MeshSieveError> 
     Ok(inv)
 }
 
+fn point_quadrature(name: &str) -> QuadratureRule {
+    QuadratureRule {
+        name: name.to_string(),
+        points: vec![Vec::new()],
+        weights: vec![1.0],
+    }
+}
+
 fn gauss_legendre_1d(order: usize, name: &str) -> QuadratureRule {
     match order {
         1 => QuadratureRule {
@@ -1188,6 +1354,8 @@ fn simplex_quadrature(
     name: &str,
 ) -> Result<QuadratureRule, MeshSieveError> {
     match dim {
+        0 => Ok(point_quadrature(name)),
+        1 => Ok(gauss_legendre_1d(order.min(3), name)),
         2 if order > 1 => Ok(QuadratureRule {
             name: name.to_string(),
             points: vec![
@@ -1257,6 +1425,7 @@ fn build_jacobian(
 
 fn invert_jacobian(dim: usize, jac: &[f64]) -> Result<(f64, Vec<f64>), MeshSieveError> {
     match dim {
+        0 => Ok((1.0, Vec::new())),
         1 => {
             let det = jac[0];
             if det.abs() < f64::EPSILON {
@@ -1385,4 +1554,138 @@ pub struct CsrPattern {
     pub adjncy: Vec<ClosureDof>,
     /// Row closure DOFs.
     pub rows: Vec<ClosureDof>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CELL_CASES: &[CellType] = &[
+        CellType::Vertex,
+        CellType::Segment,
+        CellType::Triangle,
+        CellType::Quadrilateral,
+        CellType::Tetrahedron,
+        CellType::Hexahedron,
+        CellType::Prism,
+        CellType::Pyramid,
+        CellType::Simplex(0),
+        CellType::Simplex(1),
+        CellType::Simplex(2),
+        CellType::Simplex(3),
+        CellType::Simplex(4),
+        CellType::Polygon(5),
+        CellType::Polyhedron,
+    ];
+
+    const FAMILY_CASES: &[BasisFamily] = &[
+        BasisFamily::Simplex,
+        BasisFamily::TensorProduct,
+        BasisFamily::Prism,
+        BasisFamily::Pyramid,
+    ];
+
+    fn capability_supports(cell_type: CellType, family: BasisFamily) -> bool {
+        capability_for(cell_type)
+            .map(|capability| capability.families.contains(&family))
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn capability_table_is_the_lagrange_family_policy() {
+        for &cell_type in CELL_CASES {
+            for &family in FAMILY_CASES {
+                let result = Basis::lagrange_with_family(cell_type, 1, family);
+                assert_eq!(
+                    result.is_ok(),
+                    capability_supports(cell_type, family),
+                    "{cell_type:?} / {family:?} should match capability table"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn supported_basis_quadrature_and_node_layouts_tabulate() {
+        for capability in RUNTIME_CAPABILITIES {
+            for &family in capability.families {
+                for degree in 1..=2 {
+                    let basis =
+                        Basis::lagrange_with_family(capability.cell_type, degree, family).unwrap();
+                    let quad =
+                        QuadratureRule::from_metadata("gauss2", capability.cell_type).unwrap();
+                    assert_eq!(quad.dimension(), basis.dimension());
+
+                    let tabulation = basis.tabulate(&quad.points).unwrap();
+                    assert_eq!(tabulation.values.len(), quad.points.len());
+                    assert_eq!(tabulation.gradients.len(), quad.points.len());
+                    for values in &tabulation.values {
+                        assert_eq!(values.len(), basis.num_nodes());
+                        assert!((values.iter().sum::<f64>() - 1.0).abs() < 1e-10);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn simplex_aliases_use_canonical_capabilities() {
+        let aliases = [
+            (CellType::Simplex(0), CellType::Vertex, 1),
+            (CellType::Simplex(1), CellType::Segment, 2),
+            (CellType::Simplex(2), CellType::Triangle, 3),
+            (CellType::Simplex(3), CellType::Tetrahedron, 4),
+        ];
+        for (alias, canonical, expected_nodes) in aliases {
+            let basis = Basis::lagrange(alias, 1).unwrap();
+            assert_eq!(basis.num_nodes(), expected_nodes);
+            let quad = QuadratureRule::from_metadata("gauss2", alias).unwrap();
+            assert_eq!(quad.dimension(), canonical.dimension() as usize);
+        }
+    }
+
+    #[test]
+    fn unsupported_combinations_are_explicit_policy_errors() {
+        let bad_family =
+            Basis::lagrange_with_family(CellType::Triangle, 1, BasisFamily::TensorProduct)
+                .unwrap_err();
+        assert!(format!("{bad_family}").contains("unsupported Lagrange family"));
+
+        let bad_cell =
+            Basis::lagrange_with_family(CellType::Polygon(5), 1, BasisFamily::Simplex).unwrap_err();
+        assert!(format!("{bad_cell}").contains("unsupported cell type"));
+
+        let bad_quadrature =
+            QuadratureRule::from_metadata("gauss2", CellType::Simplex(4)).unwrap_err();
+        assert!(format!("{bad_quadrature}").contains("unsupported cell topology"));
+    }
+
+    #[test]
+    fn jacobian_inversion_policy_covers_zero_through_three_dimensions() {
+        let cases = [
+            (0, Vec::new()),
+            (1, vec![2.0]),
+            (2, vec![2.0, 0.0, 0.0, 3.0]),
+            (3, vec![2.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 4.0]),
+        ];
+        for (dim, jacobian) in cases {
+            let (det, inverse) = invert_jacobian(dim, &jacobian).unwrap();
+            assert!(det > 0.0);
+            assert_eq!(inverse.len(), dim * dim);
+        }
+        assert!(invert_jacobian(4, &[0.0; 16]).is_err());
+    }
+
+    #[test]
+    fn vertex_element_tabulates_with_zero_dimensional_jacobian() {
+        let runtime = ElementRuntime {
+            basis: Basis::lagrange(CellType::Vertex, 1).unwrap(),
+            quadrature: QuadratureRule::from_metadata("point", CellType::Vertex).unwrap(),
+        };
+        let tabulation = tabulate_element(&runtime, &[Vec::new()]).unwrap();
+        assert_eq!(tabulation.reference_points, vec![Vec::<f64>::new()]);
+        assert_eq!(tabulation.physical_points, vec![Vec::<f64>::new()]);
+        assert_eq!(tabulation.jacobians, vec![Vec::<f64>::new()]);
+        assert_eq!(tabulation.jacobian_dets, vec![1.0]);
+    }
 }
