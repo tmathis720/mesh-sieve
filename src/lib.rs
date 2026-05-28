@@ -140,6 +140,11 @@ pub mod prelude {
         mesh_dot_graph, mesh_json_debug_dump, mesh_text_summary, mesh_tikz_viewer, run_mesh_checks,
         run_mesh_checks_f64_with_report,
     };
+    pub use crate::diagnostics::{
+        PrepareForSolveDiagnostics, PrepareForSolveOptions, PrepareForSolvePreallocationDiagnostic,
+        PrepareForSolvePrerequisiteDiagnostic, PrepareForSolveStepDiagnostic,
+        prepare_for_solve_diagnostics_json,
+    };
     pub use crate::discretization::runtime::{
         Basis, BasisFamily, CellGeometry, ClosureDof, CsrPattern, DofMap, ElementRuntime,
         ElementTabulation, FaceGeometry, FiniteVolumeMetadata, FluxStencil, QuadratureRule,

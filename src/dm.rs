@@ -33,8 +33,9 @@ use crate::data::section::Section;
 use crate::data::storage::{Storage, VecStorage};
 use crate::data::{ConstrainedSection, LabelConstraintSpec};
 use crate::diagnostics::{
-    FvmQualityDiagnostics, MeshCheckOptions, fvm_cell_diagnostics, fvm_quality_diagnostics,
-    run_mesh_checks,
+    FvmQualityDiagnostics, MeshCheckOptions, PrepareForSolveDiagnostics, PrepareForSolveOptions,
+    PrepareForSolvePreallocationDiagnostic, PrepareForSolveStepDiagnostic, fvm_cell_diagnostics,
+    fvm_quality_diagnostics, prepare_for_solve_prerequisites, run_mesh_checks,
 };
 use crate::geometry::fvm::build_fvm_face_metrics;
 use crate::io::MeshData;
@@ -1161,6 +1162,153 @@ where
             order: graph.order,
             row_nnz,
         }
+    }
+
+    /// Prepare this DM for solver assembly with a DMPLEX-like setup flow.
+    ///
+    /// The flow is intentionally deterministic: prerequisite diagnostics,
+    /// section/global numbering, matrix preallocation, ownership/overlap
+    /// validation, and optional ghost-section synchronization are all reported
+    /// in stable point/name order. Missing required prerequisites are returned
+    /// as structured diagnostics instead of panicking or partially preparing the
+    /// DM.
+    pub fn prepare_for_solve<C>(
+        &mut self,
+        comm: &C,
+        options: PrepareForSolveOptions,
+    ) -> Result<PrepareForSolveDiagnostics, MeshSieveError>
+    where
+        C: Communicator + Sync,
+        V: Send + PartialEq + bytemuck::Pod + 'static,
+    {
+        if options.create_serial_ownership && comm.size() == 1 {
+            self.ensure_serial_ownership(comm.rank())?;
+        }
+
+        let prerequisites = prepare_for_solve_prerequisites(
+            &self.mesh_data.sieve,
+            self.mesh_data.coordinates.as_ref(),
+            self.mesh_data.cell_types.as_ref(),
+            self.ownership.as_ref(),
+            self.overlap.as_ref(),
+            options,
+        )?;
+        let mut diagnostics = PrepareForSolveDiagnostics {
+            ready: false,
+            prerequisites,
+            ..PrepareForSolveDiagnostics::default()
+        };
+
+        if diagnostics.has_missing_required_prerequisites() {
+            diagnostics.steps.push(PrepareForSolveStepDiagnostic {
+                name: "section_global_numbering",
+                status: "skipped",
+                detail: "required prerequisites are missing".to_string(),
+            });
+            diagnostics.steps.push(PrepareForSolveStepDiagnostic {
+                name: "matrix_preallocation_graph",
+                status: "skipped",
+                detail: "required prerequisites are missing".to_string(),
+            });
+            diagnostics.steps.push(PrepareForSolveStepDiagnostic {
+                name: "ownership_overlap_checks",
+                status: "skipped",
+                detail: "required prerequisites are missing".to_string(),
+            });
+            diagnostics.steps.push(PrepareForSolveStepDiagnostic {
+                name: "section_synchronization",
+                status: "skipped",
+                detail: "required prerequisites are missing".to_string(),
+            });
+            return Ok(diagnostics);
+        }
+
+        self.build_global_sections(comm)?;
+        diagnostics.global_sections = self.global_sections.keys().cloned().collect();
+        diagnostics.steps.push(PrepareForSolveStepDiagnostic {
+            name: "section_global_numbering",
+            status: "completed",
+            detail: format!("numbered_sections={}", diagnostics.global_sections.len()),
+        });
+
+        let cells = self.height_stratum(0)?;
+        let preallocation = self.matrix_preallocation_graph(cells, Default::default());
+        diagnostics.preallocation = Some(PrepareForSolvePreallocationDiagnostic {
+            rows: preallocation.order.len(),
+            edges: preallocation.adjncy.len(),
+            order: preallocation.order,
+            row_nnz: preallocation.row_nnz,
+        });
+        diagnostics.steps.push(PrepareForSolveStepDiagnostic {
+            name: "matrix_preallocation_graph",
+            status: "completed",
+            detail: diagnostics
+                .preallocation
+                .as_ref()
+                .map(|p| format!("rows={}, edges={}", p.rows, p.edges))
+                .unwrap_or_else(|| "rows=0, edges=0".to_string()),
+        });
+
+        run_mesh_checks(
+            &mut self.mesh_data.sieve,
+            self.mesh_data.cell_types.as_ref(),
+            self.mesh_data.coordinates.as_ref(),
+            self.ownership.as_ref(),
+            self.overlap.as_ref(),
+            self.mesh_data.sections.values(),
+            MeshCheckOptions {
+                check_symmetry: true,
+                check_skeleton: true,
+                check_faces: true,
+                check_geometry: true,
+                check_overlap: true,
+                check_ownership: true,
+                check_sections: true,
+            },
+        )?;
+        diagnostics.steps.push(PrepareForSolveStepDiagnostic {
+            name: "ownership_overlap_checks",
+            status: "completed",
+            detail: "ownership and overlap topology are consistent".to_string(),
+        });
+
+        if options.synchronize_ghost_sections {
+            let has_overlap = self.overlap.is_some();
+            let has_ownership = self.ownership.is_some();
+            if has_overlap && has_ownership {
+                let mut synchronized = Vec::new();
+                if self.mesh_data.coordinates.is_some() {
+                    synchronized.push("coordinates".to_string());
+                }
+                synchronized.extend(self.mesh_data.sections.keys().cloned());
+                self.distribute_fields(comm)?;
+                diagnostics.synchronized_sections = synchronized;
+                diagnostics.steps.push(PrepareForSolveStepDiagnostic {
+                    name: "section_synchronization",
+                    status: "completed",
+                    detail: format!(
+                        "synchronized_sections={}",
+                        diagnostics.synchronized_sections.len()
+                    ),
+                });
+            } else {
+                diagnostics.steps.push(PrepareForSolveStepDiagnostic {
+                    name: "section_synchronization",
+                    status: "skipped",
+                    detail: "no overlap/ownership state available for ghost synchronization"
+                        .to_string(),
+                });
+            }
+        } else {
+            diagnostics.steps.push(PrepareForSolveStepDiagnostic {
+                name: "section_synchronization",
+                status: "skipped",
+                detail: "ghost section synchronization disabled".to_string(),
+            });
+        }
+
+        diagnostics.ready = true;
+        Ok(diagnostics)
     }
 
     /// Create a zero-initialized local vector matching a named section.
