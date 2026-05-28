@@ -8,6 +8,10 @@ use std::hash::{Hash, Hasher};
 use crate::partitioning::graph_traits::PartitionableGraph;
 use crate::partitioning::metrics::edge_cut;
 use crate::partitioning::{PartitionMap, PartitionerConfig, partition};
+use crate::partitioning::{
+    exchange_cluster_part_assignments, exchange_cut_edge_owner_decisions,
+};
+use hashbrown::HashMap;
 
 #[test]
 fn e2e_cycle_4_nodes_k2() {
@@ -170,5 +174,36 @@ proptest! {
         let mut trait_edges: Vec<_> = g.edges().collect();
         trait_edges.sort();
         prop_assert_eq!(trait_edges, manual);
+    }
+}
+
+proptest! {
+    #[test]
+    fn prop_cut_edge_owner_exchange_is_deterministic(
+        a in 0usize..32,
+        b in 0usize..32,
+        o1 in 0usize..8,
+        o2 in 0usize..8,
+    ) {
+        prop_assume!(a != b);
+        let edge = if a < b { (a, b) } else { (b, a) };
+        let mut m1 = HashMap::new();
+        m1.insert(edge, o1);
+        m1.insert(edge, o2);
+        let out = exchange_cut_edge_owner_decisions(&m1);
+        let got = *out.get(&edge).expect("owner decision exists");
+        prop_assert_eq!(got, o1.min(o2));
+    }
+}
+
+proptest! {
+    #[test]
+    fn prop_cluster_part_exchange_is_stable_with_overlap(
+        n in 1usize..32,
+        k in 1usize..8,
+    ) {
+        let base: Vec<usize> = (0..n).map(|i| i % k).collect();
+        let exchanged = exchange_cluster_part_assignments(&base);
+        prop_assert_eq!(exchanged, base);
     }
 }

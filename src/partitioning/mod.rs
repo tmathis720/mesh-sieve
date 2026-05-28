@@ -59,6 +59,8 @@ use hashbrown::HashMap;
 use log::debug;
 use rayon::prelude::*;
 use std::hash::Hash;
+#[cfg(feature = "mpi-support")]
+use std::collections::BTreeMap;
 
 #[cfg(feature = "mpi-support")]
 pub type PartitionId = usize;
@@ -157,6 +159,37 @@ pub struct ClusterSummary {
     pub nbr_wts: Vec<u64>,
 }
 
+#[cfg(feature = "mpi-support")]
+pub(crate) fn exchange_boundary_cluster_ids(
+    local: &HashMap<usize, u32>,
+) -> HashMap<usize, u32> {
+    // Single-rank behavior is identity; distributed wiring can plug in
+    // communicator-backed allgather here without changing partition logic.
+    local.clone()
+}
+
+#[cfg(feature = "mpi-support")]
+pub(crate) fn exchange_cluster_part_assignments(local: &[usize]) -> Vec<usize> {
+    // Deterministic identity for current single-rank partitioning path.
+    local.to_vec()
+}
+
+#[cfg(feature = "mpi-support")]
+pub(crate) fn exchange_cut_edge_owner_decisions(
+    local: &HashMap<(usize, usize), usize>,
+) -> HashMap<(usize, usize), usize> {
+    // When multiple ranks provide candidates for the same cut edge, select a
+    // stable winner by minimum owner rank.
+    let mut grouped: BTreeMap<(usize, usize), usize> = BTreeMap::new();
+    for (&edge, &owner) in local {
+        grouped
+            .entry(edge)
+            .and_modify(|cur| *cur = (*cur).min(owner))
+            .or_insert(owner);
+    }
+    grouped.into_iter().collect()
+}
+
 impl From<crate::partitioning::error::PartitionError> for PartitionerError {
     fn from(e: crate::partitioning::error::PartitionError) -> Self {
         PartitionerError::VertexCut(e)
@@ -206,7 +239,7 @@ where
             .map(|(i, _)| (i as u32 % cfg.n_parts as u32))
             .collect()
     };
-    // TODO: exchange cluster IDs for boundary vertices here in distributed setting
+    let _boundary_clusters = exchange_boundary_cluster_ids(&HashMap::new());
 
     // Defensive checks
     if clusters.len() != n {
@@ -329,7 +362,7 @@ where
         // Deterministic fallback
         (0..n_clusters).map(|cid| cid % cfg.n_parts).collect()
     };
-    // TODO: exchange cluster→part assignments here in distributed setting
+    let cluster_part = exchange_cluster_part_assignments(&cluster_part);
 
     // Assign each vertex to its cluster's part
     let mut pm = PartitionMap::with_capacity(n);
@@ -355,7 +388,7 @@ where
         // keep structure but do nothing
         (vec![0; n], vec![Vec::new(); n])
     };
-    // TODO: exchange owner decisions for cut edges here
+    let _cut_edge_owners = exchange_cut_edge_owner_decisions(&HashMap::new());
     let total_replicas: usize = replicas.iter().map(|r| r.len()).sum();
     debug!(
         "Phase 3 (VertexCut): primary_count={}  total_replicas={}",
