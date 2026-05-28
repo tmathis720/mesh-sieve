@@ -323,6 +323,43 @@ impl LocalToGlobalMap {
         Ok(start..start + len)
     }
 
+    /// Return a copy of this numbering with point IDs remapped.
+    ///
+    /// `new_to_old` maps each point in the returned map to the corresponding
+    /// point in this map. Offsets and DOF lengths are preserved, which is useful
+    /// for compact submeshes that must keep parent global numbering semantics.
+    pub fn remap_points<I>(&self, new_to_old: I) -> Result<Self, MeshSieveError>
+    where
+        I: IntoIterator<Item = (PointId, PointId)>,
+    {
+        let mut out = LocalToGlobalMap {
+            offsets: Vec::new(),
+            dof_lengths: Vec::new(),
+            total_dofs: self.total_dofs,
+        };
+        for (new_point, old_point) in new_to_old {
+            let old_idx = point_index(old_point)?;
+            let new_idx = point_index(new_point)?;
+            let offset = self
+                .offsets
+                .get(old_idx)
+                .and_then(|val| *val)
+                .ok_or(MeshSieveError::PointNotInAtlas(old_point))?;
+            let len = self
+                .dof_lengths
+                .get(old_idx)
+                .and_then(|val| *val)
+                .ok_or(MeshSieveError::PointNotInAtlas(old_point))?;
+            if new_idx >= out.offsets.len() {
+                out.offsets.resize(new_idx + 1, None);
+                out.dof_lengths.resize(new_idx + 1, None);
+            }
+            out.offsets[new_idx] = Some(offset);
+            out.dof_lengths[new_idx] = Some(len);
+        }
+        Ok(out)
+    }
+
     /// Total number of globally owned DOFs across all ranks.
     pub fn total_dofs(&self) -> u64 {
         self.total_dofs

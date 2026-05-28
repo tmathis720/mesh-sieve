@@ -72,3 +72,71 @@ fn mesh_dm_reorders_sections_and_builds_preallocation_graph() {
     assert_eq!(graph.order, vec![pid(3), pid(4)]);
     assert_eq!(graph.row_nnz.len(), 2);
 }
+
+#[test]
+fn mesh_dm_closure_and_star_wrappers_use_fe_ordering() {
+    let dm = MeshDM::<f64>::builder(tiny_mesh())
+        .section("u", scalar_section())
+        .build()
+        .unwrap();
+
+    let order = mesh_sieve::data::closure::ClosureOrder::BreadthFirstDmpLex;
+    assert_eq!(
+        dm.closure_points(pid(3), &order).unwrap(),
+        vec![pid(3), pid(1), pid(2)]
+    );
+    assert_eq!(
+        dm.transitive_closure_points(pid(3), &order).unwrap(),
+        vec![pid(3), pid(1), pid(2)]
+    );
+    assert_eq!(dm.star_points(pid(2)), vec![pid(2), pid(3), pid(4)]);
+
+    let closure = dm.get_closure_values("u", pid(3), &order).unwrap();
+    assert_eq!(closure.cell, pid(3));
+    assert_eq!(closure.values, vec![3.0, 1.0, 2.0]);
+}
+
+#[test]
+fn mesh_dm_label_helpers_filter_sections_and_build_subdm() {
+    let mut labels = mesh_sieve::topology::labels::LabelSet::new();
+    labels.set_label(pid(3), "marker", 7);
+
+    let dm = MeshDM::<f64>::builder(tiny_mesh())
+        .labels(labels)
+        .section("u", scalar_section())
+        .build()
+        .unwrap();
+
+    let points = dm
+        .points_by_label_in_section(
+            "marker",
+            7,
+            "u",
+            mesh_sieve::algs::submesh::SubmeshSelection::FullClosure,
+        )
+        .unwrap();
+    assert_eq!(points, vec![pid(1), pid(2), pid(3)]);
+
+    let constrained = dm
+        .create_constrained_view_from_labels(
+            "u",
+            &[mesh_sieve::data::LabelConstraintSpec::new(
+                "marker",
+                7,
+                vec![0],
+            )],
+        )
+        .unwrap();
+    assert!(constrained.constraints().contains_key(&pid(3)));
+
+    let sub = dm
+        .sub_dm_by_label_with_sections(
+            "marker",
+            7,
+            mesh_sieve::algs::submesh::SubmeshSelection::FullClosure,
+            Some(&["u"]),
+        )
+        .unwrap();
+    assert_eq!(sub.maps.sub_to_parent, vec![pid(1), pid(2), pid(3)]);
+    assert!(sub.dm.section("u").is_some());
+}
