@@ -58,9 +58,9 @@ pub use self::metrics::*;
 use hashbrown::HashMap;
 use log::debug;
 use rayon::prelude::*;
-use std::hash::Hash;
 #[cfg(feature = "mpi-support")]
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::hash::Hash;
 
 #[cfg(feature = "mpi-support")]
 pub type PartitionId = usize;
@@ -124,6 +124,10 @@ impl<V: Eq + Hash + Copy> PartitionMap<V> {
 }
 
 #[cfg(feature = "mpi-support")]
+use crate::algs::communicator::{Communicator, Wait};
+#[cfg(feature = "mpi-support")]
+use crate::algs::point_sf::PointSF;
+#[cfg(feature = "mpi-support")]
 use crate::partitioning::graph_traits::PartitionableGraph;
 
 #[cfg(feature = "mpi-support")]
@@ -160,34 +164,433 @@ pub struct ClusterSummary {
 }
 
 #[cfg(feature = "mpi-support")]
-pub(crate) fn exchange_boundary_cluster_ids(
-    local: &HashMap<usize, u32>,
-) -> HashMap<usize, u32> {
-    // Single-rank behavior is identity; distributed wiring can plug in
-    // communicator-backed allgather here without changing partition logic.
+const PARTITION_EXCHANGE_BOUNDARY_CLUSTERS: u16 = 10_001;
+#[cfg(feature = "mpi-support")]
+const PARTITION_EXCHANGE_CLUSTER_PARTS: u16 = 10_011;
+#[cfg(feature = "mpi-support")]
+const PARTITION_EXCHANGE_CUT_OWNERS: u16 = 10_021;
+
+#[cfg(feature = "mpi-support")]
+fn partition_comm_error(e: crate::mesh_error::MeshSieveError) -> PartitionerError {
+    PartitionerError::Other(format!("distributed partition exchange failed: {e}"))
+}
+
+#[cfg(feature = "mpi-support")]
+fn sorted_sf_neighbors<C>(sf: &PointSF<'_, C>) -> Vec<usize>
+where
+    C: Communicator + Sync,
+{
+    let mut neighbors: BTreeSet<usize> = sf.leaves().map(|leaf| leaf.remote.rank).collect();
+    neighbors.remove(&sf.rank());
+    neighbors.into_iter().collect()
+}
+
+#[cfg(feature = "mpi-support")]
+fn exchange_variable_bytes<C>(
+    comm: &C,
+    neighbors: &[usize],
+    payloads: &BTreeMap<usize, Vec<u8>>,
+    base_tag: u16,
+) -> Result<BTreeMap<usize, Vec<u8>>, PartitionerError>
+where
+    C: Communicator + Sync,
+{
+    if comm.size() <= 1 || neighbors.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+
+    let size_tag = base_tag;
+    let data_tag = base_tag.wrapping_add(1);
+
+    let mut recv_sizes = BTreeMap::new();
+    for &nbr in neighbors {
+        let mut buf = [0u8; 8];
+        let handle = comm
+            .irecv_result(nbr, size_tag, &mut buf)
+            .map_err(partition_comm_error)?;
+        recv_sizes.insert(nbr, handle);
+    }
+
+    let mut size_send_handles = Vec::with_capacity(neighbors.len());
+    let mut size_send_buffers = Vec::with_capacity(neighbors.len());
+    for &nbr in neighbors {
+        let len = payloads.get(&nbr).map_or(0u64, |bytes| bytes.len() as u64);
+        let buf = len.to_le_bytes();
+        size_send_handles.push(
+            comm.isend_result(nbr, size_tag, &buf)
+                .map_err(partition_comm_error)?,
+        );
+        size_send_buffers.push(buf);
+    }
+
+    let mut lengths = BTreeMap::new();
+    let mut first_err = None;
+    for (nbr, handle) in recv_sizes {
+        match handle.wait() {
+            Some(bytes) if bytes.len() == 8 => {
+                let mut raw = [0u8; 8];
+                raw.copy_from_slice(&bytes);
+                lengths.insert(nbr, u64::from_le_bytes(raw) as usize);
+            }
+            Some(bytes) if first_err.is_none() => {
+                first_err = Some(PartitionerError::Other(format!(
+                    "rank {} expected 8 size bytes from rank {nbr}, got {}",
+                    comm.rank(),
+                    bytes.len()
+                )));
+            }
+            None if first_err.is_none() => {
+                first_err = Some(PartitionerError::Other(format!(
+                    "rank {} failed receiving exchange size from rank {nbr}",
+                    comm.rank()
+                )));
+            }
+            _ => {}
+        }
+    }
+    for handle in size_send_handles {
+        let _ = handle.wait();
+    }
+    drop(size_send_buffers);
+    if let Some(err) = first_err {
+        return Err(err);
+    }
+
+    let mut recv_data = BTreeMap::new();
+    for (&nbr, &len) in &lengths {
+        let mut buf = vec![0u8; len];
+        let handle = comm
+            .irecv_result(nbr, data_tag, &mut buf)
+            .map_err(partition_comm_error)?;
+        recv_data.insert(nbr, (handle, len));
+    }
+
+    let mut data_send_handles = Vec::with_capacity(neighbors.len());
+    for &nbr in neighbors {
+        let bytes = payloads.get(&nbr).map_or(&[][..], |v| &v[..]);
+        data_send_handles.push(
+            comm.isend_result(nbr, data_tag, bytes)
+                .map_err(partition_comm_error)?,
+        );
+    }
+
+    let mut incoming = BTreeMap::new();
+    let mut first_err = None;
+    for (nbr, (handle, expected_len)) in recv_data {
+        match handle.wait() {
+            Some(bytes) if bytes.len() == expected_len => {
+                incoming.insert(nbr, bytes);
+            }
+            Some(bytes) if first_err.is_none() => {
+                first_err = Some(PartitionerError::Other(format!(
+                    "rank {} expected {expected_len} data bytes from rank {nbr}, got {}",
+                    comm.rank(),
+                    bytes.len()
+                )));
+            }
+            None if first_err.is_none() => {
+                first_err = Some(PartitionerError::Other(format!(
+                    "rank {} failed receiving exchange payload from rank {nbr}",
+                    comm.rank()
+                )));
+            }
+            _ => {}
+        }
+    }
+    for handle in data_send_handles {
+        let _ = handle.wait();
+    }
+    if let Some(err) = first_err {
+        Err(err)
+    } else {
+        Ok(incoming)
+    }
+}
+
+#[cfg(feature = "mpi-support")]
+fn push_u64(out: &mut Vec<u8>, value: u64) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+#[cfg(feature = "mpi-support")]
+fn read_u64(bytes: &[u8], cursor: &mut usize) -> Result<u64, PartitionerError> {
+    if bytes.len().saturating_sub(*cursor) < 8 {
+        return Err(PartitionerError::Other(
+            "truncated partition exchange payload".into(),
+        ));
+    }
+    let mut raw = [0u8; 8];
+    raw.copy_from_slice(&bytes[*cursor..*cursor + 8]);
+    *cursor += 8;
+    Ok(u64::from_le_bytes(raw))
+}
+
+#[cfg(feature = "mpi-support")]
+fn encode_pairs_u64(entries: &[(u64, u64)]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(8 + entries.len() * 16);
+    push_u64(&mut out, entries.len() as u64);
+    for &(a, b) in entries {
+        push_u64(&mut out, a);
+        push_u64(&mut out, b);
+    }
+    out
+}
+
+#[cfg(feature = "mpi-support")]
+fn decode_pairs_u64(bytes: &[u8]) -> Result<Vec<(u64, u64)>, PartitionerError> {
+    let mut cursor = 0usize;
+    let n = read_u64(bytes, &mut cursor)? as usize;
+    let mut out = Vec::with_capacity(n);
+    for _ in 0..n {
+        out.push((read_u64(bytes, &mut cursor)?, read_u64(bytes, &mut cursor)?));
+    }
+    if cursor != bytes.len() {
+        return Err(PartitionerError::Other(
+            "partition exchange payload has trailing bytes".into(),
+        ));
+    }
+    Ok(out)
+}
+
+#[cfg(feature = "mpi-support")]
+fn encode_triples_u64(entries: &[(u64, u64, u64)]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(8 + entries.len() * 24);
+    push_u64(&mut out, entries.len() as u64);
+    for &(a, b, c) in entries {
+        push_u64(&mut out, a);
+        push_u64(&mut out, b);
+        push_u64(&mut out, c);
+    }
+    out
+}
+
+#[cfg(feature = "mpi-support")]
+fn decode_triples_u64(bytes: &[u8]) -> Result<Vec<(u64, u64, u64)>, PartitionerError> {
+    let mut cursor = 0usize;
+    let n = read_u64(bytes, &mut cursor)? as usize;
+    let mut out = Vec::with_capacity(n);
+    for _ in 0..n {
+        out.push((
+            read_u64(bytes, &mut cursor)?,
+            read_u64(bytes, &mut cursor)?,
+            read_u64(bytes, &mut cursor)?,
+        ));
+    }
+    if cursor != bytes.len() {
+        return Err(PartitionerError::Other(
+            "partition exchange payload has trailing bytes".into(),
+        ));
+    }
+    Ok(out)
+}
+
+#[cfg(feature = "mpi-support")]
+pub(crate) fn exchange_boundary_cluster_ids(local: &HashMap<usize, u32>) -> HashMap<usize, u32> {
+    // Single-rank compatibility wrapper for callers that have no PointSF.
     local.clone()
+}
+
+/// Exchange cluster IDs for shared boundary vertices using the supplied PointSF.
+///
+/// Each rank sends `(remote_vertex, local_cluster)` along SF leaves and receives
+/// entries keyed by its local vertex IDs.  Reconciliation is deterministic: the
+/// lowest cluster ID wins when more than one neighbor reports the same boundary
+/// vertex.
+#[cfg(feature = "mpi-support")]
+pub(crate) fn exchange_boundary_cluster_ids_with_sf<C>(
+    local: &HashMap<usize, u32>,
+    sf: &PointSF<'_, C>,
+) -> Result<HashMap<usize, u32>, PartitionerError>
+where
+    C: Communicator + Sync,
+{
+    let Some(comm) = sf.comm() else {
+        return Ok(exchange_boundary_cluster_ids(local));
+    };
+    let neighbors = sorted_sf_neighbors(sf);
+    if comm.size() <= 1 || neighbors.is_empty() {
+        return Ok(exchange_boundary_cluster_ids(local));
+    }
+
+    let mut per_neighbor: BTreeMap<usize, Vec<(u64, u64)>> = BTreeMap::new();
+    for leaf in sf.leaves() {
+        let nbr = leaf.remote.rank;
+        if nbr == sf.rank() {
+            continue;
+        }
+        let local_vertex = leaf.local.get() as usize;
+        if let Some(&cid) = local.get(&local_vertex) {
+            per_neighbor
+                .entry(nbr)
+                .or_default()
+                .push((leaf.remote.point.get(), cid as u64));
+        }
+    }
+    for entries in per_neighbor.values_mut() {
+        entries.sort_unstable();
+        entries.dedup();
+    }
+    let payloads = neighbors
+        .iter()
+        .copied()
+        .map(|nbr| {
+            let bytes = encode_pairs_u64(per_neighbor.get(&nbr).map_or(&[][..], |v| &v[..]));
+            (nbr, bytes)
+        })
+        .collect();
+
+    let incoming = exchange_variable_bytes(
+        comm,
+        &neighbors,
+        &payloads,
+        PARTITION_EXCHANGE_BOUNDARY_CLUSTERS,
+    )?;
+    let mut out = local.clone();
+    for (_nbr, bytes) in incoming {
+        for (vertex, cid) in decode_pairs_u64(&bytes)? {
+            out.entry(vertex as usize)
+                .and_modify(|cur| *cur = (*cur).min(cid as u32))
+                .or_insert(cid as u32);
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(feature = "mpi-support")]
 pub(crate) fn exchange_cluster_part_assignments(local: &[usize]) -> Vec<usize> {
-    // Deterministic identity for current single-rank partitioning path.
+    // Single-rank compatibility wrapper for callers that have no PointSF.
     local.to_vec()
+}
+
+/// Exchange cluster-to-part assignments visible in the overlap neighborhood.
+///
+/// The dense result is extended as needed for remote cluster IDs.  Conflicting
+/// assignments are reconciled by choosing the lowest part ID so repeated runs
+/// and different receive orders produce identical maps.
+#[cfg(feature = "mpi-support")]
+pub(crate) fn exchange_cluster_part_assignments_with_sf<C>(
+    local: &[usize],
+    sf: &PointSF<'_, C>,
+) -> Result<Vec<usize>, PartitionerError>
+where
+    C: Communicator + Sync,
+{
+    let Some(comm) = sf.comm() else {
+        return Ok(exchange_cluster_part_assignments(local));
+    };
+    let neighbors = sorted_sf_neighbors(sf);
+    if comm.size() <= 1 || neighbors.is_empty() {
+        return Ok(exchange_cluster_part_assignments(local));
+    }
+
+    let mut entries: Vec<_> = local
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(cid, part)| (cid as u64, part as u64))
+        .collect();
+    entries.sort_unstable();
+    let bytes = encode_pairs_u64(&entries);
+    let payloads = neighbors
+        .iter()
+        .copied()
+        .map(|nbr| (nbr, bytes.clone()))
+        .collect();
+    let incoming = exchange_variable_bytes(
+        comm,
+        &neighbors,
+        &payloads,
+        PARTITION_EXCHANGE_CLUSTER_PARTS,
+    )?;
+
+    let mut out = local.to_vec();
+    for (_nbr, bytes) in incoming {
+        for (cid, part) in decode_pairs_u64(&bytes)? {
+            let cid = cid as usize;
+            let part = part as usize;
+            if cid >= out.len() {
+                out.resize(cid + 1, part);
+            }
+            out[cid] = out[cid].min(part);
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(feature = "mpi-support")]
 pub(crate) fn exchange_cut_edge_owner_decisions(
     local: &HashMap<(usize, usize), usize>,
 ) -> HashMap<(usize, usize), usize> {
-    // When multiple ranks provide candidates for the same cut edge, select a
-    // stable winner by minimum owner rank.
+    // Single-rank compatibility wrapper.  The distributed variant below applies
+    // the same deterministic minimum-owner reduction to incoming candidates.
     let mut grouped: BTreeMap<(usize, usize), usize> = BTreeMap::new();
     for (&edge, &owner) in local {
+        let edge = canonical_edge(edge);
         grouped
             .entry(edge)
             .and_modify(|cur| *cur = (*cur).min(owner))
             .or_insert(owner);
     }
     grouped.into_iter().collect()
+}
+
+#[cfg(feature = "mpi-support")]
+fn canonical_edge(edge: (usize, usize)) -> (usize, usize) {
+    if edge.0 <= edge.1 {
+        edge
+    } else {
+        (edge.1, edge.0)
+    }
+}
+
+/// Exchange cut-edge owner candidates with overlapped ranks and reduce them to
+/// deterministic winners.  The owner for each undirected edge is the lowest
+/// proposed owner rank across all received and local candidates.
+#[cfg(feature = "mpi-support")]
+pub(crate) fn exchange_cut_edge_owner_decisions_with_sf<C>(
+    local: &HashMap<(usize, usize), usize>,
+    sf: &PointSF<'_, C>,
+) -> Result<HashMap<(usize, usize), usize>, PartitionerError>
+where
+    C: Communicator + Sync,
+{
+    let Some(comm) = sf.comm() else {
+        return Ok(exchange_cut_edge_owner_decisions(local));
+    };
+    let neighbors = sorted_sf_neighbors(sf);
+    if comm.size() <= 1 || neighbors.is_empty() {
+        return Ok(exchange_cut_edge_owner_decisions(local));
+    }
+
+    let mut entries: Vec<_> = local
+        .iter()
+        .map(|(&(u, v), &owner)| {
+            let (a, b) = canonical_edge((u, v));
+            (a as u64, b as u64, owner as u64)
+        })
+        .collect();
+    entries.sort_unstable();
+    entries.dedup();
+    let bytes = encode_triples_u64(&entries);
+    let payloads = neighbors
+        .iter()
+        .copied()
+        .map(|nbr| (nbr, bytes.clone()))
+        .collect();
+    let incoming =
+        exchange_variable_bytes(comm, &neighbors, &payloads, PARTITION_EXCHANGE_CUT_OWNERS)?;
+
+    let mut out = exchange_cut_edge_owner_decisions(local);
+    for (_nbr, bytes) in incoming {
+        for (u, v, owner) in decode_triples_u64(&bytes)? {
+            let edge = canonical_edge((u as usize, v as usize));
+            let owner = owner as usize;
+            out.entry(edge)
+                .and_modify(|cur| *cur = (*cur).min(owner))
+                .or_insert(owner);
+        }
+    }
+    Ok(out)
 }
 
 impl From<crate::partitioning::error::PartitionError> for PartitionerError {
@@ -236,7 +639,7 @@ where
         verts
             .iter()
             .enumerate()
-            .map(|(i, _)| (i as u32 % cfg.n_parts as u32))
+            .map(|(i, _)| i as u32 % cfg.n_parts as u32)
             .collect()
     };
     let _boundary_clusters = exchange_boundary_cluster_ids(&HashMap::new());

@@ -8,9 +8,7 @@ use std::hash::{Hash, Hasher};
 use crate::partitioning::graph_traits::PartitionableGraph;
 use crate::partitioning::metrics::edge_cut;
 use crate::partitioning::{PartitionMap, PartitionerConfig, partition};
-use crate::partitioning::{
-    exchange_cluster_part_assignments, exchange_cut_edge_owner_decisions,
-};
+use crate::partitioning::{exchange_cluster_part_assignments, exchange_cut_edge_owner_decisions};
 use hashbrown::HashMap;
 
 #[test]
@@ -205,5 +203,147 @@ proptest! {
         let base: Vec<usize> = (0..n).map(|i| i % k).collect();
         let exchanged = exchange_cluster_part_assignments(&base);
         prop_assert_eq!(exchanged, base);
+    }
+}
+
+#[cfg(feature = "mpi-support")]
+mod distributed_exchange_tests {
+    use super::*;
+    use crate::algs::communicator::RayonComm;
+    use crate::algs::point_sf::PointSF;
+    use crate::overlap::overlap::Overlap;
+    use crate::partitioning::{
+        exchange_boundary_cluster_ids_with_sf, exchange_cluster_part_assignments_with_sf,
+        exchange_cut_edge_owner_decisions_with_sf,
+    };
+    use crate::topology::point::PointId;
+    use serial_test::serial;
+    use std::thread;
+
+    fn p(raw: u64) -> PointId {
+        PointId::new(raw).unwrap()
+    }
+
+    fn two_rank_sf<'a>(
+        rank: usize,
+        comm: &'a RayonComm,
+        overlap: &'a Overlap,
+    ) -> PointSF<'a, RayonComm> {
+        PointSF::new(overlap, comm, rank)
+    }
+
+    #[test]
+    #[serial]
+    fn boundary_cluster_exchange_uses_overlap_remote_ids() {
+        let h0 = thread::spawn(|| {
+            let comm = RayonComm::new(0, 2);
+            let mut ov = Overlap::default();
+            ov.try_add_link(p(1), 1, p(2)).unwrap();
+            let sf = two_rank_sf(0, &comm, &ov);
+            let mut local = HashMap::new();
+            local.insert(1usize, 7u32);
+            exchange_boundary_cluster_ids_with_sf(&local, &sf).unwrap()
+        });
+        let h1 = thread::spawn(|| {
+            let comm = RayonComm::new(1, 2);
+            let mut ov = Overlap::default();
+            ov.try_add_link(p(2), 0, p(1)).unwrap();
+            let sf = two_rank_sf(1, &comm, &ov);
+            let mut local = HashMap::new();
+            local.insert(2usize, 3u32);
+            exchange_boundary_cluster_ids_with_sf(&local, &sf).unwrap()
+        });
+        let r0 = h0.join().unwrap();
+        let r1 = h1.join().unwrap();
+        assert_eq!(r0.get(&1), Some(&3));
+        assert_eq!(r1.get(&2), Some(&3));
+    }
+
+    #[test]
+    #[serial]
+    fn cluster_part_exchange_reconciles_deterministically() {
+        let h0 = thread::spawn(|| {
+            let comm = RayonComm::new(0, 2);
+            let mut ov = Overlap::default();
+            ov.try_add_link(p(1), 1, p(2)).unwrap();
+            let sf = two_rank_sf(0, &comm, &ov);
+            exchange_cluster_part_assignments_with_sf(&[2, 1], &sf).unwrap()
+        });
+        let h1 = thread::spawn(|| {
+            let comm = RayonComm::new(1, 2);
+            let mut ov = Overlap::default();
+            ov.try_add_link(p(2), 0, p(1)).unwrap();
+            let sf = two_rank_sf(1, &comm, &ov);
+            exchange_cluster_part_assignments_with_sf(&[0, 3, 4], &sf).unwrap()
+        });
+        let r0 = h0.join().unwrap();
+        let r1 = h1.join().unwrap();
+        assert_eq!(r0, vec![0, 1, 4]);
+        assert_eq!(r1, vec![0, 1, 4]);
+    }
+
+    #[test]
+    #[serial]
+    fn cut_edge_owner_exchange_canonicalizes_and_min_reduces() {
+        let h0 = thread::spawn(|| {
+            let comm = RayonComm::new(0, 2);
+            let mut ov = Overlap::default();
+            ov.try_add_link(p(1), 1, p(2)).unwrap();
+            let sf = two_rank_sf(0, &comm, &ov);
+            let mut local = HashMap::new();
+            local.insert((8usize, 4usize), 1usize);
+            exchange_cut_edge_owner_decisions_with_sf(&local, &sf).unwrap()
+        });
+        let h1 = thread::spawn(|| {
+            let comm = RayonComm::new(1, 2);
+            let mut ov = Overlap::default();
+            ov.try_add_link(p(2), 0, p(1)).unwrap();
+            let sf = two_rank_sf(1, &comm, &ov);
+            let mut local = HashMap::new();
+            local.insert((4usize, 8usize), 0usize);
+            exchange_cut_edge_owner_decisions_with_sf(&local, &sf).unwrap()
+        });
+        let r0 = h0.join().unwrap();
+        let r1 = h1.join().unwrap();
+        assert_eq!(r0.get(&(4, 8)), Some(&0));
+        assert_eq!(r1.get(&(4, 8)), Some(&0));
+    }
+
+    #[test]
+    #[serial]
+    fn repartition_exchange_is_reproducible() {
+        fn run_once() -> (Vec<usize>, HashMap<(usize, usize), usize>) {
+            let h0 = thread::spawn(|| {
+                let comm = RayonComm::new(0, 2);
+                let mut ov = Overlap::default();
+                ov.try_add_link(p(10), 1, p(20)).unwrap();
+                let sf = two_rank_sf(0, &comm, &ov);
+                let parts = exchange_cluster_part_assignments_with_sf(&[1, 0, 1], &sf).unwrap();
+                let mut owners = HashMap::new();
+                owners.insert((10usize, 20usize), 1usize);
+                let owners = exchange_cut_edge_owner_decisions_with_sf(&owners, &sf).unwrap();
+                (parts, owners)
+            });
+            let h1 = thread::spawn(|| {
+                let comm = RayonComm::new(1, 2);
+                let mut ov = Overlap::default();
+                ov.try_add_link(p(20), 0, p(10)).unwrap();
+                let sf = two_rank_sf(1, &comm, &ov);
+                let parts = exchange_cluster_part_assignments_with_sf(&[1, 0, 2], &sf).unwrap();
+                let mut owners = HashMap::new();
+                owners.insert((20usize, 10usize), 0usize);
+                let owners = exchange_cut_edge_owner_decisions_with_sf(&owners, &sf).unwrap();
+                (parts, owners)
+            });
+            let (parts0, owners0) = h0.join().unwrap();
+            let (parts1, owners1) = h1.join().unwrap();
+            assert_eq!(parts0, parts1);
+            assert_eq!(owners0, owners1);
+            (parts0, owners0)
+        }
+
+        let first = run_once();
+        let second = run_once();
+        assert_eq!(first, second);
     }
 }
