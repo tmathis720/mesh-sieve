@@ -58,6 +58,7 @@ pub mod debug_invariants;
 pub mod diagnostics;
 pub mod discretization;
 pub mod dm;
+pub mod dm_options;
 pub mod forest;
 pub mod geometry;
 pub mod io;
@@ -157,6 +158,12 @@ pub mod prelude {
     pub use crate::dm::{
         MeshDM, MeshDMBuilder, MeshDMDistribution, MeshDMLabelSelection, MeshDMOptions,
         MeshDMSubmesh, MeshVector, PreallocationGraph,
+    };
+    pub use crate::dm_options::{
+        DmplexCheckProfile, DmplexConfigProfile, DmplexDistributionProfile, DmplexIoProfile,
+        DmplexMetricBackendProfile, DmplexMetricProfile, DmplexOrderingProfile,
+        DmplexOverlapProfile, DmplexRefinementProfile, DmplexSolverPreparationProfile,
+        DmplexTransferProfile, PETSC_DMPLEX_OPTION_MAPPINGS, default_fv_stability_thresholds,
     };
     pub use crate::geometry::locate::{
         BoundingBox, LocalizedCellCoordinates, LocatedCell, PeriodicDomain, PointLocation,
