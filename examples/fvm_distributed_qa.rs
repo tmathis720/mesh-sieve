@@ -16,5 +16,7 @@
 //! - near-identical per-cell residuals across partitionings
 
 fn main() {
-    println!("Run the commands in this file's docs to compare NoComm, RayonComm, and MpiComm modes.");
+    println!(
+        "Run the commands in this file's docs to compare NoComm, RayonComm, and MpiComm modes."
+    );
 }

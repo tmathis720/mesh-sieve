@@ -4,7 +4,9 @@ use mesh_sieve::data::{atlas::Atlas, section::Section, storage::VecStorage};
 use mesh_sieve::overlap::{delta::CopyDelta, overlap::Overlap};
 use mesh_sieve::topology::point::PointId;
 
-fn p(id: u64) -> PointId { PointId::new(id).unwrap() }
+fn p(id: u64) -> PointId {
+    PointId::new(id).unwrap()
+}
 
 #[derive(Debug, Clone, Copy)]
 struct RankState {
@@ -16,7 +18,14 @@ struct RankState {
 fn setup_rank(
     rank: usize,
     swap_partitioning: bool,
-) -> (Overlap, Section<f64, VecStorage<f64>>, Section<f64, VecStorage<f64>>, PointId, PointId, PointId) {
+) -> (
+    Overlap,
+    Section<f64, VecStorage<f64>>,
+    Section<f64, VecStorage<f64>>,
+    PointId,
+    PointId,
+    PointId,
+) {
     let mut ov = Overlap::default();
     let mut atlas = Atlas::default();
 
@@ -51,7 +60,8 @@ fn setup_rank(
 }
 
 fn run_rank<C: Communicator + Sync>(rank: usize, comm: &C, swap_partitioning: bool) -> RankState {
-    let (ov, mut cell, mut face, local_cell, boundary_face, interface_face) = setup_rank(rank, swap_partitioning);
+    let (ov, mut cell, mut face, local_cell, boundary_face, interface_face) =
+        setup_rank(rank, swap_partitioning);
     complete_section::<f64, _, CopyDelta, _>(&mut cell, &ov, comm, rank).unwrap();
     complete_section::<f64, _, CopyDelta, _>(&mut face, &ov, comm, rank).unwrap();
 
@@ -62,8 +72,16 @@ fn run_rank<C: Communicator + Sync>(rank: usize, comm: &C, swap_partitioning: bo
         local_cell,
         local_residual: cell.try_restrict(local_cell).unwrap()[0]
             + face.try_restrict(boundary_face).unwrap()[0]
-            + if owns_left_cell { interface_value } else { -interface_value },
-        interface_flux: if owns_left_cell { interface_value } else { -interface_value },
+            + if owns_left_cell {
+                interface_value
+            } else {
+                -interface_value
+            },
+        interface_flux: if owns_left_cell {
+            interface_value
+        } else {
+            -interface_value
+        },
     }
 }
 
@@ -106,13 +124,23 @@ fn rayon_per_cell_residuals_are_partitioning_invariant() {
     let (a0, a1) = run_rayon_pair(false);
     let (b0, b1) = run_rayon_pair(true);
 
-    let mut layout_a = [(a0.local_cell, a0.local_residual), (a1.local_cell, a1.local_residual)];
-    let mut layout_b = [(b0.local_cell, b0.local_residual), (b1.local_cell, b1.local_residual)];
+    let mut layout_a = [
+        (a0.local_cell, a0.local_residual),
+        (a1.local_cell, a1.local_residual),
+    ];
+    let mut layout_b = [
+        (b0.local_cell, b0.local_residual),
+        (b1.local_cell, b1.local_residual),
+    ];
     layout_a.sort_by_key(|(pt, _)| pt.get());
     layout_b.sort_by_key(|(pt, _)| pt.get());
 
     for ((ca, ra), (cb, rb)) in layout_a.into_iter().zip(layout_b.into_iter()) {
         assert_eq!(ca, cb, "cell identity mismatch across layouts");
-        assert!((ra - rb).abs() < 1e-12, "residual mismatch on cell {:?}", ca);
+        assert!(
+            (ra - rb).abs() < 1e-12,
+            "residual mismatch on cell {:?}",
+            ca
+        );
     }
 }

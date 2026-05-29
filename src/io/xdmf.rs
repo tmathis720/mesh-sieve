@@ -727,10 +727,11 @@ impl SieveSectionReader for XdmfReader {
         let mut attributes = HashMap::new();
         for attr in grid.descendants().filter(|n| n.has_tag_name("Attribute")) {
             if let Some(name) = attr.attribute("Name")
-                && let Some(data) = attr.descendants().find(|n| n.has_tag_name("DataItem")) {
-                    let item = Self::parse_data_item(data)?;
-                    attributes.insert(name.to_string(), item);
-                }
+                && let Some(data) = attr.descendants().find(|n| n.has_tag_name("DataItem"))
+            {
+                let item = Self::parse_data_item(data)?;
+                attributes.insert(name.to_string(), item);
+            }
         }
 
         let geometry_dims = geometry_item.effective_dimensions()?;
@@ -833,48 +834,50 @@ impl SieveSectionReader for XdmfReader {
         let mut labels = LabelSet::new();
         for (name, item) in &attributes {
             if let Some(rest) = name.strip_prefix(ATTR_SECTION_PREFIX)
-                && let Some(section_name) = rest.strip_suffix(":ids") {
-                    let values_item = attributes
-                        .get(&format!("{ATTR_SECTION_PREFIX}{section_name}:values"))
-                        .ok_or_else(|| {
-                            MeshSieveError::MeshIoParse(format!(
-                                "missing values for section {section_name}"
-                            ))
-                        })?;
-                    let ids = item.values_as_i64()?;
-                    let values = values_item.values_as_f64()?;
-                    let value_dims = values_item.effective_dimensions()?;
-                    let num_components = value_dims.get(1).copied().unwrap_or(1);
-                    let mut atlas = Atlas::default();
-                    for raw_id in &ids {
-                        let point = PointId::new(*raw_id as u64)?;
-                        atlas.try_insert(point, num_components)?;
-                    }
-                    let mut section = Section::<f64, VecStorage<f64>>::new(atlas);
-                    for (idx, raw_id) in ids.iter().enumerate() {
-                        let point = PointId::new(*raw_id as u64)?;
-                        let start = idx * num_components;
-                        let end = start + num_components;
-                        section.try_set(point, &values[start..end])?;
-                    }
-                    sections.insert(section_name.to_string(), section);
+                && let Some(section_name) = rest.strip_suffix(":ids")
+            {
+                let values_item = attributes
+                    .get(&format!("{ATTR_SECTION_PREFIX}{section_name}:values"))
+                    .ok_or_else(|| {
+                        MeshSieveError::MeshIoParse(format!(
+                            "missing values for section {section_name}"
+                        ))
+                    })?;
+                let ids = item.values_as_i64()?;
+                let values = values_item.values_as_f64()?;
+                let value_dims = values_item.effective_dimensions()?;
+                let num_components = value_dims.get(1).copied().unwrap_or(1);
+                let mut atlas = Atlas::default();
+                for raw_id in &ids {
+                    let point = PointId::new(*raw_id as u64)?;
+                    atlas.try_insert(point, num_components)?;
                 }
+                let mut section = Section::<f64, VecStorage<f64>>::new(atlas);
+                for (idx, raw_id) in ids.iter().enumerate() {
+                    let point = PointId::new(*raw_id as u64)?;
+                    let start = idx * num_components;
+                    let end = start + num_components;
+                    section.try_set(point, &values[start..end])?;
+                }
+                sections.insert(section_name.to_string(), section);
+            }
             if let Some(rest) = name.strip_prefix(ATTR_LABEL_PREFIX)
-                && let Some(label_name) = rest.strip_suffix(":ids") {
-                    let values_item = attributes
-                        .get(&format!("{ATTR_LABEL_PREFIX}{label_name}:values"))
-                        .ok_or_else(|| {
-                            MeshSieveError::MeshIoParse(format!(
-                                "missing label values for {label_name}"
-                            ))
-                        })?;
-                    let ids = item.values_as_i64()?;
-                    let values = values_item.values_as_i64()?;
-                    for (raw_id, value) in ids.iter().zip(values.iter()) {
-                        let point = PointId::new(*raw_id as u64)?;
-                        labels.set_label(point, label_name, *value as i32);
-                    }
+                && let Some(label_name) = rest.strip_suffix(":ids")
+            {
+                let values_item = attributes
+                    .get(&format!("{ATTR_LABEL_PREFIX}{label_name}:values"))
+                    .ok_or_else(|| {
+                        MeshSieveError::MeshIoParse(format!(
+                            "missing label values for {label_name}"
+                        ))
+                    })?;
+                let ids = item.values_as_i64()?;
+                let values = values_item.values_as_i64()?;
+                for (raw_id, value) in ids.iter().zip(values.iter()) {
+                    let point = PointId::new(*raw_id as u64)?;
+                    labels.set_label(point, label_name, *value as i32);
                 }
+            }
         }
 
         let labels = if labels.is_empty() {

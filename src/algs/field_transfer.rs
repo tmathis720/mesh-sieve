@@ -67,12 +67,11 @@ where
 {
     let mut label_to_point = HashMap::new();
     for (name, point, value) in source_labels.iter() {
-        if name == label_name
-            && label_to_point.insert(value, point).is_some() {
-                return Err(MeshSieveError::InvalidGeometry(format!(
-                    "duplicate source label value {value} for label '{label_name}'"
-                )));
-            }
+        if name == label_name && label_to_point.insert(value, point).is_some() {
+            return Err(MeshSieveError::InvalidGeometry(format!(
+                "duplicate source label value {value} for label '{label_name}'"
+            )));
+        }
     }
 
     let mut atlas = Atlas::default();

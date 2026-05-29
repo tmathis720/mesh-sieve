@@ -13,7 +13,9 @@ use mesh_sieve::topology::ownership::PointOwnership;
 use mesh_sieve::topology::point::PointId;
 use mesh_sieve::topology::sieve::{MeshSieve, MutableSieve, Sieve};
 
-fn pid(id: u64) -> PointId { PointId::new(id).unwrap() }
+fn pid(id: u64) -> PointId {
+    PointId::new(id).unwrap()
+}
 
 fn tiny_mesh() -> MeshSieve {
     let mut mesh = MeshSieve::default();
@@ -22,8 +24,7 @@ fn tiny_mesh() -> MeshSieve {
     mesh
 }
 
-fn triangle_pair_fixture(
-) -> Result<
+fn triangle_pair_fixture() -> Result<
     (
         MeshSieve,
         Section<CellType, VecStorage<CellType>>,
@@ -92,7 +93,11 @@ fn check_all_detects_missing_ownership_precisely() {
     let mut ownership = PointOwnership::default();
     ownership.set(pid(1), 0, false).unwrap();
 
-    let err = run_mesh_checks::<f64, VecStorage<f64>, VecStorage<mesh_sieve::topology::cell_type::CellType>>(
+    let err = run_mesh_checks::<
+        f64,
+        VecStorage<f64>,
+        VecStorage<mesh_sieve::topology::cell_type::CellType>,
+    >(
         &mut mesh,
         None,
         None,
@@ -103,7 +108,10 @@ fn check_all_detects_missing_ownership_precisely() {
     )
     .unwrap_err();
 
-    assert!(matches!(err, MeshSieveError::TopologyPointMissingOwnership { .. }));
+    assert!(matches!(
+        err,
+        MeshSieveError::TopologyPointMissingOwnership { .. }
+    ));
 }
 
 #[test]
@@ -164,15 +172,19 @@ fn fv_readiness_violation_and_strict_mode_error() -> Result<(), MeshSieveError> 
     )?;
     assert!(!report.passed);
     assert!(!report.violations.is_empty());
-    assert!(report
-        .violations
-        .iter()
-        .any(|v| v.metric == "non_orthogonality_deg"));
+    assert!(
+        report
+            .violations
+            .iter()
+            .any(|v| v.metric == "non_orthogonality_deg")
+    );
     assert!(report.violations.iter().any(|v| v.metric == "skewness"));
-    assert!(report
-        .violations
-        .iter()
-        .any(|v| v.metric == "cell_char_length"));
+    assert!(
+        report
+            .violations
+            .iter()
+            .any(|v| v.metric == "cell_char_length")
+    );
     let err = fv_readiness_report(
         &sieve,
         &cell_types,

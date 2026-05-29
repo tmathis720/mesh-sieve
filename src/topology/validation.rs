@@ -79,30 +79,32 @@ where
         let cell_type = cell_slice[0];
 
         if options.check_cone_sizes
-            && let Some(expected) = expected_cone_size(cell_type) {
-                let found = sieve.cone_points(cell).count();
-                if found != expected {
-                    return Err(MeshSieveError::ConeSizeMismatch {
-                        cell,
-                        cell_type,
-                        expected,
-                        found,
-                    });
-                }
+            && let Some(expected) = expected_cone_size(cell_type)
+        {
+            let found = sieve.cone_points(cell).count();
+            if found != expected {
+                return Err(MeshSieveError::ConeSizeMismatch {
+                    cell,
+                    cell_type,
+                    expected,
+                    found,
+                });
             }
+        }
 
         if options.check_closure_consistency
-            && let Some(expected) = expected_cone_size(cell_type) {
-                let found = closure_vertex_count(sieve, cell);
-                if found != expected {
-                    return Err(MeshSieveError::ClosureVertexCountMismatch {
-                        cell,
-                        cell_type,
-                        expected,
-                        found,
-                    });
-                }
+            && let Some(expected) = expected_cone_size(cell_type)
+        {
+            let found = closure_vertex_count(sieve, cell);
+            if found != expected {
+                return Err(MeshSieveError::ClosureVertexCountMismatch {
+                    cell,
+                    cell_type,
+                    expected,
+                    found,
+                });
             }
+        }
     }
 
     validate_non_manifold(sieve, options.non_manifold)?;

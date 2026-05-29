@@ -321,27 +321,30 @@ where
     }
 
     if options.check_symmetry
-        && let Some(cell_types) = cell_types {
-            validate_oriented_sieve_topology(sieve, cell_types, TopologyValidationOptions::all())?;
-        }
+        && let Some(cell_types) = cell_types
+    {
+        validate_oriented_sieve_topology(sieve, cell_types, TopologyValidationOptions::all())?;
+    }
 
     if options.check_geometry
-        && let Some(coords) = coords {
-            for (point, (_offset, len)) in coords.section().atlas().iter_entries() {
-                if len != coords.embedding_dimension() {
-                    return Err(MeshSieveError::SliceLengthMismatch {
-                        point,
-                        expected: coords.embedding_dimension(),
-                        found: len,
-                    });
-                }
+        && let Some(coords) = coords
+    {
+        for (point, (_offset, len)) in coords.section().atlas().iter_entries() {
+            if len != coords.embedding_dimension() {
+                return Err(MeshSieveError::SliceLengthMismatch {
+                    point,
+                    expected: coords.embedding_dimension(),
+                    found: len,
+                });
             }
         }
+    }
 
     if (options.check_overlap || options.check_ownership)
-        && let Some(ownership) = ownership {
-            validate_overlap_ownership_topology(sieve, ownership, overlap, 0)?;
-        }
+        && let Some(ownership) = ownership
+    {
+        validate_overlap_ownership_topology(sieve, ownership, overlap, 0)?;
+    }
 
     if options.check_sections {
         for section in sections {

@@ -44,7 +44,8 @@ where
         .filter(|p| is_face(*p, sieve, cell_types).unwrap_or(false))
         .collect();
     faces.sort_unstable();
-    faces.into_iter()
+    faces
+        .into_iter()
         .map(|f| build_face_metric(sieve, cell_types, coordinates, f))
         .collect()
 }
@@ -66,14 +67,18 @@ where
         .collect();
     supports.sort_unstable();
     if supports.is_empty() {
-        return Err(MeshSieveError::InvalidGeometry(format!("face {face:?} has no cell support")));
+        return Err(MeshSieveError::InvalidGeometry(format!(
+            "face {face:?} has no cell support"
+        )));
     }
     let owner = supports[0];
     let neighbor = supports.get(1).copied();
 
     let vertices = face_vertices(sieve, face, coordinates)?;
     if vertices.len() < 2 {
-        return Err(MeshSieveError::InvalidGeometry("face with <2 vertices".into()));
+        return Err(MeshSieveError::InvalidGeometry(
+            "face with <2 vertices".into(),
+        ));
     }
     let centroid = polygon_centroid(&vertices);
     let owner_centroid = cell_centroid(sieve, owner, coordinates)?;
@@ -93,20 +98,37 @@ where
         let nc = cell_centroid(sieve, n, coordinates)?;
         let d = sub(nc, owner_centroid);
         let dmag = norm(d);
-        let ahat = if area_mag > EPS { scale(area_vec, 1.0 / area_mag) } else { [0.0; 3] };
+        let ahat = if area_mag > EPS {
+            scale(area_vec, 1.0 / area_mag)
+        } else {
+            [0.0; 3]
+        };
         let orth = dot(d, ahat).abs();
         let angle = if dmag > EPS && area_mag > EPS {
             let c = (dot(area_vec, d).abs() / (area_mag * dmag)).clamp(-1.0, 1.0);
             Some(c.acos().to_degrees())
-        } else { None };
-        let lambda = if dmag > EPS { dot(sub(centroid, owner_centroid), d) / (dmag * dmag) } else { 0.5 };
+        } else {
+            None
+        };
+        let lambda = if dmag > EPS {
+            dot(sub(centroid, owner_centroid), d) / (dmag * dmag)
+        } else {
+            0.5
+        };
         let closest_on_d = add(owner_centroid, scale(d, lambda));
         let skew = sub(centroid, closest_on_d);
         (Some(d), orth, angle, skew, Some(sub(centroid, nc)))
     } else {
-        let ahat = if area_mag > EPS { scale(area_vec, 1.0 / area_mag) } else { [0.0; 3] };
+        let ahat = if area_mag > EPS {
+            scale(area_vec, 1.0 / area_mag)
+        } else {
+            [0.0; 3]
+        };
         let orth = dot(owner_to_face, ahat).abs();
-        let skew = sub(centroid, add(owner_centroid, scale(ahat, dot(owner_to_face, ahat))));
+        let skew = sub(
+            centroid,
+            add(owner_centroid, scale(ahat, dot(owner_to_face, ahat))),
+        );
         (None, orth, None, skew, None)
     };
 
@@ -126,51 +148,100 @@ where
     })
 }
 
-fn is_cell<C: Storage<CellType>>(p: PointId, cell_types: &Section<CellType, C>) -> Result<bool, MeshSieveError> {
-    Ok(cell_types.try_restrict(p).ok().and_then(|v| v.first().copied()).map(|ct| ct.dimension() >= 2).unwrap_or(false))
+fn is_cell<C: Storage<CellType>>(
+    p: PointId,
+    cell_types: &Section<CellType, C>,
+) -> Result<bool, MeshSieveError> {
+    Ok(cell_types
+        .try_restrict(p)
+        .ok()
+        .and_then(|v| v.first().copied())
+        .map(|ct| ct.dimension() >= 2)
+        .unwrap_or(false))
 }
 
-fn is_face<S, CT>(p: PointId, sieve: &S, cell_types: &Section<CellType, CT>) -> Result<bool, MeshSieveError>
-where S: Sieve<Point = PointId>, CT: Storage<CellType> {
-    let support_cells = sieve.support_points(p).filter(|q| is_cell(*q, cell_types).unwrap_or(false)).count();
-    if support_cells == 0 || support_cells > 2 { return Ok(false); }
+fn is_face<S, CT>(
+    p: PointId,
+    sieve: &S,
+    cell_types: &Section<CellType, CT>,
+) -> Result<bool, MeshSieveError>
+where
+    S: Sieve<Point = PointId>,
+    CT: Storage<CellType>,
+{
+    let support_cells = sieve
+        .support_points(p)
+        .filter(|q| is_cell(*q, cell_types).unwrap_or(false))
+        .count();
+    if support_cells == 0 || support_cells > 2 {
+        return Ok(false);
+    }
     let cone: Vec<_> = sieve.cone_points(p).collect();
-    if cone.len() < 2 { return Ok(false); }
-    Ok(cone.into_iter().all(|q| sieve.cone_points(q).next().is_none()))
+    if cone.len() < 2 {
+        return Ok(false);
+    }
+    Ok(cone
+        .into_iter()
+        .all(|q| sieve.cone_points(q).next().is_none()))
 }
 
-fn face_vertices<S, C: Storage<f64>>(sieve: &S, face: PointId, coordinates: &Coordinates<f64, C>) -> Result<Vec<[f64;3]>, MeshSieveError>
-where S: Sieve<Point = PointId> {
+fn face_vertices<S, C: Storage<f64>>(
+    sieve: &S,
+    face: PointId,
+    coordinates: &Coordinates<f64, C>,
+) -> Result<Vec<[f64; 3]>, MeshSieveError>
+where
+    S: Sieve<Point = PointId>,
+{
     let mut points: Vec<_> = sieve.cone_points(face).collect();
     points.sort_unstable();
-    points.into_iter().map(|p| coord3(coordinates.try_restrict(p)?)).collect()
+    points
+        .into_iter()
+        .map(|p| coord3(coordinates.try_restrict(p)?))
+        .collect()
 }
 
-fn cell_centroid<S, C: Storage<f64>>(sieve: &S, cell: PointId, coordinates: &Coordinates<f64, C>) -> Result<[f64;3], MeshSieveError>
-where S: Sieve<Point = PointId> {
-    let mut verts: Vec<PointId> = sieve.closure_iter([cell]).filter(|p| sieve.cone_points(*p).next().is_none()).collect();
+fn cell_centroid<S, C: Storage<f64>>(
+    sieve: &S,
+    cell: PointId,
+    coordinates: &Coordinates<f64, C>,
+) -> Result<[f64; 3], MeshSieveError>
+where
+    S: Sieve<Point = PointId>,
+{
+    let mut verts: Vec<PointId> = sieve
+        .closure_iter([cell])
+        .filter(|p| sieve.cone_points(*p).next().is_none())
+        .collect();
     verts.sort_unstable();
     verts.dedup();
-    let coords: Result<Vec<_>,_> = verts.into_iter().map(|v| coord3(coordinates.try_restrict(v)?)).collect();
+    let coords: Result<Vec<_>, _> = verts
+        .into_iter()
+        .map(|v| coord3(coordinates.try_restrict(v)?))
+        .collect();
     Ok(mean(&coords?))
 }
 
-fn coord3(values: &[f64]) -> Result<[f64;3], MeshSieveError> {
+fn coord3(values: &[f64]) -> Result<[f64; 3], MeshSieveError> {
     match values.len().cmp(&3) {
         Ordering::Equal => Ok([values[0], values[1], values[2]]),
         Ordering::Less if values.len() == 2 => Ok([values[0], values[1], 0.0]),
-        _ => Err(MeshSieveError::InvalidGeometry("expected 2D/3D coordinates".into())),
+        _ => Err(MeshSieveError::InvalidGeometry(
+            "expected 2D/3D coordinates".into(),
+        )),
     }
 }
 
-fn polygon_area_vector(vertices: &[[f64;3]]) -> [f64;3] {
-    if vertices.len() == 2 { return sub(vertices[1], vertices[0]); }
+fn polygon_area_vector(vertices: &[[f64; 3]]) -> [f64; 3] {
+    if vertices.len() == 2 {
+        return sub(vertices[1], vertices[0]);
+    }
     let c = mean(vertices);
-    let mut sum = [0.0;3];
+    let mut sum = [0.0; 3];
     for i in 0..vertices.len() {
         let a = sub(vertices[i], c);
-        let b = sub(vertices[(i+1)%vertices.len()], c);
-        sum = add(sum, scale(cross(a,b), 0.5));
+        let b = sub(vertices[(i + 1) % vertices.len()], c);
+        sum = add(sum, scale(cross(a, b), 0.5));
     }
     sum
 }
@@ -193,13 +264,39 @@ fn polygon_centroid(vertices: &[[f64; 3]]) -> [f64; 3] {
             wsum += w;
         }
     }
-    if wsum > EPS { scale(weighted, 1.0 / wsum) } else { c0 }
+    if wsum > EPS {
+        scale(weighted, 1.0 / wsum)
+    } else {
+        c0
+    }
 }
 
-fn mean(v: &[[f64;3]]) -> [f64;3] { let mut c=[0.0;3]; for p in v { c=add(c,*p);} scale(c,1.0/(v.len() as f64)) }
-fn add(a:[f64;3],b:[f64;3])->[f64;3]{[a[0]+b[0],a[1]+b[1],a[2]+b[2]]}
-fn sub(a:[f64;3],b:[f64;3])->[f64;3]{[a[0]-b[0],a[1]-b[1],a[2]-b[2]]}
-fn scale(a:[f64;3],s:f64)->[f64;3]{[a[0]*s,a[1]*s,a[2]*s]}
-fn dot(a:[f64;3],b:[f64;3])->f64{a[0]*b[0]+a[1]*b[1]+a[2]*b[2]}
-fn norm(a:[f64;3])->f64{dot(a,a).sqrt()}
-fn cross(a:[f64;3],b:[f64;3])->[f64;3]{[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]]}
+fn mean(v: &[[f64; 3]]) -> [f64; 3] {
+    let mut c = [0.0; 3];
+    for p in v {
+        c = add(c, *p);
+    }
+    scale(c, 1.0 / (v.len() as f64))
+}
+fn add(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+}
+fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+fn scale(a: [f64; 3], s: f64) -> [f64; 3] {
+    [a[0] * s, a[1] * s, a[2] * s]
+}
+fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+fn norm(a: [f64; 3]) -> f64 {
+    dot(a, a).sqrt()
+}
+fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}

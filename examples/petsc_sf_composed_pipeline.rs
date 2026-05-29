@@ -5,7 +5,8 @@ use mesh_sieve::overlap::overlap::Overlap;
 use mesh_sieve::topology::ownership::PointOwnership;
 use mesh_sieve::topology::point::PointId;
 use std::collections::BTreeMap;
-
+// cargo run --features mpi-support --example petsc_sf_composed_pipeline
+// cargo mpirun -n 2 --features mpi-support --example petsc_sf_composed_pipeline
 fn p(id: u64) -> PointId {
     PointId::new(id).unwrap()
 }

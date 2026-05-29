@@ -138,12 +138,13 @@ pub fn cell_quality(
     vertices: &[[f64; 3]],
 ) -> Result<CellQuality, MeshSieveError> {
     if let Some(expected) = expected_vertex_count(cell_type)
-        && vertices.len() != expected {
-            return Err(MeshSieveError::InvalidGeometry(format!(
-                "vertex count mismatch: expected {expected}, got {}",
-                vertices.len()
-            )));
-        }
+        && vertices.len() != expected
+    {
+        return Err(MeshSieveError::InvalidGeometry(format!(
+            "vertex count mismatch: expected {expected}, got {}",
+            vertices.len()
+        )));
+    }
     let aspect_ratio = aspect_ratio(cell_type, vertices)?;
     let min_angle_deg = min_angle(cell_type, vertices)?;
     let jacobian_sign = jacobian_sign(cell_type, vertices)?;

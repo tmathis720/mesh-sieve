@@ -366,16 +366,17 @@ where
     Cs: Storage<f64>,
 {
     if let Some(hints) = &options.anisotropic_splits
-        && !hints.is_empty() {
-            let cell_ids: HashSet<_> = cell_types.iter().map(|(cell, _)| cell).collect();
-            for cell in hints.edge_splits.keys().chain(hints.face_splits.keys()) {
-                if !cell_ids.contains(cell) {
-                    return Err(MeshSieveError::UnknownPoint(format!(
-                        "anisotropic split hint for missing cell {cell:?}"
-                    )));
-                }
+        && !hints.is_empty()
+    {
+        let cell_ids: HashSet<_> = cell_types.iter().map(|(cell, _)| cell).collect();
+        for cell in hints.edge_splits.keys().chain(hints.face_splits.keys()) {
+            if !cell_ids.contains(cell) {
+                return Err(MeshSieveError::UnknownPoint(format!(
+                    "anisotropic split hint for missing cell {cell:?}"
+                )));
             }
         }
+    }
     let mut dimension: Option<u8> = None;
     for (cell, cell_slice) in cell_types.iter() {
         if cell_slice.len() != 1 {
@@ -1354,9 +1355,10 @@ fn face_vertices(
         return Ok(cone);
     }
     if cone.iter().all(|p| coarse.cone_points(*p).count() == 2)
-        && let Some(ordered) = ordered_vertices_from_edges(coarse, &cone) {
-            return Ok(ordered);
-        }
+        && let Some(ordered) = ordered_vertices_from_edges(coarse, &cone)
+    {
+        return Ok(ordered);
+    }
     let mut vertices = Vec::new();
     for p in coarse.closure(std::iter::once(face)) {
         if coarse.cone_points(p).next().is_none() {
@@ -1589,9 +1591,10 @@ fn cell_vertices(
         && !cone.is_empty()
         && cone.iter().all(|p| coarse.cone_points(*p).count() == 2)
         && let Some(ordered) = ordered_vertices_from_edges(coarse, &cone)
-            && ordered.len() == expected {
-                return Ok(ordered);
-            }
+        && ordered.len() == expected
+    {
+        return Ok(ordered);
+    }
 
     let mut vertices = Vec::new();
     for p in coarse.closure(std::iter::once(cell)) {

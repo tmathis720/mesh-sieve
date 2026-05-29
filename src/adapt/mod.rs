@@ -177,8 +177,7 @@ impl MetricTensor {
 /// The controls are intentionally backend-neutral: they transform the metric
 /// field before selection/refinement and can later be passed unchanged to
 /// external remeshers that implement equivalent options.
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct MetricNormalizationControls {
     /// Desired global metric complexity. Values > 0 rescale metric magnitudes.
     pub target_complexity: Option<f64>,
@@ -195,7 +194,6 @@ pub struct MetricNormalizationControls {
     /// Upper bound for tensor diagonal magnitudes.
     pub max_magnitude: Option<f64>,
 }
-
 
 impl MetricNormalizationControls {
     /// Returns true when no normalization or backend policy controls are set.
@@ -815,22 +813,23 @@ where
     if let Some(gradation) = controls
         .gradation
         .filter(|value| value.is_finite() && *value >= 1.0)
-        && !tensors.is_empty() {
-            let min_mag = tensors
-                .iter()
-                .map(|(_, tensor)| metric_magnitude_proxy(*tensor))
-                .filter(|value| *value > 0.0 && value.is_finite())
-                .fold(f64::INFINITY, f64::min);
-            if min_mag.is_finite() {
-                let max_allowed = min_mag * gradation;
-                for (_, tensor) in &mut tensors {
-                    let magnitude = metric_magnitude_proxy(*tensor);
-                    if magnitude > max_allowed && magnitude > 0.0 {
-                        scale_metric_tensor(tensor, max_allowed / magnitude);
-                    }
+        && !tensors.is_empty()
+    {
+        let min_mag = tensors
+            .iter()
+            .map(|(_, tensor)| metric_magnitude_proxy(*tensor))
+            .filter(|value| *value > 0.0 && value.is_finite())
+            .fold(f64::INFINITY, f64::min);
+        if min_mag.is_finite() {
+            let max_allowed = min_mag * gradation;
+            for (_, tensor) in &mut tensors {
+                let magnitude = metric_magnitude_proxy(*tensor);
+                if magnitude > max_allowed && magnitude > 0.0 {
+                    scale_metric_tensor(tensor, max_allowed / magnitude);
                 }
             }
         }
+    }
 
     let mut atlas = Atlas::default();
     for (point, _) in &tensors {
@@ -889,29 +888,31 @@ fn clamp_metric_tensor(tensor: &mut MetricTensor, controls: MetricNormalizationC
             if let Some(max_aniso) = controls
                 .max_anisotropy
                 .filter(|value| value.is_finite() && *value >= 1.0)
-                && max_diag / min_diag > max_aniso {
-                    let floor = max_diag / max_aniso;
-                    for i in 0..dim {
-                        if tensor.data[i].abs() < floor {
-                            tensor.data[i] = floor.copysign(tensor.data[i]);
-                        }
+                && max_diag / min_diag > max_aniso
+            {
+                let floor = max_diag / max_aniso;
+                for i in 0..dim {
+                    if tensor.data[i].abs() < floor {
+                        tensor.data[i] = floor.copysign(tensor.data[i]);
                     }
                 }
+            }
             if let Some(min_aniso) = controls
                 .min_anisotropy
                 .filter(|value| value.is_finite() && *value >= 1.0)
-                && max_diag / min_diag < min_aniso {
-                    let ceiling = min_diag * min_aniso;
-                    let max_idx = (0..dim)
-                        .max_by(|a, b| {
-                            tensor.data[*a]
-                                .abs()
-                                .partial_cmp(&tensor.data[*b].abs())
-                                .unwrap()
-                        })
-                        .unwrap();
-                    tensor.data[max_idx] = ceiling.copysign(tensor.data[max_idx]);
-                }
+                && max_diag / min_diag < min_aniso
+            {
+                let ceiling = min_diag * min_aniso;
+                let max_idx = (0..dim)
+                    .max_by(|a, b| {
+                        tensor.data[*a]
+                            .abs()
+                            .partial_cmp(&tensor.data[*b].abs())
+                            .unwrap()
+                    })
+                    .unwrap();
+                tensor.data[max_idx] = ceiling.copysign(tensor.data[max_idx]);
+            }
         }
     }
 }

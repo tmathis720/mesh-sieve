@@ -1,8 +1,7 @@
 //! Cell type metadata for mesh points.
 
 /// Common cell types for mesh elements.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Default)]
 pub enum CellType {
     /// 0D vertex.
     #[default]
@@ -28,7 +27,6 @@ pub enum CellType {
     /// Generic polyhedron.
     Polyhedron,
 }
-
 
 impl CellType {
     /// Returns the topological dimension of the cell, when well-defined.

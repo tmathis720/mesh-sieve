@@ -617,7 +617,7 @@ where
     /// Iterator over points at height `k`.
     /// - With cache: collecting the layer is **O(|strata[k]|)** time,
     ///   **O(|strata[k]|)** space.
-    /// - Without cache (if using [`compute_strata`](crate::topology::sieve::strata::compute_strata)):
+    /// - Without cache (if using [`compute_strata`]):
     ///   part of the **O(|V| + |E|)** pass.
     fn height_stratum<'a>(
         &'a mut self,

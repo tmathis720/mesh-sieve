@@ -193,23 +193,24 @@ pub fn validate_coastal_metadata(
     }
 
     if options.require_complete_boundary_partition
-        && let Some(expected) = expected_boundary_points {
-            let expected: BTreeSet<_> = expected.iter().copied().collect();
-            let mut labeled = BTreeSet::new();
-            labeled.extend(fs.iter().copied());
-            labeled.extend(bed.iter().copied());
-            labeled.extend(open.iter().copied());
+        && let Some(expected) = expected_boundary_points
+    {
+        let expected: BTreeSet<_> = expected.iter().copied().collect();
+        let mut labeled = BTreeSet::new();
+        labeled.extend(fs.iter().copied());
+        labeled.extend(bed.iter().copied());
+        labeled.extend(open.iter().copied());
 
-            let missing: Vec<_> = expected.difference(&labeled).copied().collect();
-            if !missing.is_empty() {
-                return Err(CoastalMetadataError::MissingBoundaryClass { points: missing });
-            }
-
-            let extra: Vec<_> = labeled.difference(&expected).copied().collect();
-            if !extra.is_empty() {
-                return Err(CoastalMetadataError::UnexpectedBoundaryClass { points: extra });
-            }
+        let missing: Vec<_> = expected.difference(&labeled).copied().collect();
+        if !missing.is_empty() {
+            return Err(CoastalMetadataError::MissingBoundaryClass { points: missing });
         }
+
+        let extra: Vec<_> = labeled.difference(&expected).copied().collect();
+        if !extra.is_empty() {
+            return Err(CoastalMetadataError::UnexpectedBoundaryClass { points: extra });
+        }
+    }
 
     let inflow: BTreeSet<_> = labels.inflow_points().into_iter().collect();
     let outflow: BTreeSet<_> = labels.outflow_points().into_iter().collect();
@@ -237,17 +238,18 @@ pub fn validate_coastal_metadata(
     }
 
     if options.require_complete_vertical_coverage
-        && let Some(expected) = expected_vertical_points {
-            let expected: BTreeSet<_> = expected.iter().copied().collect();
-            let labeled: BTreeSet<_> = labels
-                .iter()
-                .filter_map(|(name, point, _)| (name == VERTICAL_LAYER_LABEL).then_some(point))
-                .collect();
-            let missing: Vec<_> = expected.difference(&labeled).copied().collect();
-            if !missing.is_empty() {
-                return Err(CoastalMetadataError::MissingVerticalLayer { points: missing });
-            }
+        && let Some(expected) = expected_vertical_points
+    {
+        let expected: BTreeSet<_> = expected.iter().copied().collect();
+        let labeled: BTreeSet<_> = labels
+            .iter()
+            .filter_map(|(name, point, _)| (name == VERTICAL_LAYER_LABEL).then_some(point))
+            .collect();
+        let missing: Vec<_> = expected.difference(&labeled).copied().collect();
+        if !missing.is_empty() {
+            return Err(CoastalMetadataError::MissingVerticalLayer { points: missing });
         }
+    }
 
     Ok(())
 }

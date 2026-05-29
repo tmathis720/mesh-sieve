@@ -148,7 +148,8 @@ where
     fn permutation(&self, point: PointId, orientation: O, _dof_count: usize) -> Option<Vec<usize>> {
         self.by_point_orientation
             .get(&(point, orientation))
-            .or_else(|| self.by_orientation.get(&orientation)).cloned()
+            .or_else(|| self.by_orientation.get(&orientation))
+            .cloned()
     }
 }
 

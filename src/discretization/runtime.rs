@@ -260,11 +260,10 @@ impl QuadratureRule {
         let normalized = normalize_name(name);
         let family = quadrature_family_from_name(&normalized, cell_type)?;
         ensure_quadrature_supported(cell_type, family)?;
-        let order =
-            parse_trailing_degree(&normalized).unwrap_or(match normalized.as_str() {
-                "midpoint" | "centroid" => 1,
-                _ => 2,
-            });
+        let order = parse_trailing_degree(&normalized).unwrap_or(match normalized.as_str() {
+            "midpoint" | "centroid" => 1,
+            _ => 2,
+        });
         if order > MAX_RUNTIME_ORDER {
             return Err(MeshSieveError::InvalidGeometry(format!(
                 "unsupported quadrature order {order} for {cell_type:?}; maximum supported order is {MAX_RUNTIME_ORDER}"
@@ -1152,10 +1151,10 @@ pub fn ensure_geometry_order_supported(
     if matches!(
         cell_type,
         CellType::Simplex(_) | CellType::Polygon(_) | CellType::Polyhedron
-    )
-        && (1..=MAX_RUNTIME_ORDER).contains(&geometry_order) {
-            return Ok(());
-        }
+    ) && (1..=MAX_RUNTIME_ORDER).contains(&geometry_order)
+    {
+        return Ok(());
+    }
     let capability = capability_for(cell_type).ok_or_else(|| {
         MeshSieveError::InvalidGeometry(format!(
             "unsupported cell type {cell_type:?} for geometry order {geometry_order}"

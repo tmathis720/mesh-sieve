@@ -1029,12 +1029,13 @@ impl GmshReader {
                             )));
                         }
                         if let Some(expected) = Self::element_node_count(elem_type)
-                            && conn.len() != expected {
-                                return Err(MeshSieveError::MeshIoParse(format!(
-                                    "element {elem_id:?} expected {expected} nodes, got {found}",
-                                    found = conn.len()
-                                )));
-                            }
+                            && conn.len() != expected
+                        {
+                            return Err(MeshSieveError::MeshIoParse(format!(
+                                "element {elem_id:?} expected {expected} nodes, got {found}",
+                                found = conn.len()
+                            )));
+                        }
                         elements.push(ElementRecord {
                             id: elem_id,
                             conn,
@@ -1140,12 +1141,13 @@ impl GmshReader {
             MutableSieve::add_point(&mut sieve, element.id);
             for node in &element.conn {
                 if let Some(ref mut seen) = seen_arrows
-                    && !seen.insert((element.id, *node)) {
-                        return Err(MeshSieveError::DuplicateArrow {
-                            src: element.id,
-                            dst: *node,
-                        });
-                    }
+                    && !seen.insert((element.id, *node))
+                {
+                    return Err(MeshSieveError::DuplicateArrow {
+                        src: element.id,
+                        dst: *node,
+                    });
+                }
                 Sieve::add_arrow(&mut sieve, element.id, *node, ());
             }
         }
@@ -1750,9 +1752,10 @@ impl GmshWriter {
                 "gmsh:entity" => entry.1 = Some(value),
                 _ => {
                     if let Some(suffix) = name.strip_prefix("gmsh:tag")
-                        && let Ok(index) = suffix.parse::<usize>() {
-                            entry.2.insert(index, value);
-                        }
+                        && let Ok(index) = suffix.parse::<usize>()
+                    {
+                        entry.2.insert(index, value);
+                    }
                 }
             }
         }

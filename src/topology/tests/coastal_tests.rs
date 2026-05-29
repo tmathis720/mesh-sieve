@@ -9,7 +9,11 @@ use crate::topology::{
 fn canonical_coastal_queries_return_expected_points() {
     let p = |v| PointId::new(v).unwrap();
     let mut labels = LabelSet::new();
-    labels.set_label(p(1), BOUNDARY_CLASS_LABEL, BoundaryClass::FreeSurface.code());
+    labels.set_label(
+        p(1),
+        BOUNDARY_CLASS_LABEL,
+        BoundaryClass::FreeSurface.code(),
+    );
     labels.set_label(p(2), BOUNDARY_CLASS_LABEL, BoundaryClass::Bed.code());
     labels.set_label(p(3), BOUNDARY_CLASS_LABEL, BoundaryClass::Open.code());
     labels.set_label(p(3), BOUNDARY_ROLE_LABEL, OpenBoundaryRole::Inflow.code());

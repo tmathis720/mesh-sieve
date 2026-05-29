@@ -244,12 +244,13 @@ fn cell_vertices(
 ) -> Result<Vec<PointId>, MeshSieveError> {
     let cone: Vec<PointId> = sieve.cone_points(cell).collect();
     if let Some(expected) = expected
-        && cone.len() != expected {
-            return Err(MeshSieveError::InvalidGeometry(format!(
-                "cell {cell:?} expected {expected} vertices, got {}",
-                cone.len()
-            )));
-        }
+        && cone.len() != expected
+    {
+        return Err(MeshSieveError::InvalidGeometry(format!(
+            "cell {cell:?} expected {expected} vertices, got {}",
+            cone.len()
+        )));
+    }
     for v in &cone {
         if sieve.cone_points(*v).next().is_some() {
             return Err(MeshSieveError::InvalidGeometry(format!(

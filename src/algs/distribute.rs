@@ -823,9 +823,10 @@ fn ensure_periodic_remote_links(overlap: &mut Overlap) -> Result<(), MeshSieveEr
     for nbr in overlap.neighbor_ranks() {
         for (local, remote) in overlap.links_to(nbr) {
             if let Some(remote_point) = remote
-                && remote_point != local {
-                    extras.push((remote_point, nbr));
-                }
+                && remote_point != local
+            {
+                extras.push((remote_point, nbr));
+            }
         }
     }
     extras.sort_unstable();
@@ -1045,11 +1046,10 @@ where
                     for (point, name, value) in entries {
                         labels.set_label(point, &name, value);
                     }
-                    
-                })
-                    && maybe_err.is_none() {
-                        maybe_err = Some(err);
-                    }
+                }) && maybe_err.is_none()
+                {
+                    maybe_err = Some(err);
+                }
             }
             Some(raw) if maybe_err.is_none() => {
                 maybe_err = Some(MeshSieveError::CommError {

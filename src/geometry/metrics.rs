@@ -28,12 +28,13 @@ const EPS: f64 = 1e-12;
 /// area vector (unsigned).
 pub fn cell_volume(cell_type: CellType, vertices: &[[f64; 3]]) -> Result<f64, MeshSieveError> {
     if let Some(expected) = expected_vertex_count(cell_type)
-        && vertices.len() != expected {
-            return Err(MeshSieveError::InvalidGeometry(format!(
-                "vertex count mismatch: expected {expected}, got {}",
-                vertices.len()
-            )));
-        }
+        && vertices.len() != expected
+    {
+        return Err(MeshSieveError::InvalidGeometry(format!(
+            "vertex count mismatch: expected {expected}, got {}",
+            vertices.len()
+        )));
+    }
     match cell_type {
         CellType::Vertex => Ok(0.0),
         CellType::Segment => Ok(norm(sub(vertices[1], vertices[0]))),
@@ -97,12 +98,13 @@ pub fn cell_normals(
     vertices: &[[f64; 3]],
 ) -> Result<Vec<[f64; 3]>, MeshSieveError> {
     if let Some(expected) = expected_vertex_count(cell_type)
-        && vertices.len() != expected {
-            return Err(MeshSieveError::InvalidGeometry(format!(
-                "vertex count mismatch: expected {expected}, got {}",
-                vertices.len()
-            )));
-        }
+        && vertices.len() != expected
+    {
+        return Err(MeshSieveError::InvalidGeometry(format!(
+            "vertex count mismatch: expected {expected}, got {}",
+            vertices.len()
+        )));
+    }
     match cell_type {
         CellType::Triangle => Ok(vec![unit_normal(vertices[0], vertices[1], vertices[2])?]),
         CellType::Quadrilateral => Ok(vec![unit_normal(vertices[0], vertices[1], vertices[2])?]),

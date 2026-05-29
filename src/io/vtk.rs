@@ -631,47 +631,49 @@ impl SieveSectionReader for VtkReader {
 
         for (name, field) in &fields {
             if let Some(rest) = name.strip_prefix(FIELD_SECTION_PREFIX)
-                && let Some(section_name) = rest.strip_suffix(":ids") {
-                    let values_field = fields
-                        .get(&format!("{FIELD_SECTION_PREFIX}{section_name}:values"))
-                        .ok_or_else(|| {
-                            MeshSieveError::MeshIoParse(format!(
-                                "missing values for section {section_name}"
-                            ))
-                        })?;
-                    let ids = field.values_as_i64()?;
-                    let values = values_field.values_as_f64()?;
-                    let num_components = values_field.components;
-                    let mut atlas = Atlas::default();
-                    for raw_id in &ids {
-                        let point = PointId::new(*raw_id as u64)?;
-                        atlas.try_insert(point, num_components)?;
-                    }
-                    let mut section = Section::<f64, VecStorage<f64>>::new(atlas);
-                    for (idx, raw_id) in ids.iter().enumerate() {
-                        let point = PointId::new(*raw_id as u64)?;
-                        let start = idx * num_components;
-                        let end = start + num_components;
-                        section.try_set(point, &values[start..end])?;
-                    }
-                    sections.insert(section_name.to_string(), section);
+                && let Some(section_name) = rest.strip_suffix(":ids")
+            {
+                let values_field = fields
+                    .get(&format!("{FIELD_SECTION_PREFIX}{section_name}:values"))
+                    .ok_or_else(|| {
+                        MeshSieveError::MeshIoParse(format!(
+                            "missing values for section {section_name}"
+                        ))
+                    })?;
+                let ids = field.values_as_i64()?;
+                let values = values_field.values_as_f64()?;
+                let num_components = values_field.components;
+                let mut atlas = Atlas::default();
+                for raw_id in &ids {
+                    let point = PointId::new(*raw_id as u64)?;
+                    atlas.try_insert(point, num_components)?;
                 }
+                let mut section = Section::<f64, VecStorage<f64>>::new(atlas);
+                for (idx, raw_id) in ids.iter().enumerate() {
+                    let point = PointId::new(*raw_id as u64)?;
+                    let start = idx * num_components;
+                    let end = start + num_components;
+                    section.try_set(point, &values[start..end])?;
+                }
+                sections.insert(section_name.to_string(), section);
+            }
             if let Some(rest) = name.strip_prefix(FIELD_LABEL_PREFIX)
-                && let Some(label_name) = rest.strip_suffix(":ids") {
-                    let values_field = fields
-                        .get(&format!("{FIELD_LABEL_PREFIX}{label_name}:values"))
-                        .ok_or_else(|| {
-                            MeshSieveError::MeshIoParse(format!(
-                                "missing label values for {label_name}"
-                            ))
-                        })?;
-                    let ids = field.values_as_i64()?;
-                    let values = values_field.values_as_i64()?;
-                    for (point_raw, value) in ids.iter().zip(values.iter()) {
-                        let point = PointId::new(*point_raw as u64)?;
-                        labels.set_label(point, label_name, *value as i32);
-                    }
+                && let Some(label_name) = rest.strip_suffix(":ids")
+            {
+                let values_field = fields
+                    .get(&format!("{FIELD_LABEL_PREFIX}{label_name}:values"))
+                    .ok_or_else(|| {
+                        MeshSieveError::MeshIoParse(format!(
+                            "missing label values for {label_name}"
+                        ))
+                    })?;
+                let ids = field.values_as_i64()?;
+                let values = values_field.values_as_i64()?;
+                for (point_raw, value) in ids.iter().zip(values.iter()) {
+                    let point = PointId::new(*point_raw as u64)?;
+                    labels.set_label(point, label_name, *value as i32);
                 }
+            }
         }
 
         let labels = if labels.is_empty() {

@@ -6,7 +6,9 @@ use mesh_sieve::data::{atlas::Atlas, section::Section, storage::VecStorage};
 use mesh_sieve::overlap::{delta::CopyDelta, overlap::Overlap};
 use mesh_sieve::topology::point::PointId;
 
-fn p(id: u64) -> PointId { PointId::new(id).unwrap() }
+fn p(id: u64) -> PointId {
+    PointId::new(id).unwrap()
+}
 
 fn run_layout(comm: &MpiComm, swap_partitioning: bool) -> (PointId, f64, f64) {
     let rank = comm.rank();
@@ -19,12 +21,16 @@ fn run_layout(comm: &MpiComm, swap_partitioning: bool) -> (PointId, f64, f64) {
     let (cell_local, face_if_local, face_bdry_local) = if rank_owns_left {
         ov.try_add_link(p(1), 1 - rank, p(101)).unwrap();
         ov.try_add_link(p(21), 1 - rank, p(201)).unwrap();
-        for id in [1, 10, 21, 101, 201] { atlas.try_insert(p(id), 1).unwrap(); }
+        for id in [1, 10, 21, 101, 201] {
+            atlas.try_insert(p(id), 1).unwrap();
+        }
         (p(1), p(21), p(10))
     } else {
         ov.try_add_link(p(101), 1 - rank, p(1)).unwrap();
         ov.try_add_link(p(201), 1 - rank, p(21)).unwrap();
-        for id in [101, 201, 20, 1, 21] { atlas.try_insert(p(id), 1).unwrap(); }
+        for id in [101, 201, 20, 1, 21] {
+            atlas.try_insert(p(id), 1).unwrap();
+        }
         (p(101), p(201), p(20))
     };
 
@@ -46,8 +52,16 @@ fn run_layout(comm: &MpiComm, swap_partitioning: bool) -> (PointId, f64, f64) {
     let interface = face.try_restrict(face_if_local).unwrap()[0];
     let residual = cell.try_restrict(cell_local).unwrap()[0]
         + face.try_restrict(face_bdry_local).unwrap()[0]
-        + if rank_owns_left { interface } else { -interface };
-    let signed_interface = if rank_owns_left { interface } else { -interface };
+        + if rank_owns_left {
+            interface
+        } else {
+            -interface
+        };
+    let signed_interface = if rank_owns_left {
+        interface
+    } else {
+        -interface
+    };
 
     (cell_local, residual, signed_interface)
 }
@@ -94,7 +108,10 @@ fn mpi_fvm_modes_parity_and_partitioning_invariance() {
         let b_id = u64::from_le_bytes(chunk[16..24].try_into().unwrap());
         let b_r = f64::from_le_bytes(chunk[24..32].try_into().unwrap());
         assert_eq!(a_id, b_id, "cell assignment changed unexpectedly");
-        assert!((a_r - b_r).abs() < 1e-12, "cell residual drift on cell {a_id}");
+        assert!(
+            (a_r - b_r).abs() < 1e-12,
+            "cell residual drift on cell {a_id}"
+        );
     }
 
     // also ensure cancellation still holds in swapped layout

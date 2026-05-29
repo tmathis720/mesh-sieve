@@ -2,7 +2,7 @@
 //!
 //! Each input cell becomes a vertex. Two cells are connected if they share
 //! a boundary entity. The boundary policy is controlled via
-//! [`AdjacencyOpts`](crate::algs::lattice::AdjacencyOpts) and defaults to
+//! [`AdjacencyOpts`] and defaults to
 //! **faces only** (finite-volume style).
 //!
 //! Non-manifold boundaries are handled correctly: all cells incident to the

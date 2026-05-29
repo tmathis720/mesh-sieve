@@ -108,11 +108,12 @@ where
         }
         let len = dof_len(*point)?;
         if let Some(existing) = rep_lengths.insert(rep, len)
-            && existing != len {
-                return Err(MeshSieveError::InvalidGeometry(format!(
-                    "periodic layout mismatch for {point:?}: expected {existing}, got {len}",
-                )));
-            }
+            && existing != len
+        {
+            return Err(MeshSieveError::InvalidGeometry(format!(
+                "periodic layout mismatch for {point:?}: expected {existing}, got {len}",
+            )));
+        }
     }
 
     let mut rep_offsets: HashMap<PointId, u64> = HashMap::new();

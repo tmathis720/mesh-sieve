@@ -393,12 +393,13 @@ impl ExodusReader {
             MutableSieve::add_point(&mut sieve, point);
             for node in conn {
                 if let Some(ref mut seen) = seen_arrows
-                    && !seen.insert((point, node)) {
-                        return Err(MeshSieveError::DuplicateArrow {
-                            src: point,
-                            dst: node,
-                        });
-                    }
+                    && !seen.insert((point, node))
+                {
+                    return Err(MeshSieveError::DuplicateArrow {
+                        src: point,
+                        dst: node,
+                    });
+                }
                 Sieve::add_arrow(&mut sieve, point, node, ());
             }
             cell_types.try_add_point(point, 1)?;
@@ -837,9 +838,10 @@ impl SieveSectionWriter for ExodusIiWriter {
         if let Some(labels) = &mesh.labels {
             for (name, point, _) in labels.iter() {
                 if let Some(id) = name.strip_prefix("exodus:block:")
-                    && let Ok(block_id) = id.parse::<i64>() {
-                        block_map.entry(block_id).or_default().push(point);
-                    }
+                    && let Ok(block_id) = id.parse::<i64>()
+                {
+                    block_map.entry(block_id).or_default().push(point);
+                }
             }
         }
         let all_cells: Vec<PointId> = cell_types.atlas().points().collect();
@@ -966,9 +968,10 @@ impl SieveSectionWriter for ExodusIiWriter {
                 .create(name.as_str())?;
             dataset.write(&connectivity)?;
             if let Ok(attr) = dataset.new_attr::<VarLenUnicode>().create("elem_type")
-                && let Ok(value) = VarLenUnicode::from_str(&elem_type) {
-                    let _ = attr.write_scalar(&value);
-                }
+                && let Ok(value) = VarLenUnicode::from_str(&elem_type)
+            {
+                let _ = attr.write_scalar(&value);
+            }
         }
 
         if let Some(labels) = &mesh.labels {
@@ -976,20 +979,22 @@ impl SieveSectionWriter for ExodusIiWriter {
             let mut side_sets: BTreeMap<i64, Vec<(i64, i64)>> = BTreeMap::new();
             for (name, point, value) in labels.iter() {
                 if let Some(id) = name.strip_prefix("exodus:node_set:")
-                    && let Ok(set_id) = id.parse::<i64>() {
-                        node_sets
-                            .entry(set_id)
-                            .or_default()
-                            .push(point.get() as i64);
-                    }
+                    && let Ok(set_id) = id.parse::<i64>()
+                {
+                    node_sets
+                        .entry(set_id)
+                        .or_default()
+                        .push(point.get() as i64);
+                }
                 if let Some(id) = name.strip_prefix("exodus:side_set:")
-                    && let Ok(set_id) = id.parse::<i64>() {
-                        let side = if value > 0 { value } else { 1 } as i64;
-                        side_sets
-                            .entry(set_id)
-                            .or_default()
-                            .push((point.get() as i64, side));
-                    }
+                    && let Ok(set_id) = id.parse::<i64>()
+                {
+                    let side = if value > 0 { value } else { 1 } as i64;
+                    side_sets
+                        .entry(set_id)
+                        .or_default()
+                        .push((point.get() as i64, side));
+                }
             }
 
             if !node_sets.is_empty() {

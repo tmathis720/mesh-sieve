@@ -140,9 +140,7 @@ pub fn overlap_from_metadata(meta: &OverlapMetadata) -> Result<Overlap, MeshSiev
             match link.remote {
                 Some(remote_id) => {
                     let remote = PointId::new(remote_id).map_err(|_| {
-                        MeshSieveError::MeshIoParse(format!(
-                            "invalid remote point id {remote_id}"
-                        ))
+                        MeshSieveError::MeshIoParse(format!("invalid remote point id {remote_id}"))
                     })?;
                     overlap.try_add_link(local, neighbor.rank, remote)?;
                 }

@@ -459,8 +459,8 @@ fn test_distributed_completion(
 ) {
     use mesh_sieve::algs::distribute_mesh;
     use mesh_sieve::data::storage::VecStorage;
-    use mesh_sieve::topology::MeshSieve;
     use mesh_sieve::prelude::*;
+    use mesh_sieve::topology::MeshSieve;
 
     println!("[rank {}] Testing distributed completion...", rank);
 
@@ -654,9 +654,9 @@ fn test_sieved_array_operations(rank: usize) {
 fn test_error_handling_robustness(rank: usize) {
     use mesh_sieve::{
         data::storage::VecStorage,
-        topology::MeshSieve,
         overlap::delta::ZeroDelta,
         prelude::{Atlas, Section, Sieve, ValueDelta},
+        topology::MeshSieve,
     };
 
     println!("[rank {}] Testing error handling robustness...", rank);
