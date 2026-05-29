@@ -6,10 +6,12 @@
 pub mod bundle;
 pub mod cgns;
 pub mod exodus;
+pub mod fluent;
 pub mod gmsh;
 pub mod hdf5;
 pub mod partitioned;
 pub mod petsc_hdf5;
+pub mod ply;
 pub mod vtk;
 pub mod xdmf;
 
