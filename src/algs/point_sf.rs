@@ -114,6 +114,59 @@ where
         }
     }
 
+    /// Create an identity SF over points owned by this rank.
+    pub fn identity<I>(my_rank: usize, points: I) -> Self
+    where
+        I: IntoIterator<Item = PointId>,
+    {
+        let points: Vec<_> = points.into_iter().collect();
+        let leaves = points
+            .iter()
+            .copied()
+            .map(|point| PointSfLeaf {
+                local: point,
+                remote: RemotePoint {
+                    rank: my_rank,
+                    point,
+                },
+                owner_rank: my_rank,
+                is_ghost: false,
+            })
+            .collect();
+        Self::from_leaves(my_rank, points, leaves)
+    }
+
+    /// Create an SF from explicit local-to-remote point/rank migration edges.
+    pub fn from_point_map<I>(my_rank: usize, edges: I) -> Self
+    where
+        I: IntoIterator<Item = (PointId, usize, PointId)>,
+    {
+        let mut remote_roots = BTreeSet::new();
+        let leaves = edges
+            .into_iter()
+            .map(|(local, remote_rank, remote_point)| {
+                if remote_rank == my_rank {
+                    remote_roots.insert(remote_point);
+                }
+                PointSfLeaf {
+                    local,
+                    remote: RemotePoint {
+                        rank: remote_rank,
+                        point: remote_point,
+                    },
+                    owner_rank: remote_rank,
+                    is_ghost: remote_rank != my_rank,
+                }
+            })
+            .collect();
+        Self::from_leaves(my_rank, remote_roots, leaves)
+    }
+
+    /// Number of local leaf edges represented by this SF.
+    pub fn leaf_count(&self) -> usize {
+        self.leaves.len()
+    }
+
     /// Create a PointSF without ownership metadata from an overlap graph.
     pub fn new(overlap: &'a Overlap, comm: &'a C, my_rank: usize) -> Self {
         Self::from_overlap(overlap, None, Some(comm), my_rank)

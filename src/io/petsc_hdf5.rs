@@ -6,8 +6,10 @@
 //! mesh/section/vector data to be written, loaded independently, and
 //! re-associated by the preserved point permutation/order.
 
-use crate::algs::point_sf::PointSF;
+use crate::algs::communicator::NoComm;
+use crate::algs::point_sf::{PointSF, PointSfLeaf, RemotePoint};
 use crate::data::atlas::Atlas;
+use crate::data::coordinates::Coordinates;
 use crate::data::section::Section;
 use crate::data::storage::VecStorage;
 use crate::io::{MeshData, SieveSectionReader, SieveSectionWriter};
@@ -72,6 +74,17 @@ pub struct PetscProvenance {
     pub storage_version: i32,
     pub permutation_source: String,
     pub redistribution_map_id: Option<String>,
+    pub saved_rank_count: Option<usize>,
+    pub loaded_rank_count: Option<usize>,
+}
+
+/// DMPlex-style provenance maps reconstructed from PETSc/mesh-sieve rank metadata.
+#[derive(Clone, Debug)]
+pub struct PetscMigrationProvenance {
+    pub metadata: PetscProvenance,
+    pub load_map: PointSF<'static, NoComm>,
+    pub redistribute_map: Option<PointSF<'static, NoComm>>,
+    pub section_map: Option<PointSF<'static, NoComm>>,
 }
 
 const GROUP_TOPOLOGIES: &str = "topologies";
@@ -81,6 +94,7 @@ const GROUP_LABELS: &str = "labels";
 const GROUP_DMS: &str = "dms";
 const GROUP_SECTION: &str = "section";
 const GROUP_VECS: &str = "vecs";
+const GROUP_MIGRATION: &str = "migration";
 
 const DATASET_VERSION: &str = "dmplex_storage_version";
 const DATASET_PERMUTATION: &str = "permutation";
@@ -93,6 +107,14 @@ const DATASET_SECTION_DOFS: &str = "dofs";
 const DATASET_SECTION_OFFSETS: &str = "offsets";
 const DATASET_CELL_TYPES: &str = "cell_types";
 const DATASET_REDISTRIBUTION_MAP_ID: &str = "redistribution_map_id";
+const DATASET_COORDINATES: &str = "coordinates";
+const DATASET_COORDINATE_DIM: &str = "coordinate_dim";
+const DATASET_TOPOLOGICAL_DIM: &str = "topological_dim";
+const DATASET_SAVE_RANKS: &str = "saved_rank_count";
+const DATASET_LOAD_RANKS: &str = "loaded_rank_count";
+const DATASET_LOAD_SF: &str = "load_sf";
+const DATASET_REDISTRIBUTE_SF: &str = "redistribute_sf";
+const DATASET_SECTION_SF: &str = "section_sf";
 
 /// Options controlling DMPlex HDF5 path names.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -262,7 +284,9 @@ pub fn write_mesh_to_petsc_hdf5(
 
     write_cell_types(&topology, mesh, &order)?;
     write_labels(&topology_root, mesh.labels.as_ref())?;
+    write_coordinates(&topology_root, mesh.coordinates.as_ref(), &order)?;
     write_dm(&topology_root, dm_name, &order, &mesh.sections)?;
+    write_default_migration_metadata(file, &order)?;
     Ok(())
 }
 
@@ -317,6 +341,7 @@ pub fn read_mesh_from_petsc_hdf5_with_options(
     let mut sieve = MeshSieve::default();
     read_strata(&topology, &order, &mut sieve)?;
     let cell_types = read_cell_types(&topology, &order)?;
+    let coordinates = read_coordinates(&topology_root)?;
     let labels = read_labels(&topology_root)?;
     let subset = options
         .filter
@@ -332,7 +357,7 @@ pub fn read_mesh_from_petsc_hdf5_with_options(
     Ok((
         MeshData {
             sieve,
-            coordinates: None,
+            coordinates,
             sections,
             mixed_sections: Default::default(),
             labels,
@@ -349,6 +374,40 @@ pub fn read_mesh_from_petsc_hdf5_with_options(
                 .ok()
                 .and_then(|d| d.read_raw::<hdf5::types::VarLenUnicode>().ok())
                 .and_then(|v| v.first().map(|s| s.as_str().to_owned())),
+            saved_rank_count: read_scalar_usize(file, DATASET_SAVE_RANKS)?,
+            loaded_rank_count: read_scalar_usize(file, DATASET_LOAD_RANKS)?,
+        },
+    ))
+}
+
+/// Read mesh data together with DMPlex migration SF maps for load/redistribute/section replay.
+pub fn read_mesh_and_migration_provenance(
+    file: &File,
+    mesh_name: &str,
+    dm_name: &str,
+    options: &PetscLoadOptions,
+) -> Result<
+    (
+        MeshData<MeshSieve, f64, VecStorage<f64>, VecStorage<CellType>>,
+        PetscMigrationProvenance,
+    ),
+    MeshSieveError,
+> {
+    let (mesh, metadata) =
+        read_mesh_from_petsc_hdf5_with_options(file, mesh_name, dm_name, options)?;
+    let topology = topology_group(file, mesh_name)?;
+    let order = read_permutation_checked(&topology, options.mode)?;
+    let load_map = read_sf_dataset(file, DATASET_LOAD_SF)?
+        .unwrap_or_else(|| PointSF::<NoComm>::identity(0, order.iter().copied()));
+    let redistribute_map = read_sf_dataset(file, DATASET_REDISTRIBUTE_SF)?;
+    let section_map = read_sf_dataset(file, DATASET_SECTION_SF)?;
+    Ok((
+        mesh,
+        PetscMigrationProvenance {
+            metadata,
+            load_map,
+            redistribute_map,
+            section_map,
         },
     ))
 }
@@ -507,6 +566,91 @@ fn read_cell_types(
         }
     }
     Ok(Some(section))
+}
+
+fn write_coordinates(
+    topology_root: &Group,
+    coordinates: Option<&Coordinates<f64, VecStorage<f64>>>,
+    order: &[PointId],
+) -> Result<(), MeshSieveError> {
+    let Some(coordinates) = coordinates else {
+        return Ok(());
+    };
+    let group = create_or_open_group(topology_root, DATASET_COORDINATES)?;
+    let dim = coordinates.embedding_dimension();
+    let topo_dim = coordinates.topological_dimension();
+    group
+        .new_dataset::<i32>()
+        .shape(1)
+        .create(DATASET_COORDINATE_DIM)?
+        .write(&[dim as i32])?;
+    group
+        .new_dataset::<i32>()
+        .shape(1)
+        .create(DATASET_TOPOLOGICAL_DIM)?
+        .write(&[topo_dim as i32])?;
+
+    let mut points = Vec::new();
+    let mut values = Vec::new();
+    for point in order {
+        if let Ok(slice) = coordinates.try_restrict(*point) {
+            points.push(point.get() as i64);
+            values.extend_from_slice(slice);
+        }
+    }
+    group
+        .new_dataset::<i64>()
+        .shape(points.len())
+        .create(DATASET_POINTS)?
+        .write(&points)?;
+    group
+        .new_dataset::<f64>()
+        .shape(values.len())
+        .create(DATASET_COORDINATES)?
+        .write(&values)?;
+    Ok(())
+}
+
+fn read_coordinates(
+    topology_root: &Group,
+) -> Result<Option<Coordinates<f64, VecStorage<f64>>>, MeshSieveError> {
+    let Ok(group) = topology_root.group(DATASET_COORDINATES) else {
+        return Ok(None);
+    };
+    let dim = group
+        .dataset(DATASET_COORDINATE_DIM)
+        .ok()
+        .and_then(|d| d.read_raw::<i32>().ok())
+        .and_then(|v| v.first().copied())
+        .unwrap_or(0) as usize;
+    if dim == 0 {
+        return Ok(None);
+    }
+    let topo_dim = group
+        .dataset(DATASET_TOPOLOGICAL_DIM)
+        .ok()
+        .and_then(|d| d.read_raw::<i32>().ok())
+        .and_then(|v| v.first().copied())
+        .unwrap_or(dim as i32) as usize;
+    let points: Vec<i64> = group.dataset(DATASET_POINTS)?.read_raw()?;
+    let values: Vec<f64> = group.dataset(DATASET_COORDINATES)?.read_raw()?;
+    if values.len() != points.len() * dim {
+        return Err(MeshSieveError::MeshIoParse(format!(
+            "coordinate vector length mismatch: expected {}, found {}",
+            points.len() * dim,
+            values.len()
+        )));
+    }
+    let mut atlas = Atlas::default();
+    for raw in &points {
+        atlas.try_insert(PointId::new(*raw as u64)?, dim)?;
+    }
+    let mut section = Section::<f64, VecStorage<f64>>::new(atlas);
+    for (idx, raw) in points.iter().enumerate() {
+        let start = idx * dim;
+        section.try_set(PointId::new(*raw as u64)?, &values[start..start + dim])?;
+    }
+    Ok(Some(Coordinates::from_section(topo_dim, dim, section)?))
 }
 
 fn write_labels(topology_root: &Group, labels: Option<&LabelSet>) -> Result<(), MeshSieveError> {
@@ -705,6 +849,137 @@ fn matches_any_pattern(name: &str, patterns: &[String]) -> bool {
         } else {
             name == p
         }
+    })
+}
+
+fn write_default_migration_metadata(file: &File, order: &[PointId]) -> Result<(), MeshSieveError> {
+    if file.dataset(DATASET_SAVE_RANKS).is_err() {
+        file.new_dataset::<i32>()
+            .shape(1)
+            .create(DATASET_SAVE_RANKS)?
+            .write(&[1])?;
+    }
+    if file.dataset(DATASET_LOAD_RANKS).is_err() {
+        file.new_dataset::<i32>()
+            .shape(1)
+            .create(DATASET_LOAD_RANKS)?
+            .write(&[1])?;
+    }
+    if file.group(GROUP_MIGRATION).is_err() {
+        let sf = PointSF::<NoComm>::identity(0, order.iter().copied());
+        write_sf_dataset(file, DATASET_LOAD_SF, &sf)?;
+        write_sf_dataset(file, DATASET_SECTION_SF, &sf)?;
+    }
+    Ok(())
+}
+
+/// Write cross-rank migration metadata used to test PETSc DMPlex redistribution parity.
+pub fn write_migration_metadata(
+    file: &File,
+    saved_rank_count: usize,
+    loaded_rank_count: usize,
+    load_map: &PointSF<'_, NoComm>,
+    redistribute_map: Option<&PointSF<'_, NoComm>>,
+    section_map: Option<&PointSF<'_, NoComm>>,
+) -> Result<(), MeshSieveError> {
+    write_or_replace_i32_scalar(file, DATASET_SAVE_RANKS, saved_rank_count as i32)?;
+    write_or_replace_i32_scalar(file, DATASET_LOAD_RANKS, loaded_rank_count as i32)?;
+    write_sf_dataset(file, DATASET_LOAD_SF, load_map)?;
+    if let Some(sf) = redistribute_map {
+        write_sf_dataset(file, DATASET_REDISTRIBUTE_SF, sf)?;
+    }
+    if let Some(sf) = section_map {
+        write_sf_dataset(file, DATASET_SECTION_SF, sf)?;
+    }
+    Ok(())
+}
+
+fn write_or_replace_i32_scalar(file: &File, name: &str, value: i32) -> Result<(), MeshSieveError> {
+    if let Ok(dataset) = file.dataset(name) {
+        dataset.write(&[value])?;
+    } else {
+        file.new_dataset::<i32>()
+            .shape(1)
+            .create(name)?
+            .write(&[value])?;
+    }
+    Ok(())
+}
+
+fn write_sf_dataset(
+    file: &File,
+    name: &str,
+    sf: &PointSF<'_, NoComm>,
+) -> Result<(), MeshSieveError> {
+    let group = create_or_open_group(file, GROUP_MIGRATION)?;
+    if group.dataset(name).is_ok() {
+        group.unlink(name)?;
+    }
+    let mut rows = Vec::new();
+    for leaf in sf.leaves() {
+        rows.extend_from_slice(&[
+            leaf.local.get() as i64,
+            leaf.remote.rank as i64,
+            leaf.remote.point.get() as i64,
+            leaf.owner_rank as i64,
+            i64::from(leaf.is_ghost),
+        ]);
+    }
+    group
+        .new_dataset::<i64>()
+        .shape(rows.len())
+        .create(name)?
+        .write(&rows)?;
+    Ok(())
+}
+
+fn read_sf_dataset(
+    file: &File,
+    name: &str,
+) -> Result<Option<PointSF<'static, NoComm>>, MeshSieveError> {
+    let Ok(group) = file.group(GROUP_MIGRATION) else {
+        return Ok(None);
+    };
+    let Ok(dataset) = group.dataset(name) else {
+        return Ok(None);
+    };
+    let values: Vec<i64> = dataset.read_raw()?;
+    if values.len() % 5 != 0 {
+        return Err(MeshSieveError::MeshIoParse(format!(
+            "migration SF {name} has {} values, expected rows of 5",
+            values.len()
+        )));
+    }
+    let mut roots = BTreeSet::new();
+    let mut leaves = Vec::with_capacity(values.len() / 5);
+    for row in values.chunks_exact(5) {
+        let local = PointId::new(row[0] as u64)?;
+        let remote_rank = row[1] as usize;
+        let remote_point = PointId::new(row[2] as u64)?;
+        if remote_rank == 0 {
+            roots.insert(remote_point);
+        }
+        leaves.push(PointSfLeaf {
+            local,
+            remote: RemotePoint {
+                rank: remote_rank,
+                point: remote_point,
+            },
+            owner_rank: row[3] as usize,
+            is_ghost: row[4] != 0,
+        });
+    }
+    Ok(Some(PointSF::from_leaves(0, roots, leaves)))
+}
+
+fn read_scalar_usize(file: &File, name: &str) -> Result<Option<usize>, MeshSieveError> {
+    Ok(match file.dataset(name) {
+        Ok(dataset) => dataset
+            .read_raw::<i32>()?
+            .first()
+            .copied()
+            .map(|value| value as usize),
+        Err(_) => None,
     })
 }
 
