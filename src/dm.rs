@@ -10,9 +10,11 @@
 use std::collections::{BTreeMap, HashSet};
 
 use crate::adapt::{
-    BoundaryRemeshingPolicy, FvStabilityThresholds, MetricAdaptationAction,
-    MetricAdaptationOptions, MetricAdaptationResult, MetricSplitHint, MetricTensor,
-    MetricThresholds, adapt_with_metric_policy, select_cells_from_fvm_diagnostics,
+    AdaptationProvenanceMap, BoundaryRemeshingPolicy, FvStabilityThresholds,
+    MetricAdaptationAction, MetricAdaptationOptions, MetricAdaptationResult,
+    MetricRemeshingBackend, MetricSplitHint, MetricTensor, MetricThresholds,
+    adapt_with_metric_policy, select_cells_from_fvm_diagnostics, transfer_cell_types_refinement,
+    transfer_labels_refinement, transfer_ownership_refinement,
 };
 use crate::algs::communicator::Communicator;
 use crate::algs::distribute::{
@@ -297,6 +299,8 @@ pub enum MeshDMTransferStrategy {
     PreserveLabels,
     /// Keep and remap coordinates and labels where direct maps are available.
     PreserveCoordinatesAndLabels,
+    /// Preserve all DM-owned metadata that has explicit provenance maps.
+    PreserveAll,
 }
 
 /// Label-aware adaptation constraints for DM-level metric workflows.
@@ -313,6 +317,8 @@ pub struct MeshDMMetricAdaptOptions {
     pub thresholds: MetricThresholds,
     pub labels: MeshDMAdaptLabelPolicy,
     pub transfer: MeshDMTransferStrategy,
+    pub normalization: crate::adapt::MetricNormalizationControls,
+    pub backend: MetricRemeshingBackend,
 }
 
 impl Default for MeshDMMetricAdaptOptions {
@@ -321,6 +327,8 @@ impl Default for MeshDMMetricAdaptOptions {
             thresholds: MetricThresholds::default(),
             labels: MeshDMAdaptLabelPolicy::default(),
             transfer: MeshDMTransferStrategy::TopologyOnly,
+            normalization: crate::adapt::MetricNormalizationControls::default(),
+            backend: MetricRemeshingBackend::Internal,
         }
     }
 }
@@ -334,6 +342,10 @@ pub struct MeshDMAdaptDiagnostics {
     pub split_hint_cells: usize,
     pub fvm_face_metrics_cached: usize,
     pub boundary_faces: usize,
+    pub provenance_edges: usize,
+    pub transferred_sections: usize,
+    pub transferred_constraints: usize,
+    pub transferred_overlap_points: usize,
 }
 
 /// Result of a DM-level metric adaptation call.
@@ -343,6 +355,7 @@ pub struct MeshDMMetricAdaptResult {
     pub metrics: Vec<(PointId, crate::adapt::MetricCellMetrics)>,
     pub diagnostics: MeshDMAdaptDiagnostics,
     pub fv_selection: Option<(Vec<PointId>, Vec<PointId>)>,
+    pub provenance: AdaptationProvenanceMap,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -407,16 +420,23 @@ where
             self.mesh_data.labels.as_ref(),
             coarsen_plan,
             options.thresholds,
-            MetricAdaptationOptions { boundary_policy },
+            MetricAdaptationOptions {
+                boundary_policy,
+                normalization: options.normalization,
+                backend: options.backend,
+            },
         )?;
 
+        let provenance = result.provenance.clone();
+        let diagnostics =
+            self.transfer_after_adaptation(&result.action, &provenance, options.transfer)?;
         self.enforce_post_adaptation_fvm_contract()?;
-        let diagnostics = self.transfer_after_adaptation(&result.action, options.transfer)?;
         Ok(MeshDMMetricAdaptResult {
             action: result.action,
             metrics: result.metrics,
             diagnostics,
             fv_selection: None,
+            provenance,
         })
     }
 
@@ -569,9 +589,9 @@ where
     fn transfer_after_adaptation(
         &mut self,
         action: &MetricAdaptationAction,
+        provenance: &AdaptationProvenanceMap,
         strategy: MeshDMTransferStrategy,
     ) -> Result<MeshDMAdaptDiagnostics, MeshSieveError> {
-        self.refresh_fv_geometry_caches()?;
         let changed_cells = match action {
             MetricAdaptationAction::Refined { mesh } => mesh.cell_refinement.len(),
             MetricAdaptationAction::Coarsened { mesh } => mesh.transfer_map.len(),
@@ -593,24 +613,89 @@ where
         } else {
             (0, 0)
         };
+        let mut transferred_sections = 0;
+        let mut transferred_constraints = 0;
+        let mut transferred_overlap_points = 0;
+        let failed_transfer_points = Vec::new();
+
+        match action {
+            MetricAdaptationAction::Refined { mesh } => {
+                if matches!(
+                    strategy,
+                    MeshDMTransferStrategy::PreserveLabels
+                        | MeshDMTransferStrategy::PreserveCoordinatesAndLabels
+                        | MeshDMTransferStrategy::PreserveAll
+                ) {
+                    if let Some(labels) = self.mesh_data.labels.as_ref() {
+                        self.mesh_data.labels =
+                            Some(transfer_labels_refinement(labels, &mesh.cell_refinement));
+                    }
+                }
+                if matches!(
+                    strategy,
+                    MeshDMTransferStrategy::PreserveCoordinatesAndLabels
+                        | MeshDMTransferStrategy::PreserveAll
+                ) {
+                    if let Some(coords) = mesh.coordinates.clone() {
+                        self.mesh_data.coordinates = Some(convert_coordinates_storage(coords)?);
+                    }
+                }
+                if matches!(strategy, MeshDMTransferStrategy::PreserveAll) {
+                    if let Some(cell_types) = self.mesh_data.cell_types.as_ref() {
+                        self.mesh_data.cell_types = Some(convert_cell_type_section_storage(
+                            transfer_cell_types_refinement(cell_types, &mesh.cell_refinement)?,
+                        )?);
+                    }
+                    self.mesh_data.sections = transfer_dm_sections_refinement(
+                        &self.mesh_data.sections,
+                        &mesh.cell_refinement,
+                    )?;
+                    transferred_sections = self.mesh_data.sections.len();
+                    transferred_constraints = mesh.hanging_constraints.constraints().len();
+                    if let Some(ownership) = self.ownership.as_ref() {
+                        let rank = self.distribution.as_ref().map_or(0, |d| d.rank);
+                        self.ownership =
+                            Some(transfer_ownership_refinement(ownership, mesh, rank)?);
+                    }
+                    if let Some(overlap) = self.overlap.as_ref() {
+                        let (mapped, count) =
+                            transfer_overlap_refinement(overlap, &mesh.cell_refinement)?;
+                        self.overlap = Some(mapped);
+                        transferred_overlap_points = count;
+                    }
+                }
+                self.mesh_data.sieve = oriented_from_refined_sieve(&mesh.sieve);
+            }
+            MetricAdaptationAction::Coarsened { mesh } => {
+                if matches!(strategy, MeshDMTransferStrategy::PreserveAll) {
+                    self.mesh_data.sections = transfer_dm_sections_coarsening(
+                        &self.mesh_data.sections,
+                        &mesh.transfer_map,
+                    )?;
+                    transferred_sections = self.mesh_data.sections.len();
+                }
+                self.mesh_data.sieve = oriented_from_refined_sieve(&mesh.sieve);
+            }
+            MetricAdaptationAction::NoChange => {}
+        }
+
+        self.refresh_fv_geometry_caches()?;
         let diagnostics = MeshDMAdaptDiagnostics {
             changed_cells,
             preserved_labels,
-            failed_transfer_points: Vec::new(),
+            failed_transfer_points,
             split_hint_cells: changed_cells,
             fvm_face_metrics_cached,
             boundary_faces,
+            provenance_edges: provenance
+                .old_to_new
+                .iter()
+                .map(|(_, points)| points.len())
+                .sum(),
+            transferred_sections,
+            transferred_constraints,
+            transferred_overlap_points,
         };
-        match strategy {
-            MeshDMTransferStrategy::TopologyOnly => {}
-            MeshDMTransferStrategy::PreserveLabels => {
-                let _ = &self.mesh_data.labels;
-            }
-            MeshDMTransferStrategy::PreserveCoordinatesAndLabels => {
-                let _ = &self.mesh_data.coordinates;
-                let _ = &self.mesh_data.labels;
-            }
-        }
         Ok(diagnostics)
     }
 
@@ -650,6 +735,183 @@ where
         }
         Ok(())
     }
+}
+
+fn convert_section_storage<V, Src, Dst>(
+    section: Section<V, Src>,
+) -> Result<Section<V, Dst>, MeshSieveError>
+where
+    V: Clone + Default,
+    Src: Storage<V>,
+    Dst: Storage<V> + Clone,
+{
+    let atlas = section.atlas().clone();
+    let mut out = Section::<V, Dst>::new(atlas);
+    for (point, slice) in section.iter() {
+        out.try_set(point, slice)?;
+    }
+    Ok(out)
+}
+
+fn convert_coordinates_storage<St>(
+    coords: Coordinates<f64, VecStorage<f64>>,
+) -> Result<Coordinates<f64, St>, MeshSieveError>
+where
+    St: Storage<f64> + Clone,
+{
+    let section = convert_section_storage::<f64, _, St>(coords.section().clone())?;
+    Coordinates::from_section(
+        coords.topological_dimension(),
+        coords.embedding_dimension(),
+        section,
+    )
+}
+
+fn convert_cell_type_section_storage<CtSt>(
+    section: Section<CellType, VecStorage<CellType>>,
+) -> Result<Section<CellType, CtSt>, MeshSieveError>
+where
+    CtSt: Storage<CellType> + Clone,
+{
+    convert_section_storage::<CellType, _, CtSt>(section)
+}
+
+fn transfer_section_refinement_as_section<St>(
+    section: &Section<f64, St>,
+    refinement: &[(PointId, Vec<(PointId, crate::topology::arrow::Polarity)>)],
+) -> Result<Section<f64, St>, MeshSieveError>
+where
+    St: Storage<f64> + Clone,
+{
+    let mut atlas = Atlas::default();
+    let mut values: Vec<(PointId, Vec<f64>)> = Vec::new();
+    for (old, new_points) in refinement {
+        if let Ok(slice) = section.try_restrict(*old) {
+            for (new_point, _) in new_points {
+                atlas.try_insert(*new_point, slice.len())?;
+                values.push((*new_point, slice.to_vec()));
+            }
+        }
+    }
+    let mut out = Section::<f64, St>::new(atlas);
+    for (point, slice) in values {
+        out.try_set(point, &slice)?;
+    }
+    Ok(out)
+}
+
+fn transfer_dm_sections_refinement<St>(
+    sections: &BTreeMap<String, Section<f64, St>>,
+    refinement: &[(PointId, Vec<(PointId, crate::topology::arrow::Polarity)>)],
+) -> Result<BTreeMap<String, Section<f64, St>>, MeshSieveError>
+where
+    St: Storage<f64> + Clone,
+{
+    let mut out = BTreeMap::new();
+    for (name, section) in sections {
+        out.insert(
+            name.clone(),
+            transfer_section_refinement_as_section(section, refinement)?,
+        );
+    }
+    Ok(out)
+}
+
+fn transfer_section_coarsening_as_section<St>(
+    section: &Section<f64, St>,
+    transfer: &[(PointId, Vec<(PointId, crate::topology::arrow::Polarity)>)],
+) -> Result<Section<f64, St>, MeshSieveError>
+where
+    St: Storage<f64> + Clone,
+{
+    let mut atlas = Atlas::default();
+    let mut values: Vec<(PointId, Vec<f64>)> = Vec::new();
+    for (new_point, old_points) in transfer {
+        let Some((first_old, _)) = old_points.first() else {
+            continue;
+        };
+        if let Ok(first) = section.try_restrict(*first_old) {
+            let mut accum = vec![0.0; first.len()];
+            let mut count = 0.0;
+            for (old, _) in old_points {
+                if let Ok(slice) = section.try_restrict(*old) {
+                    if slice.len() == accum.len() {
+                        for (a, v) in accum.iter_mut().zip(slice) {
+                            *a += *v;
+                        }
+                        count += 1.0;
+                    }
+                }
+            }
+            if count > 0.0 {
+                for a in &mut accum {
+                    *a /= count;
+                }
+                atlas.try_insert(*new_point, accum.len())?;
+                values.push((*new_point, accum));
+            }
+        }
+    }
+    let mut out = Section::<f64, St>::new(atlas);
+    for (point, slice) in values {
+        out.try_set(point, &slice)?;
+    }
+    Ok(out)
+}
+
+fn transfer_dm_sections_coarsening<St>(
+    sections: &BTreeMap<String, Section<f64, St>>,
+    transfer: &[(PointId, Vec<(PointId, crate::topology::arrow::Polarity)>)],
+) -> Result<BTreeMap<String, Section<f64, St>>, MeshSieveError>
+where
+    St: Storage<f64> + Clone,
+{
+    let mut out = BTreeMap::new();
+    for (name, section) in sections {
+        out.insert(
+            name.clone(),
+            transfer_section_coarsening_as_section(section, transfer)?,
+        );
+    }
+    Ok(out)
+}
+
+fn oriented_from_refined_sieve(refined: &impl Sieve<Point = PointId>) -> MeshSieve {
+    let mut out = MeshSieve::default();
+    for src in refined.base_points() {
+        for dst in refined.cone_points(src) {
+            out.add_arrow(src, dst, ());
+        }
+    }
+    out
+}
+
+fn transfer_overlap_refinement(
+    overlap: &Overlap,
+    refinement: &[(PointId, Vec<(PointId, crate::topology::arrow::Polarity)>)],
+) -> Result<(Overlap, usize), MeshSieveError> {
+    let mut out = overlap.clone();
+    let mut count = 0;
+    for (old, new_points) in refinement {
+        for rank in overlap.neighbor_ranks() {
+            for (local, remote) in overlap.links_to(rank) {
+                if local == *old {
+                    for (new_point, _) in new_points {
+                        match remote {
+                            Some(remote_point) => {
+                                out.try_add_link(*new_point, rank, remote_point)?
+                            }
+                            None => {
+                                out.try_add_link_structural_one(*new_point, rank)?;
+                            }
+                        }
+                        count += 1;
+                    }
+                }
+            }
+        }
+    }
+    Ok((out, count))
 }
 
 /// DMPLEX-like facade owning topology, coordinates, labels, sections,
