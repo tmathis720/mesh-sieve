@@ -106,6 +106,7 @@ const DATASET_SECTION_POINTS: &str = "points";
 const DATASET_SECTION_DOFS: &str = "dofs";
 const DATASET_SECTION_OFFSETS: &str = "offsets";
 const DATASET_CELL_TYPES: &str = "cell_types";
+const DATASET_CELL_TYPE_PARAMS: &str = "cell_type_params";
 const DATASET_REDISTRIBUTION_MAP_ID: &str = "redistribution_map_id";
 const DATASET_COORDINATES: &str = "coordinates";
 const DATASET_COORDINATE_DIM: &str = "coordinate_dim";
@@ -527,18 +528,28 @@ fn write_cell_types(
         return Ok(());
     };
     let mut values = Vec::with_capacity(order.len());
+    let mut params = Vec::with_capacity(order.len());
     for point in order {
-        let code = match cell_types.try_restrict(*point) {
-            Ok(slice) if !slice.is_empty() => cell_type_to_dmplex(slice[0])?,
-            _ => -1,
+        let (code, param) = match cell_types.try_restrict(*point) {
+            Ok(slice) if !slice.is_empty() => {
+                let cell_type = slice[0];
+                (cell_type_to_dmplex(cell_type)?, cell_type_param(cell_type))
+            }
+            _ => (-1, -1),
         };
         values.push(code);
+        params.push(param);
     }
     topology
         .new_dataset::<i32>()
         .shape(values.len())
         .create(DATASET_CELL_TYPES)?
         .write(&values)?;
+    topology
+        .new_dataset::<i32>()
+        .shape(params.len())
+        .create(DATASET_CELL_TYPE_PARAMS)?
+        .write(&params)?;
     Ok(())
 }
 
@@ -550,6 +561,11 @@ fn read_cell_types(
         return Ok(None);
     };
     let values: Vec<i32> = dataset.read_raw()?;
+    let params: Option<Vec<i32>> = topology
+        .dataset(DATASET_CELL_TYPE_PARAMS)
+        .ok()
+        .map(|dataset| dataset.read_raw())
+        .transpose()?;
     let mut atlas = Atlas::default();
     for (point, code) in order.iter().zip(values.iter()) {
         if *code >= 0 {
@@ -562,7 +578,14 @@ fn read_cell_types(
     let mut section = Section::<CellType, VecStorage<CellType>>::new(atlas);
     for (point, code) in order.iter().zip(values.iter()) {
         if *code >= 0 {
-            section.try_set(*point, &[dmplex_to_cell_type(*code)?])?;
+            let param = params
+                .as_ref()
+                .and_then(|values| {
+                    values.get(order.iter().position(|p| p == point).unwrap_or(usize::MAX))
+                })
+                .copied()
+                .unwrap_or(-1);
+            section.try_set(*point, &[dmplex_to_cell_type_with_param(*code, param)?])?;
         }
     }
     Ok(Some(section))
@@ -1052,10 +1075,38 @@ fn cell_type_to_dmplex(cell_type: CellType) -> Result<i32, MeshSieveError> {
         CellType::Hexahedron => Ok(5),
         CellType::Prism => Ok(6),
         CellType::Pyramid => Ok(7),
-        _ => Err(MeshSieveError::MeshIoParse(format!(
-            "unsupported DMPlex cell type: {cell_type:?}"
-        ))),
+        CellType::Polygon(_) => Ok(8),
+        CellType::Polyhedron => Ok(9),
+        CellType::Simplex(dim) if dim >= 4 => Ok(10 + i32::from(dim - 4)),
+        CellType::Simplex(dim) => cell_type_to_dmplex(canonical_simplex(dim)),
     }
+}
+
+fn cell_type_param(cell_type: CellType) -> i32 {
+    match cell_type {
+        CellType::Polygon(n) | CellType::Simplex(n) => i32::from(n),
+        _ => -1,
+    }
+}
+
+fn canonical_simplex(dim: u8) -> CellType {
+    match dim {
+        0 => CellType::Vertex,
+        1 => CellType::Segment,
+        2 => CellType::Triangle,
+        3 => CellType::Tetrahedron,
+        _ => CellType::Simplex(dim),
+    }
+}
+
+fn dmplex_to_cell_type_with_param(code: i32, param: i32) -> Result<CellType, MeshSieveError> {
+    if code == 8 && param >= 0 {
+        return Ok(CellType::Polygon(param as u8));
+    }
+    if code >= 10 && param >= 0 {
+        return Ok(CellType::Simplex(param as u8));
+    }
+    dmplex_to_cell_type(code)
 }
 
 fn dmplex_to_cell_type(code: i32) -> Result<CellType, MeshSieveError> {

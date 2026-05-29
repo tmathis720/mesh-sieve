@@ -5,6 +5,8 @@ use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::section::Section;
 use mesh_sieve::data::storage::VecStorage;
 use mesh_sieve::dm::{MeshDM, MeshDMMetricAdaptOptions};
+use mesh_sieve::io::MeshData;
+use mesh_sieve::topology::sieve::{MeshSieve, OrientedSieve, Sieve};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mesh = structured_box_2d(
@@ -15,6 +17,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         StructuredCellType::Triangle,
         MeshGenOptions::default(),
     )?;
+    let mut oriented = MeshSieve::default();
+    for source in mesh.sieve.base_points() {
+        for target in mesh.sieve.cone_points(source) {
+            oriented.add_arrow_o(source, target, (), 0);
+        }
+    }
+    let mesh = MeshData {
+        sieve: oriented,
+        coordinates: mesh.coordinates,
+        sections: mesh.sections,
+        mixed_sections: mesh.mixed_sections,
+        labels: mesh.labels,
+        cell_types: mesh.cell_types,
+        discretization: mesh.discretization,
+    };
     let mut dm = MeshDM::<f64>::from_mesh_data(mesh);
 
     let cells = dm.height_stratum(0)?;

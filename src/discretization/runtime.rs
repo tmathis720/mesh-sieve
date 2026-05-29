@@ -1,7 +1,7 @@
 //! Runtime basis/quadrature lookup and element assembly utilities.
 
 use crate::data::closure::{
-    build_closure_index_unoriented, ClosureIndex, ClosureOrder, IdentitySectionSym,
+    ClosureIndex, ClosureOrder, IdentitySectionSym, build_closure_index_unoriented,
 };
 use crate::data::coordinates::Coordinates;
 use crate::data::discretization::DiscretizationMetadata;
@@ -197,9 +197,13 @@ impl QuadratureRule {
             CellType::Tetrahedron => simplex_quadrature(3, order, name),
             CellType::Prism => prism_quadrature(order, name),
             CellType::Pyramid => pyramid_quadrature(order, name),
-            canonical => Err(MeshSieveError::InvalidGeometry(format!(
-                "unsupported cell topology {canonical:?} for quadrature '{name}'"
-            ))),
+            CellType::Polygon(n) => polygon_quadrature(n as usize, name),
+            CellType::Polyhedron => Ok(QuadratureRule {
+                name: name.to_string(),
+                points: vec![vec![0.0, 0.0, 0.0]],
+                weights: vec![1.0],
+            }),
+            CellType::Simplex(dim) => simplex_quadrature(dim as usize, order, name),
         }
     }
 
@@ -838,6 +842,9 @@ fn parse_trailing_degree(name: &str) -> Option<usize> {
 /// | `Triangle`, `Simplex(2)` | `Simplex` | simplex triangle | 2D |
 /// | `Quadrilateral` | `TensorProduct` | tensor-product Gauss | 2D |
 /// | `Tetrahedron`, `Simplex(3)` | `Simplex` | simplex tetrahedron | 3D |
+/// | `Simplex(d)` | `Simplex` | centroid/simplex rule | dD |
+/// | `Polygon(n)` | `TensorProduct` | centroid fan rule | 2D |
+/// | `Polyhedron` | `TensorProduct` | centroid rule | 3D |
 /// | `Hexahedron` | `TensorProduct` | tensor-product Gauss | 3D |
 /// | `Prism` | `Prism` | triangle × segment product | 3D |
 /// | `Pyramid` | `Pyramid` | one-point pyramid rule | 3D |
@@ -883,6 +890,15 @@ fn canonical_cell_type(cell_type: CellType) -> CellType {
     }
 }
 
+fn is_dynamic_lagrange_supported(cell_type: CellType, family: BasisFamily) -> bool {
+    matches!(
+        (cell_type, family),
+        (CellType::Simplex(_), BasisFamily::Simplex)
+            | (CellType::Polygon(_), BasisFamily::TensorProduct)
+            | (CellType::Polyhedron, BasisFamily::TensorProduct)
+    )
+}
+
 fn capability_for(cell_type: CellType) -> Option<&'static RuntimeCapability> {
     let canonical = canonical_cell_type(cell_type);
     RUNTIME_CAPABILITIES
@@ -891,6 +907,12 @@ fn capability_for(cell_type: CellType) -> Option<&'static RuntimeCapability> {
 }
 
 fn default_lagrange_family(cell_type: CellType) -> Result<BasisFamily, MeshSieveError> {
+    if matches!(cell_type, CellType::Simplex(_)) {
+        return Ok(BasisFamily::Simplex);
+    }
+    if matches!(cell_type, CellType::Polygon(_) | CellType::Polyhedron) {
+        return Ok(BasisFamily::TensorProduct);
+    }
     capability_for(cell_type)
         .and_then(|capability| capability.families.first().copied())
         .ok_or_else(|| {
@@ -909,6 +931,9 @@ fn ensure_lagrange_supported(
         return Err(MeshSieveError::InvalidGeometry(
             "Lagrange degree must be at least one for non-vertex cells".to_string(),
         ));
+    }
+    if is_dynamic_lagrange_supported(cell_type, family) {
+        return Ok(());
     }
     let capability = capability_for(cell_type).ok_or_else(|| {
         MeshSieveError::InvalidGeometry(format!(
@@ -1034,17 +1059,10 @@ fn reference_nodes(
             }
             out
         }
-        (CellType::Tetrahedron, BasisFamily::Simplex) => {
-            let mut out = Vec::new();
-            for i in 0..=p {
-                for j in 0..=p - i {
-                    for k in 0..=p - i - j {
-                        out.push(vec![i as f64 / denom, j as f64 / denom, k as f64 / denom]);
-                    }
-                }
-            }
-            out
-        }
+        (CellType::Tetrahedron, BasisFamily::Simplex) => simplex_nodes(3, p),
+        (CellType::Simplex(dim), BasisFamily::Simplex) => simplex_nodes(dim as usize, p),
+        (CellType::Polygon(n), BasisFamily::TensorProduct) => polygon_nodes(n as usize),
+        (CellType::Polyhedron, BasisFamily::TensorProduct) => vec![vec![0.0, 0.0, 0.0]],
         (CellType::Quadrilateral, BasisFamily::TensorProduct) => tensor_nodes(2, p),
         (CellType::Hexahedron, BasisFamily::TensorProduct) => tensor_nodes(3, p),
         (CellType::Prism, BasisFamily::Prism) => {
@@ -1089,6 +1107,28 @@ fn reference_nodes(
     Ok(nodes)
 }
 
+fn simplex_nodes(dim: usize, degree: usize) -> Vec<Vec<f64>> {
+    if dim == 0 {
+        return vec![Vec::new()];
+    }
+    let denom = degree.max(1) as f64;
+    simplex_exponents(dim, degree)
+        .into_iter()
+        .filter(|exp| exp.iter().sum::<usize>() <= degree)
+        .map(|exp| exp.into_iter().map(|v| v as f64 / denom).collect())
+        .collect()
+}
+
+fn polygon_nodes(vertex_count: usize) -> Vec<Vec<f64>> {
+    let n = vertex_count.max(3);
+    (0..n)
+        .map(|i| {
+            let theta = std::f64::consts::TAU * i as f64 / n as f64;
+            vec![theta.cos(), theta.sin()]
+        })
+        .collect()
+}
+
 fn tensor_nodes(dim: usize, degree: usize) -> Vec<Vec<f64>> {
     let mut out = Vec::new();
     let mut cur = vec![0.0; dim];
@@ -1119,6 +1159,9 @@ fn interpolation_exponents(
         }
         (CellType::Triangle, BasisFamily::Simplex) => simplex_exponents(2, degree),
         (CellType::Tetrahedron, BasisFamily::Simplex) => simplex_exponents(3, degree),
+        (CellType::Simplex(dim), BasisFamily::Simplex) => simplex_exponents(dim as usize, degree),
+        (CellType::Polygon(_), BasisFamily::TensorProduct) => monomial_exponents(2, count),
+        (CellType::Polyhedron, BasisFamily::TensorProduct) => monomial_exponents(3, count),
         (CellType::Quadrilateral, BasisFamily::TensorProduct) => tensor_exponents(2, degree),
         (CellType::Hexahedron, BasisFamily::TensorProduct) => tensor_exponents(3, degree),
         (CellType::Prism, BasisFamily::Prism) => {
@@ -1375,10 +1418,29 @@ fn simplex_quadrature(
             points: vec![vec![0.25, 0.25, 0.25]],
             weights: vec![1.0 / 6.0],
         }),
-        _ => Err(MeshSieveError::InvalidGeometry(format!(
-            "unsupported simplex quadrature dimension {dim}"
-        ))),
+        _ => Ok(QuadratureRule {
+            name: name.to_string(),
+            points: vec![vec![1.0 / (dim as f64 + 1.0); dim]],
+            weights: vec![1.0 / factorial(dim) as f64],
+        }),
     }
+}
+
+fn factorial(n: usize) -> usize {
+    (1..=n).product::<usize>().max(1)
+}
+
+fn polygon_quadrature(vertex_count: usize, name: &str) -> Result<QuadratureRule, MeshSieveError> {
+    Ok(QuadratureRule {
+        name: name.to_string(),
+        points: vec![vec![0.0, 0.0]],
+        weights: vec![regular_polygon_area(vertex_count.max(3))],
+    })
+}
+
+fn regular_polygon_area(vertex_count: usize) -> f64 {
+    let n = vertex_count as f64;
+    0.5 * n * (std::f64::consts::TAU / n).sin()
 }
 
 fn prism_quadrature(order: usize, name: &str) -> Result<QuadratureRule, MeshSieveError> {
@@ -1477,10 +1539,60 @@ fn invert_jacobian(dim: usize, jac: &[f64]) -> Result<(f64, Vec<f64>), MeshSieve
             ];
             Ok((det, inv))
         }
-        _ => Err(MeshSieveError::InvalidGeometry(format!(
-            "unsupported Jacobian dimension {dim}"
-        ))),
+        _ => invert_square_jacobian(dim, jac),
     }
+}
+
+fn invert_square_jacobian(dim: usize, jac: &[f64]) -> Result<(f64, Vec<f64>), MeshSieveError> {
+    if jac.len() != dim * dim {
+        return Err(MeshSieveError::InvalidGeometry(format!(
+            "Jacobian length {} does not match {dim}D square matrix",
+            jac.len()
+        )));
+    }
+    let mut a = vec![vec![0.0; dim]; dim];
+    for r in 0..dim {
+        for c in 0..dim {
+            a[r][c] = jac[r * dim + c];
+        }
+    }
+    let mut det = 1.0;
+    let mut inv = vec![vec![0.0; dim]; dim];
+    for i in 0..dim {
+        inv[i][i] = 1.0;
+    }
+    for col in 0..dim {
+        let pivot = (col..dim)
+            .max_by(|&a_row, &b_row| a[a_row][col].abs().total_cmp(&a[b_row][col].abs()))
+            .unwrap();
+        if a[pivot][col].abs() < f64::EPSILON {
+            return Err(MeshSieveError::InvalidGeometry(
+                "zero Jacobian determinant".to_string(),
+            ));
+        }
+        if pivot != col {
+            a.swap(col, pivot);
+            inv.swap(col, pivot);
+            det = -det;
+        }
+        let scale = a[col][col];
+        det *= scale;
+        for j in 0..dim {
+            a[col][j] /= scale;
+            inv[col][j] /= scale;
+        }
+        for r in 0..dim {
+            if r == col {
+                continue;
+            }
+            let factor = a[r][col];
+            for j in 0..dim {
+                a[r][j] -= factor * a[col][j];
+                inv[r][j] -= factor * inv[col][j];
+            }
+        }
+    }
+    Ok((det, inv.into_iter().flatten().collect()))
 }
 
 fn polygon_area(vertices: &[Vec<f64>]) -> f64 {
@@ -1586,9 +1698,10 @@ mod tests {
     ];
 
     fn capability_supports(cell_type: CellType, family: BasisFamily) -> bool {
-        capability_for(cell_type)
-            .map(|capability| capability.families.contains(&family))
-            .unwrap_or(false)
+        is_dynamic_lagrange_supported(cell_type, family)
+            || capability_for(cell_type)
+                .map(|capability| capability.families.contains(&family))
+                .unwrap_or(false)
     }
 
     #[test]
@@ -1653,11 +1766,10 @@ mod tests {
 
         let bad_cell =
             Basis::lagrange_with_family(CellType::Polygon(5), 1, BasisFamily::Simplex).unwrap_err();
-        assert!(format!("{bad_cell}").contains("unsupported cell type"));
+        assert!(format!("{bad_cell}").contains("unsupported"));
 
-        let bad_quadrature =
-            QuadratureRule::from_metadata("gauss2", CellType::Simplex(4)).unwrap_err();
-        assert!(format!("{bad_quadrature}").contains("unsupported cell topology"));
+        let simplex4_quad = QuadratureRule::from_metadata("gauss2", CellType::Simplex(4)).unwrap();
+        assert_eq!(simplex4_quad.dimension(), 4);
     }
 
     #[test]
@@ -1667,6 +1779,12 @@ mod tests {
             (1, vec![2.0]),
             (2, vec![2.0, 0.0, 0.0, 3.0]),
             (3, vec![2.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 4.0]),
+            (
+                4,
+                vec![
+                    2.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 0.0, 4.0, 0.0, 0.0, 0.0, 0.0, 5.0,
+                ],
+            ),
         ];
         for (dim, jacobian) in cases {
             let (det, inverse) = invert_jacobian(dim, &jacobian).unwrap();

@@ -19,6 +19,9 @@
 //!   and top triangle `[3, 4, 5]`.
 //! - **Pyramid**: `[v0, v1, v2, v3, v4]` with base quad `[0, 1, 2, 3]`
 //!   and apex `v4`.
+//! - **Polygon(n)**: `n` vertices in cyclic order.
+//! - **Polyhedron**: vertex-cloud fallback metrics are available when exact
+//!   face topology is not supplied elsewhere.
 //!
 //! # Examples
 //! ```rust
@@ -134,14 +137,13 @@ pub fn cell_quality(
     cell_type: CellType,
     vertices: &[[f64; 3]],
 ) -> Result<CellQuality, MeshSieveError> {
-    let expected = expected_vertex_count(cell_type).ok_or_else(|| {
-        MeshSieveError::InvalidGeometry(format!("unsupported cell type: {cell_type:?}"))
-    })?;
-    if vertices.len() != expected {
-        return Err(MeshSieveError::InvalidGeometry(format!(
-            "vertex count mismatch: expected {expected}, got {}",
-            vertices.len()
-        )));
+    if let Some(expected) = expected_vertex_count(cell_type) {
+        if vertices.len() != expected {
+            return Err(MeshSieveError::InvalidGeometry(format!(
+                "vertex count mismatch: expected {expected}, got {}",
+                vertices.len()
+            )));
+        }
     }
     let aspect_ratio = aspect_ratio(cell_type, vertices)?;
     let min_angle_deg = min_angle(cell_type, vertices)?;
@@ -161,6 +163,9 @@ fn expected_vertex_count(cell_type: CellType) -> Option<usize> {
         CellType::Hexahedron => Some(8),
         CellType::Prism => Some(6),
         CellType::Pyramid => Some(5),
+        CellType::Polygon(n) => Some(n as usize),
+        CellType::Simplex(d) => (d <= 3).then_some(d as usize + 1),
+        CellType::Polyhedron => None,
         _ => None,
     }
 }
@@ -198,9 +203,17 @@ where
 }
 
 fn aspect_ratio(cell_type: CellType, vertices: &[[f64; 3]]) -> Result<f64, MeshSieveError> {
-    let edges = edges_for_cell(cell_type).ok_or_else(|| {
-        MeshSieveError::InvalidGeometry(format!("unsupported cell type: {cell_type:?}"))
-    })?;
+    let dynamic_edges;
+    let edges = if let Some(edges) = edges_for_cell(cell_type) {
+        edges
+    } else if matches!(cell_type, CellType::Polygon(_) | CellType::Polyhedron) {
+        dynamic_edges = dynamic_edges_for_vertices(vertices.len());
+        &dynamic_edges
+    } else {
+        return Err(MeshSieveError::InvalidGeometry(format!(
+            "unsupported cell type: {cell_type:?}"
+        )));
+    };
     let mut min_len = f64::INFINITY;
     let mut max_len = 0.0f64;
     for (a, b) in edges {
@@ -217,9 +230,28 @@ fn aspect_ratio(cell_type: CellType, vertices: &[[f64; 3]]) -> Result<f64, MeshS
 }
 
 fn min_angle(cell_type: CellType, vertices: &[[f64; 3]]) -> Result<f64, MeshSieveError> {
-    let faces = faces_for_cell(cell_type).ok_or_else(|| {
-        MeshSieveError::InvalidGeometry(format!("unsupported cell type: {cell_type:?}"))
-    })?;
+    let dynamic_faces;
+    let faces = if let Some(faces) = faces_for_cell(cell_type) {
+        faces.to_vec()
+    } else if matches!(cell_type, CellType::Polygon(_)) {
+        dynamic_faces = vec![(0..vertices.len()).collect::<Vec<_>>()];
+        dynamic_faces
+            .iter()
+            .map(|f| f.as_slice())
+            .collect::<Vec<_>>()
+    } else if matches!(cell_type, CellType::Polyhedron) {
+        dynamic_faces = (0..vertices.len().saturating_sub(2))
+            .map(|i| vec![0, i + 1, i + 2])
+            .collect::<Vec<_>>();
+        dynamic_faces
+            .iter()
+            .map(|f| f.as_slice())
+            .collect::<Vec<_>>()
+    } else {
+        return Err(MeshSieveError::InvalidGeometry(format!(
+            "unsupported cell type: {cell_type:?}"
+        )));
+    };
     let mut min_angle = f64::INFINITY;
     for face in faces {
         let n = face.len();
@@ -250,6 +282,15 @@ fn jacobian_sign(cell_type: CellType, vertices: &[[f64; 3]]) -> Result<f64, Mesh
         CellType::Hexahedron => Ok(hex_signed_volume(vertices)),
         CellType::Prism => Ok(prism_signed_volume(vertices)),
         CellType::Pyramid => Ok(pyramid_signed_volume(vertices)),
+        CellType::Polygon(_) => Ok(polygon_signed_area_xy(vertices)),
+        CellType::Polyhedron => Ok(polyhedron_bbox_volume(vertices)),
+        CellType::Simplex(2) => Ok(signed_area_xy(vertices[0], vertices[1], vertices[2])),
+        CellType::Simplex(3) => Ok(signed_volume(
+            vertices[0],
+            vertices[1],
+            vertices[2],
+            vertices[3],
+        )),
         _ => Err(MeshSieveError::InvalidGeometry(format!(
             "unsupported cell type: {cell_type:?}"
         ))),
@@ -262,6 +303,33 @@ fn signed_area_xy(a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> f64 {
     let acx = c[0] - a[0];
     let acy = c[1] - a[1];
     0.5 * (abx * acy - aby * acx)
+}
+
+fn polygon_signed_area_xy(vertices: &[[f64; 3]]) -> f64 {
+    if vertices.len() < 3 {
+        return 0.0;
+    }
+    let mut area = 0.0;
+    for i in 0..vertices.len() {
+        let j = (i + 1) % vertices.len();
+        area += vertices[i][0] * vertices[j][1] - vertices[j][0] * vertices[i][1];
+    }
+    0.5 * area
+}
+
+fn polyhedron_bbox_volume(vertices: &[[f64; 3]]) -> f64 {
+    if vertices.is_empty() {
+        return 0.0;
+    }
+    let mut mins = vertices[0];
+    let mut maxs = vertices[0];
+    for v in vertices.iter().skip(1) {
+        for d in 0..3 {
+            mins[d] = mins[d].min(v[d]);
+            maxs[d] = maxs[d].max(v[d]);
+        }
+    }
+    ((maxs[0] - mins[0]) * (maxs[1] - mins[1]) * (maxs[2] - mins[2])).abs()
 }
 
 fn signed_volume(a: [f64; 3], b: [f64; 3], c: [f64; 3], d: [f64; 3]) -> f64 {
@@ -312,6 +380,15 @@ fn faces_for_cell(cell_type: CellType) -> Option<&'static [&'static [usize]]> {
         CellType::Pyramid => Some(&PYRAMID_FACES),
         _ => None,
     }
+}
+
+fn dynamic_edges_for_vertices(vertex_count: usize) -> Vec<(usize, usize)> {
+    if vertex_count < 2 {
+        return Vec::new();
+    }
+    (0..vertex_count)
+        .map(|i| (i, (i + 1) % vertex_count))
+        .collect()
 }
 
 fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
