@@ -181,6 +181,13 @@ fn cell_type_to_exodus_elem_type(cell_type: CellType) -> Option<(&'static str, u
         CellType::Hexahedron => Some(("HEX8", 8)),
         CellType::Prism => Some(("WEDGE6", 6)),
         CellType::Pyramid => Some(("PYRAMID5", 5)),
+        CellType::Simplex(0) => Some(("POINT", 1)),
+        CellType::Simplex(1) => Some(("BAR2", 2)),
+        CellType::Simplex(2) => Some(("TRI3", 3)),
+        CellType::Simplex(3) => Some(("TET4", 4)),
+        CellType::Polygon(3) => Some(("TRI3", 3)),
+        CellType::Polygon(4) => Some(("QUAD4", 4)),
+        CellType::Polyhedron => Some(("TET4", 4)),
         _ => None,
     }
 }

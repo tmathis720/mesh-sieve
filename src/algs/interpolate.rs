@@ -210,6 +210,8 @@ where
                 | CellType::Prism
                 | CellType::Polygon(_)
                 | CellType::Polyhedron
+                | CellType::Simplex(2)
+                | CellType::Simplex(3)
         ) {
             cells.push((point, cell_type));
         } else if cell_type.dimension() >= 2 {
@@ -223,9 +225,9 @@ where
 
 fn expected_vertex_count(cell_type: CellType) -> Option<usize> {
     match cell_type {
-        CellType::Triangle => Some(3),
+        CellType::Triangle | CellType::Simplex(2) => Some(3),
         CellType::Quadrilateral => Some(4),
-        CellType::Tetrahedron => Some(4),
+        CellType::Tetrahedron | CellType::Simplex(3) => Some(4),
         CellType::Hexahedron => Some(8),
         CellType::Polygon(n) => Some(n as usize),
         CellType::Prism => Some(6),
@@ -268,7 +270,7 @@ fn cell_edges(
     polyhedron_faces: Option<&[Vec<usize>]>,
 ) -> Result<Vec<[PointId; 2]>, MeshSieveError> {
     let edges = match cell_type {
-        CellType::Triangle => vec![
+        CellType::Triangle | CellType::Simplex(2) => vec![
             [vertices[0], vertices[1]],
             [vertices[1], vertices[2]],
             [vertices[2], vertices[0]],
@@ -280,7 +282,7 @@ fn cell_edges(
             [vertices[3], vertices[0]],
         ],
         CellType::Polygon(_) => polygon_edges(vertices),
-        CellType::Tetrahedron => vec![
+        CellType::Tetrahedron | CellType::Simplex(3) => vec![
             [vertices[0], vertices[1]],
             [vertices[1], vertices[2]],
             [vertices[2], vertices[0]],
@@ -329,8 +331,11 @@ fn cell_faces(
     polyhedron_faces: Option<&[Vec<usize>]>,
 ) -> Result<Vec<(Vec<PointId>, CellType)>, MeshSieveError> {
     let faces = match cell_type {
-        CellType::Triangle | CellType::Quadrilateral | CellType::Polygon(_) => Vec::new(),
-        CellType::Tetrahedron => vec![
+        CellType::Triangle
+        | CellType::Simplex(2)
+        | CellType::Quadrilateral
+        | CellType::Polygon(_) => Vec::new(),
+        CellType::Tetrahedron | CellType::Simplex(3) => vec![
             (
                 vec![vertices[0], vertices[1], vertices[2]],
                 CellType::Triangle,

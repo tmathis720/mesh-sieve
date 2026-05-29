@@ -327,6 +327,43 @@ pub fn sphere_shell(
     build_mesh(3, &vertices, &cells, CellType::Triangle, options.labels)
 }
 
+/// Generate a quadrilateral surface mesh for a cylindrical shell.
+pub fn cylinder_shell(
+    radius: f64,
+    height: f64,
+    n_around: usize,
+    n_height: usize,
+    options: MeshGenOptions,
+) -> MeshGenResult {
+    if radius <= 0.0 || height <= 0.0 || n_around < 3 || n_height == 0 {
+        return Err(invalid_geometry("invalid cylinder shell parameters"));
+    }
+    let mut vertices = Vec::new();
+    for layer in 0..=n_height {
+        let z = height * layer as f64 / n_height as f64;
+        for i in 0..n_around {
+            let theta = std::f64::consts::TAU * i as f64 / n_around as f64;
+            vertices.push(vec![radius * theta.cos(), radius * theta.sin(), z]);
+        }
+    }
+    let mut cells = Vec::new();
+    for layer in 0..n_height {
+        let base = layer * n_around;
+        let top = (layer + 1) * n_around;
+        for i in 0..n_around {
+            let next = (i + 1) % n_around;
+            cells.push(vec![base + i, base + next, top + next, top + i]);
+        }
+    }
+    build_mesh(
+        3,
+        &vertices,
+        &cells,
+        CellType::Quadrilateral,
+        options.labels,
+    )
+}
+
 /// Polygonal input for Triangle constrained Delaunay triangulation.
 #[derive(Clone, Debug, Default)]
 pub struct TriangleInput {

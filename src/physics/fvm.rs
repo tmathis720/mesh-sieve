@@ -276,7 +276,9 @@ impl FvBoundaryPolicy {
         Ok(result)
     }
 
-    fn build_diffusive_face_bcs(&self) -> Result<HashMap<PointId, BoundaryCondition>, FvmAssemblyError> {
+    fn build_diffusive_face_bcs(
+        &self,
+    ) -> Result<HashMap<PointId, BoundaryCondition>, FvmAssemblyError> {
         let mut result = HashMap::with_capacity(self.boundary_face_branches.len());
         for (face, branch) in &self.boundary_face_branches {
             if let Some(bc) = self.diffusive_branch_hooks.get(branch) {
@@ -354,6 +356,14 @@ fn preflight_fv_assembly(
         }
     }
     let boundary_faces: HashSet<_> = inputs.boundary_faces().map(|s| s.face).collect();
+    for (face, _) in &boundary_policy.boundary_face_branches {
+        if inputs.face_metrics(*face).is_none() {
+            return Err(FvmAssemblyError::LabelMappedToUnknownFace { face: *face });
+        }
+        if !boundary_faces.contains(face) {
+            return Err(FvmAssemblyError::LabelMappedToInternalFace { face: *face });
+        }
+    }
     for stencil in inputs.boundary_faces() {
         if inputs.face_metrics(stencil.face).is_none() {
             return Err(FvmAssemblyError::MissingFaceMetric { face: stencil.face });
@@ -374,14 +384,6 @@ fn preflight_fv_assembly(
                 });
             }
             continue;
-        }
-    }
-    for (face, _) in &boundary_policy.boundary_face_branches {
-        if inputs.face_metrics(*face).is_none() {
-            return Err(FvmAssemblyError::LabelMappedToUnknownFace { face: *face });
-        }
-        if !boundary_faces.contains(face) {
-            return Err(FvmAssemblyError::LabelMappedToInternalFace { face: *face });
         }
     }
     Ok(())
@@ -1726,7 +1728,10 @@ mod tests {
             )],
             vec![],
         );
-        let err = preflight_fv_assembly(&inputs_missing_face_metric, &policy(HashMap::new(), HashSet::new()))
+        let err = preflight_fv_assembly(
+            &inputs_missing_face_metric,
+            &policy(HashMap::new(), HashSet::new()),
+        )
         .unwrap_err();
         assert_eq!(err, FvmAssemblyError::MissingFaceMetric { face: fb });
 
@@ -1748,7 +1753,10 @@ mod tests {
                 },
             )],
         );
-        let err = preflight_fv_assembly(&inputs_missing_cell_metric, &policy(HashMap::new(), HashSet::new()))
+        let err = preflight_fv_assembly(
+            &inputs_missing_cell_metric,
+            &policy(HashMap::new(), HashSet::new()),
+        )
         .unwrap_err();
         assert_eq!(err, FvmAssemblyError::MissingCellMetric { cell: c0 });
 
@@ -1787,7 +1795,10 @@ mod tests {
         );
         let err = preflight_fv_assembly(
             &inputs_internal_face_label,
-            &policy(HashMap::from([(fi, FvBoundaryBranch::Open)]), HashSet::new()),
+            &policy(
+                HashMap::from([(fi, FvBoundaryBranch::Open)]),
+                HashSet::new(),
+            ),
         )
         .unwrap_err();
         assert_eq!(

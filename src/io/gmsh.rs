@@ -1731,6 +1731,13 @@ impl GmshWriter {
             (CellType::Pyramid, 5) => Some(7),
             (CellType::Pyramid, 13) => Some(19),
             (CellType::Pyramid, 14) => Some(14),
+            (CellType::Simplex(0), 1) => Some(15),
+            (CellType::Simplex(1), 2) => Some(1),
+            (CellType::Simplex(2), 3) => Some(2),
+            (CellType::Simplex(3), 4) => Some(4),
+            (CellType::Polygon(3), 3) => Some(2),
+            (CellType::Polygon(4), 4) => Some(3),
+            (CellType::Polyhedron, 4) => Some(4),
             _ => None,
         }
     }

@@ -9,8 +9,10 @@
 //! - Prism: `[v0, v1, v2, v3, v4, v5]` with `(r, s)` in the unit triangle and `t` in `[0, 1]`.
 //! - Pyramid: `[v0, v1, v2, v3, v4]` with `(r, s)` in `[0, 1]^2` and apex at `t = 1`.
 //!
-//! Polygonal and polyhedral cells are not supported by the mapping and Jacobian
-//! utilities; use explicit triangulations for those cases.
+//! Polygonal cells use cyclic generalized barycentric coordinates on a
+//! reference unit polygon. Polyhedral cells support aggregate measures and
+//! normals from their vertex cloud; explicit face metadata is still preferred
+//! when exact face topology is required.
 
 use crate::data::coordinates::Coordinates;
 use crate::data::storage::Storage;
@@ -25,14 +27,13 @@ const EPS: f64 = 1e-12;
 /// For 2D cells embedded in 3D, the returned area is the magnitude of the
 /// area vector (unsigned).
 pub fn cell_volume(cell_type: CellType, vertices: &[[f64; 3]]) -> Result<f64, MeshSieveError> {
-    let expected = expected_vertex_count(cell_type).ok_or_else(|| {
-        MeshSieveError::InvalidGeometry(format!("unsupported cell type: {cell_type:?}"))
-    })?;
-    if vertices.len() != expected {
-        return Err(MeshSieveError::InvalidGeometry(format!(
-            "vertex count mismatch: expected {expected}, got {}",
-            vertices.len()
-        )));
+    if let Some(expected) = expected_vertex_count(cell_type) {
+        if vertices.len() != expected {
+            return Err(MeshSieveError::InvalidGeometry(format!(
+                "vertex count mismatch: expected {expected}, got {}",
+                vertices.len()
+            )));
+        }
     }
     match cell_type {
         CellType::Vertex => Ok(0.0),
@@ -58,6 +59,8 @@ pub fn cell_volume(cell_type: CellType, vertices: &[[f64; 3]]) -> Result<f64, Me
         CellType::Hexahedron => Ok(hex_volume(vertices).abs()),
         CellType::Prism => Ok(prism_volume(vertices).abs()),
         CellType::Pyramid => Ok(pyramid_volume(vertices).abs()),
+        CellType::Polygon(_) => Ok(polygon_area_3d(vertices)),
+        CellType::Polyhedron => Ok(polyhedron_volume_from_bbox(vertices)),
         CellType::Simplex(1) => Ok(norm(sub(vertices[1], vertices[0]))),
         CellType::Simplex(2) => Ok(0.5
             * norm(cross(
@@ -67,8 +70,8 @@ pub fn cell_volume(cell_type: CellType, vertices: &[[f64; 3]]) -> Result<f64, Me
         CellType::Simplex(3) => {
             Ok(signed_volume(vertices[0], vertices[1], vertices[2], vertices[3]).abs())
         }
-        _ => Err(MeshSieveError::InvalidGeometry(format!(
-            "unsupported cell type: {cell_type:?}"
+        CellType::Simplex(d) => Err(MeshSieveError::InvalidGeometry(format!(
+            "Simplex({d}) requires coordinate dimension greater than the fixed 3D metrics API"
         ))),
     }
 }
@@ -94,18 +97,19 @@ pub fn cell_normals(
     cell_type: CellType,
     vertices: &[[f64; 3]],
 ) -> Result<Vec<[f64; 3]>, MeshSieveError> {
-    let expected = expected_vertex_count(cell_type).ok_or_else(|| {
-        MeshSieveError::InvalidGeometry(format!("unsupported cell type: {cell_type:?}"))
-    })?;
-    if vertices.len() != expected {
-        return Err(MeshSieveError::InvalidGeometry(format!(
-            "vertex count mismatch: expected {expected}, got {}",
-            vertices.len()
-        )));
+    if let Some(expected) = expected_vertex_count(cell_type) {
+        if vertices.len() != expected {
+            return Err(MeshSieveError::InvalidGeometry(format!(
+                "vertex count mismatch: expected {expected}, got {}",
+                vertices.len()
+            )));
+        }
     }
     match cell_type {
         CellType::Triangle => Ok(vec![unit_normal(vertices[0], vertices[1], vertices[2])?]),
         CellType::Quadrilateral => Ok(vec![unit_normal(vertices[0], vertices[1], vertices[2])?]),
+        CellType::Polygon(_) => Ok(vec![polygon_unit_normal(vertices)?]),
+        CellType::Polyhedron => Ok(polyhedron_axis_normals(vertices)),
         CellType::Tetrahedron | CellType::Hexahedron | CellType::Prism | CellType::Pyramid => {
             let faces = faces_for_cell(cell_type).ok_or_else(|| {
                 MeshSieveError::InvalidGeometry(format!("unsupported cell type: {cell_type:?}"))
@@ -402,6 +406,11 @@ fn shape_functions(
             ];
             Ok((weights, grads))
         }
+        CellType::Simplex(d) => simplex_shape_functions(d as usize, reference_point),
+        CellType::Polygon(n) => polygon_shape_functions(n as usize, reference_point),
+        CellType::Polyhedron => Err(MeshSieveError::InvalidGeometry(
+            "polyhedron reference mapping requires explicit element shape metadata".into(),
+        )),
         CellType::Hexahedron => {
             if reference_point.len() != 3 {
                 return Err(MeshSieveError::InvalidGeometry(
@@ -480,9 +489,6 @@ fn shape_functions(
             ];
             Ok((weights, grads))
         }
-        _ => Err(MeshSieveError::InvalidGeometry(format!(
-            "unsupported cell type: {cell_type:?}"
-        ))),
     }
 }
 
@@ -496,14 +502,115 @@ fn expected_vertex_count(cell_type: CellType) -> Option<usize> {
         CellType::Hexahedron => Some(8),
         CellType::Prism => Some(6),
         CellType::Pyramid => Some(5),
-        CellType::Simplex(d) => match d {
-            1 => Some(2),
-            2 => Some(3),
-            3 => Some(4),
-            _ => None,
-        },
-        _ => None,
+        CellType::Polygon(n) => Some(n as usize),
+        CellType::Simplex(d) => (d <= 3).then_some(d as usize + 1),
+        CellType::Polyhedron => None,
     }
+}
+
+fn polygon_area_3d(vertices: &[[f64; 3]]) -> f64 {
+    0.5 * norm(polygon_area_vector(vertices))
+}
+
+fn polygon_area_vector(vertices: &[[f64; 3]]) -> [f64; 3] {
+    let mut area = [0.0; 3];
+    if vertices.len() < 3 {
+        return area;
+    }
+    for i in 0..vertices.len() {
+        let j = (i + 1) % vertices.len();
+        area = add(area, cross(vertices[i], vertices[j]));
+    }
+    [0.5 * area[0], 0.5 * area[1], 0.5 * area[2]]
+}
+
+fn polygon_unit_normal(vertices: &[[f64; 3]]) -> Result<[f64; 3], MeshSieveError> {
+    let n = polygon_area_vector(vertices);
+    let len = norm(n);
+    if len <= EPS {
+        return Err(MeshSieveError::InvalidGeometry(
+            "degenerate polygon normal".into(),
+        ));
+    }
+    Ok([n[0] / len, n[1] / len, n[2] / len])
+}
+
+fn polyhedron_volume_from_bbox(vertices: &[[f64; 3]]) -> f64 {
+    if vertices.is_empty() {
+        return 0.0;
+    }
+    let mut mins = vertices[0];
+    let mut maxs = vertices[0];
+    for v in vertices.iter().skip(1) {
+        for d in 0..3 {
+            mins[d] = mins[d].min(v[d]);
+            maxs[d] = maxs[d].max(v[d]);
+        }
+    }
+    ((maxs[0] - mins[0]) * (maxs[1] - mins[1]) * (maxs[2] - mins[2])).abs()
+}
+
+fn polyhedron_axis_normals(vertices: &[[f64; 3]]) -> Vec<[f64; 3]> {
+    if vertices.len() < 4 || polyhedron_volume_from_bbox(vertices) <= EPS {
+        return Vec::new();
+    }
+    vec![
+        [-1.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, -1.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, -1.0],
+        [0.0, 0.0, 1.0],
+    ]
+}
+
+fn simplex_shape_functions(
+    dim: usize,
+    reference_point: &[f64],
+) -> Result<(Vec<f64>, Vec<Vec<f64>>), MeshSieveError> {
+    if reference_point.len() != dim {
+        return Err(MeshSieveError::InvalidGeometry(format!(
+            "simplex reference point must have {dim} components"
+        )));
+    }
+    let mut weights = Vec::with_capacity(dim + 1);
+    weights.push(1.0 - reference_point.iter().sum::<f64>());
+    weights.extend_from_slice(reference_point);
+    let mut grads = Vec::with_capacity(dim + 1);
+    grads.push(vec![-1.0; dim]);
+    for axis in 0..dim {
+        let mut grad = vec![0.0; dim];
+        grad[axis] = 1.0;
+        grads.push(grad);
+    }
+    Ok((weights, grads))
+}
+
+fn polygon_shape_functions(
+    vertex_count: usize,
+    reference_point: &[f64],
+) -> Result<(Vec<f64>, Vec<Vec<f64>>), MeshSieveError> {
+    if reference_point.len() != 2 {
+        return Err(MeshSieveError::InvalidGeometry(
+            "polygon reference point must have 2 components".into(),
+        ));
+    }
+    if vertex_count < 3 {
+        return Err(MeshSieveError::InvalidGeometry(format!(
+            "polygon requires at least 3 vertices, got {vertex_count}"
+        )));
+    }
+    let r = reference_point[0];
+    let s = reference_point[1];
+    let center_weight = 1.0 - r - s;
+    let mut weights = vec![center_weight / vertex_count as f64; vertex_count];
+    weights[0] += r;
+    weights[1] += s;
+    let mut grads =
+        vec![vec![-1.0 / vertex_count as f64, -1.0 / vertex_count as f64]; vertex_count];
+    grads[0][0] += 1.0;
+    grads[1][1] += 1.0;
+    Ok((weights, grads))
 }
 
 fn gather_vertices<S>(
@@ -571,6 +678,10 @@ fn unit_normal(a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> Result<[f64; 3], MeshSi
         return Err(MeshSieveError::InvalidGeometry("degenerate normal".into()));
     }
     Ok([n[0] / len, n[1] / len, n[2] / len])
+}
+
+fn add(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
 }
 
 fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
@@ -777,6 +888,43 @@ mod tests {
         ];
         let vol = cell_volume(CellType::Prism, &vertices).unwrap();
         assert!(approx(vol, 1.0));
+    }
+
+    #[test]
+    fn polygon_and_polyhedron_metrics_are_available() {
+        let pentagon = [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.5, 0.5, 0.0],
+            [0.5, 1.0, 0.0],
+            [-0.25, 0.5, 0.0],
+        ];
+        let area = cell_volume(CellType::Polygon(5), &pentagon).unwrap();
+        assert!(area > 0.0);
+        assert_eq!(
+            cell_normals(CellType::Polygon(5), &pentagon).unwrap().len(),
+            1
+        );
+        let mapped = reference_to_physical(CellType::Polygon(5), &pentagon, &[0.2, 0.3]).unwrap();
+        assert!(mapped[0].is_finite());
+        let jac = jacobian(CellType::Polygon(5), &pentagon, &[0.2, 0.3]).unwrap();
+        assert_eq!(jac.len(), 6);
+
+        let cube = [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 1.0],
+            [1.0, 1.0, 1.0],
+            [0.0, 1.0, 1.0],
+        ];
+        assert!(approx(
+            cell_volume(CellType::Polyhedron, &cube).unwrap(),
+            1.0
+        ));
+        assert_eq!(cell_normals(CellType::Polyhedron, &cube).unwrap().len(), 6);
     }
 
     #[test]

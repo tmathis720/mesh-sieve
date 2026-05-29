@@ -120,6 +120,56 @@ fn assert_roundtrip(mesh: &MeshData<MeshSieve, f64, VecStorage<f64>, VecStorage<
 }
 
 #[test]
+fn polytope_cell_types_roundtrip_through_petsc_hdf5_metadata() {
+    let mut sieve = MeshSieve::default();
+    let polygon = p(10);
+    let simplex4 = p(20);
+    for id in 1..=5 {
+        sieve.add_arrow_o(polygon, p(id), (), 0);
+    }
+    for id in 30..=34 {
+        sieve.add_arrow_o(simplex4, p(id), (), 0);
+    }
+
+    let mut cell_atlas = Atlas::default();
+    cell_atlas.try_insert(polygon, 1).unwrap();
+    cell_atlas.try_insert(simplex4, 1).unwrap();
+    let mut cell_types = Section::<CellType, VecStorage<CellType>>::new(cell_atlas);
+    cell_types
+        .try_set(polygon, &[CellType::Polygon(5)])
+        .unwrap();
+    cell_types
+        .try_set(simplex4, &[CellType::Simplex(4)])
+        .unwrap();
+
+    let mesh = MeshData {
+        sieve,
+        coordinates: None,
+        sections: BTreeMap::new(),
+        mixed_sections: Default::default(),
+        labels: None,
+        cell_types: Some(cell_types),
+        discretization: None,
+    };
+    let mut bytes = Vec::new();
+    PetscHdf5Writer::new("mesh", "dm")
+        .write(&mut bytes, &mesh)
+        .unwrap();
+    let reread = PetscHdf5Reader::new("mesh", "dm")
+        .read(bytes.as_slice())
+        .unwrap();
+    let reread_types = reread.cell_types.as_ref().unwrap();
+    assert_eq!(
+        reread_types.try_restrict(polygon).unwrap()[0],
+        CellType::Polygon(5)
+    );
+    assert_eq!(
+        reread_types.try_restrict(simplex4).unwrap()[0],
+        CellType::Simplex(4)
+    );
+}
+
+#[test]
 fn serial_fixture_roundtrips_and_exposes_dmplex_v3_paths() {
     let mesh = fixture_mesh(false);
     assert_roundtrip(&mesh);
