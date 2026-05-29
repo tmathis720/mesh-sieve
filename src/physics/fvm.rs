@@ -15,8 +15,11 @@
 
 use crate::data::section::Section;
 use crate::data::storage::Storage;
-use crate::discretization::runtime::{CellGeometry, FaceGeometry, FluxStencil};
+use crate::discretization::runtime::{
+    CellGeometry, FaceGeometry, FluxStencil, discretization_capability,
+};
 use crate::mesh_error::MeshSieveError;
+use crate::topology::cell_type::CellType;
 use crate::topology::coastal::{
     BOUNDARY_CLASS_LABEL, BOUNDARY_ROLE_LABEL, BoundaryClass, OpenBoundaryRole, WET_DRY_MASK_LABEL,
     WetDryMask,
@@ -25,6 +28,24 @@ use crate::topology::labels::LabelSet;
 use crate::topology::point::PointId;
 use crate::topology::sieve::Sieve;
 use std::collections::{HashMap, HashSet};
+
+/// Validate that a cell topology is part of the explicit PetscFV-style runtime matrix.
+pub fn validate_fv_cell_type(cell_type: CellType) -> Result<(), MeshSieveError> {
+    let supported = match cell_type {
+        CellType::Simplex(dim) => (1..=3).contains(&dim),
+        CellType::Polygon(_) | CellType::Polyhedron => true,
+        other => discretization_capability(other)
+            .map(|capability| capability.finite_volume)
+            .unwrap_or(false),
+    };
+    if supported {
+        Ok(())
+    } else {
+        Err(MeshSieveError::InvalidGeometry(format!(
+            "unsupported finite-volume cell topology {cell_type:?}"
+        )))
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FaceKind {
