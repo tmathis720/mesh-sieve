@@ -102,3 +102,148 @@ fn closure_preallocation_builds_csr_from_section_dofs() {
     assert_eq!(csr.xadj.len(), 5);
     assert!(csr.adjncy.len() >= 8);
 }
+
+#[test]
+fn explicit_discretization_matrix_covers_common_fe_fv_cells() {
+    use mesh_sieve::discretization::runtime::{
+        BasisFamily, QuadratureFamily, supported_discretizations,
+    };
+    use mesh_sieve::physics::fvm::validate_fv_cell_type;
+
+    let rows = supported_discretizations();
+    for cell in [
+        CellType::Segment,
+        CellType::Triangle,
+        CellType::Quadrilateral,
+        CellType::Tetrahedron,
+        CellType::Hexahedron,
+        CellType::Prism,
+        CellType::Pyramid,
+    ] {
+        let row = rows
+            .iter()
+            .find(|row| row.cell_type == cell)
+            .expect("capability row");
+        assert_eq!(row.dimension, cell.dimension() as usize);
+        assert!(row.finite_volume);
+        validate_fv_cell_type(cell).unwrap();
+    }
+
+    let triangle = rows
+        .iter()
+        .find(|row| row.cell_type == CellType::Triangle)
+        .unwrap();
+    assert!(triangle.basis_families.contains(&BasisFamily::Simplex));
+    assert!(
+        triangle
+            .quadrature_families
+            .contains(&QuadratureFamily::Simplex)
+    );
+
+    let hex = rows
+        .iter()
+        .find(|row| row.cell_type == CellType::Hexahedron)
+        .unwrap();
+    assert!(hex.basis_families.contains(&BasisFamily::TensorProduct));
+    assert!(
+        hex.quadrature_families
+            .contains(&QuadratureFamily::GaussLegendre)
+    );
+}
+
+#[test]
+fn unsupported_discretizations_are_policy_errors() {
+    use mesh_sieve::discretization::runtime::{BasisFamily, QuadratureRule};
+    use mesh_sieve::physics::fvm::validate_fv_cell_type;
+
+    let bad_basis =
+        Basis::lagrange_with_family(CellType::Quadrilateral, 2, BasisFamily::Simplex).unwrap_err();
+    assert!(format!("{bad_basis}").contains("unsupported Lagrange"));
+
+    let bad_quadrature =
+        QuadratureRule::from_metadata("newton_cotes2", CellType::Triangle).unwrap_err();
+    assert!(format!("{bad_quadrature}").contains("unsupported quadrature"));
+
+    let bad_fv = validate_fv_cell_type(CellType::Simplex(4)).unwrap_err();
+    assert!(format!("{bad_fv}").contains("unsupported finite-volume"));
+}
+
+#[test]
+fn high_order_coordinates_drive_quadratic_closure_assembly() {
+    use mesh_sieve::data::coordinates::{Coordinates, HighOrderCoordinates};
+    use mesh_sieve::physics::fe::assemble_element_matrices_from_closure;
+
+    let cell = p(10);
+    let vertices = [p(1), p(2), p(3)];
+    let mut sieve = InMemorySieve::<PointId, ()>::default();
+    for vertex in vertices {
+        sieve.add_arrow(cell, vertex, ());
+    }
+
+    let mut coord_atlas = Atlas::default();
+    for vertex in vertices {
+        coord_atlas.try_insert(vertex, 2).unwrap();
+    }
+    let mut coords = Coordinates::<f64, VecStorage<f64>>::try_new(2, 2, coord_atlas).unwrap();
+    coords.section_mut().try_set(p(1), &[0.0, 0.0]).unwrap();
+    coords.section_mut().try_set(p(2), &[1.0, 0.0]).unwrap();
+    coords.section_mut().try_set(p(3), &[0.0, 1.0]).unwrap();
+
+    let mut ho_atlas = Atlas::default();
+    ho_atlas.try_insert(cell, 12).unwrap();
+    let mut ho = HighOrderCoordinates::<f64, VecStorage<f64>>::try_new(2, ho_atlas).unwrap();
+    ho.section_mut()
+        .try_set(
+            cell,
+            &[
+                0.0, 0.0, // (0,0)
+                0.0, 0.5, // (0,1/2)
+                0.0, 1.0, // (0,1)
+                0.5, 0.0, // (1/2,0)
+                0.5, 0.5, // (1/2,1/2)
+                1.0, 0.0, // (1,0)
+            ],
+        )
+        .unwrap();
+    coords.set_high_order(ho).unwrap();
+
+    let metadata =
+        DiscretizationMetadata::new("lagrange", "gauss2").with_basis_metadata(2, [] as [&str; 0]);
+    let matrices = assemble_element_matrices_from_closure(
+        &sieve,
+        &coords,
+        CellType::Triangle,
+        cell,
+        0,
+        &ClosureOrder::BreadthFirstDmpLex,
+        &metadata,
+        |_| 1.0,
+    )
+    .unwrap();
+    assert_eq!(matrices.load.len(), 6);
+    assert_eq!(matrices.stiffness.len(), 36);
+}
+
+#[test]
+fn fv_stencils_are_deterministic_for_supported_cell_families() {
+    use mesh_sieve::discretization::runtime::supported_discretizations;
+    use mesh_sieve::physics::fvm::validate_fv_cell_type;
+
+    for (idx, row) in supported_discretizations()
+        .iter()
+        .filter(|row| row.finite_volume)
+        .enumerate()
+    {
+        validate_fv_cell_type(row.cell_type).unwrap();
+        let face = p(1000 + idx as u64);
+        let left = p(2000 + idx as u64 * 2);
+        let right = p(2001 + idx as u64 * 2);
+        let mut sieve = InMemorySieve::<PointId, ()>::default();
+        sieve.add_arrow(right, face, ());
+        sieve.add_arrow(left, face, ());
+        let stencils = flux_stencils(&sieve, [face]);
+        assert_eq!(stencils.len(), 1, "{:?}", row.cell_type);
+        assert_eq!(stencils[0].left, left, "{:?}", row.cell_type);
+        assert_eq!(stencils[0].right, Some(right), "{:?}", row.cell_type);
+    }
+}

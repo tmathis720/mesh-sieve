@@ -10,8 +10,8 @@ use crate::data::global_map::LocalToGlobalMap;
 use crate::data::section::Section;
 use crate::data::storage::Storage;
 use crate::discretization::runtime::{
-    Basis, BasisTabulation, QuadratureRule, local_load_vector, local_stiffness_matrix,
-    runtime_from_metadata, tabulate_element,
+    Basis, BasisTabulation, QuadratureRule, ensure_geometry_order_supported, local_load_vector,
+    local_stiffness_matrix, runtime_from_metadata, tabulate_element,
 };
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cell_type::CellType;
@@ -110,6 +110,34 @@ fn gather_node_coordinates<S: Storage<f64>>(
     Ok(node_coords)
 }
 
+fn closure_vertex_coordinates<T, S>(
+    topology: &T,
+    coordinates: &Coordinates<f64, S>,
+    cell: PointId,
+    topology_version: u64,
+    order: &ClosureOrder,
+) -> Result<Vec<Vec<f64>>, MeshSieveError>
+where
+    T: Sieve<Point = PointId>,
+    S: Storage<f64>,
+{
+    let index = build_closure_index_unoriented(
+        topology,
+        coordinates.section(),
+        cell,
+        topology_version,
+        order,
+        &IdentitySectionSym,
+    )?;
+    let mut cell_nodes = Vec::new();
+    for point in index.point_order() {
+        if topology.cone_points(point).next().is_none() {
+            cell_nodes.push(point);
+        }
+    }
+    gather_node_coordinates(coordinates, &cell_nodes)
+}
+
 /// Assemble element matrices using vertices selected from a DMPlex-style closure.
 ///
 /// This is the closure-aware counterpart to [`assemble_element_matrices`].  The
@@ -130,21 +158,38 @@ where
     S: Storage<f64>,
     F: Fn(&[f64]) -> f64,
 {
-    let index = build_closure_index_unoriented(
-        topology,
-        coordinates.section(),
-        cell,
-        topology_version,
-        order,
-        &IdentitySectionSym,
-    )?;
-    let mut cell_nodes = Vec::new();
-    for point in index.point_order() {
-        if topology.cone_points(point).next().is_none() {
-            cell_nodes.push(point);
+    let runtime = runtime_from_metadata(metadata, cell_type)?;
+    let node_coords = if let Some(high_order) = coordinates.high_order() {
+        if high_order.section().atlas().contains(cell) {
+            let values = high_order.section().try_restrict(cell)?;
+            let dim = high_order.dimension();
+            let geometry_nodes = values.len() / dim;
+            let geometry_order = metadata
+                .basis_order
+                .unwrap_or(runtime.basis.degree())
+                .max(1);
+            ensure_geometry_order_supported(cell_type, geometry_order)?;
+            if geometry_nodes == runtime.basis.num_nodes() {
+                values.chunks(dim).map(|tuple| tuple.to_vec()).collect()
+            } else {
+                return Err(MeshSieveError::InvalidGeometry(format!(
+                    "high-order coordinates for {cell:?} provide {geometry_nodes} nodes, but {:?} P{} requires {}",
+                    cell_type,
+                    runtime.basis.degree(),
+                    runtime.basis.num_nodes()
+                )));
+            }
+        } else {
+            closure_vertex_coordinates(topology, coordinates, cell, topology_version, order)?
         }
-    }
-    assemble_element_matrices(coordinates, cell_type, &cell_nodes, metadata, rhs)
+    } else {
+        closure_vertex_coordinates(topology, coordinates, cell, topology_version, order)?
+    };
+    let tabulation = tabulate_element(&runtime, &node_coords)?;
+    Ok(ElementMatrices {
+        stiffness: local_stiffness_matrix(&tabulation),
+        load: local_load_vector(&tabulation, rhs),
+    })
 }
 
 /// Orientation-aware FE closure data for element kernels.

@@ -44,6 +44,81 @@ pub enum BasisFamily {
     Pyramid,
 }
 
+/// Quadrature families accepted by the runtime capability matrix.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QuadratureFamily {
+    /// Single point/centroid rules.
+    Point,
+    /// Gauss-Legendre rules on tensor-product reference cells.
+    GaussLegendre,
+    /// Simplex rules on triangle/tetrahedron/simplex reference cells.
+    Simplex,
+    /// Tensor product of a simplex rule and a segment rule.
+    PrismProduct,
+    /// Pyramid reference rule.
+    Pyramid,
+    /// Polygon centroid/fan rule.
+    PolygonCentroid,
+    /// Generic polyhedron centroid rule.
+    PolyhedronCentroid,
+    /// Caller-provided points and weights.
+    Explicit,
+}
+
+/// One row in the supported PetscFE/PetscFV-equivalent discretization matrix.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DiscretizationCapability {
+    /// Canonical cell topology.
+    pub cell_type: CellType,
+    /// Topological dimension.
+    pub dimension: usize,
+    /// Lagrange node/basis families supported for this topology.
+    pub basis_families: &'static [BasisFamily],
+    /// Inclusive polynomial degree range supported by the runtime tabulator.
+    pub degree_range: (usize, usize),
+    /// Quadrature families supported for this topology.
+    pub quadrature_families: &'static [QuadratureFamily],
+    /// Inclusive coordinate geometry order range supported by element assembly.
+    pub geometry_order_range: (usize, usize),
+    /// Whether cell-centered FV stencils/geometry are supported.
+    pub finite_volume: bool,
+}
+
+impl DiscretizationCapability {
+    const fn new(
+        cell_type: CellType,
+        dimension: usize,
+        basis_families: &'static [BasisFamily],
+        degree_range: (usize, usize),
+        quadrature_families: &'static [QuadratureFamily],
+        geometry_order_range: (usize, usize),
+        finite_volume: bool,
+    ) -> Self {
+        Self {
+            cell_type,
+            dimension,
+            basis_families,
+            degree_range,
+            quadrature_families,
+            geometry_order_range,
+            finite_volume,
+        }
+    }
+
+    fn supports_basis(self, family: BasisFamily, degree: usize) -> bool {
+        self.basis_families.contains(&family)
+            && (self.degree_range.0..=self.degree_range.1).contains(&degree)
+    }
+
+    fn supports_quadrature(self, family: QuadratureFamily) -> bool {
+        self.quadrature_families.contains(&family)
+    }
+
+    fn supports_geometry_order(self, order: usize) -> bool {
+        (self.geometry_order_range.0..=self.geometry_order_range.1).contains(&order)
+    }
+}
+
 impl Basis {
     /// Resolve a basis implementation from a metadata label and cell type.
     pub fn from_metadata(name: &str, cell_type: CellType) -> Result<Self, MeshSieveError> {
@@ -183,11 +258,18 @@ impl QuadratureRule {
     /// Construct a quadrature rule from a metadata label and cell type.
     pub fn from_metadata(name: &str, cell_type: CellType) -> Result<Self, MeshSieveError> {
         let normalized = normalize_name(name);
+        let family = quadrature_family_from_name(&normalized, cell_type)?;
+        ensure_quadrature_supported(cell_type, family)?;
         let order =
             parse_trailing_degree(&normalized).unwrap_or_else(|| match normalized.as_str() {
                 "midpoint" | "centroid" => 1,
                 _ => 2,
             });
+        if order > MAX_RUNTIME_ORDER {
+            return Err(MeshSieveError::InvalidGeometry(format!(
+                "unsupported quadrature order {order} for {cell_type:?}; maximum supported order is {MAX_RUNTIME_ORDER}"
+            )));
+        }
         match canonical_cell_type(cell_type) {
             CellType::Vertex => Ok(point_quadrature(name)),
             CellType::Segment => Ok(gauss_legendre_1d(order.min(3), name)),
@@ -245,6 +327,7 @@ pub fn runtime_from_metadata(
 ) -> Result<ElementRuntime, MeshSieveError> {
     let basis = Basis::from_metadata_with_order(metadata, cell_type)?;
     let quadrature = if metadata.has_quadrature_data() {
+        ensure_quadrature_supported(cell_type, QuadratureFamily::Explicit)?;
         QuadratureRule::from_explicit(
             metadata.quadrature.clone(),
             metadata.quadrature_points.clone(),
@@ -253,6 +336,13 @@ pub fn runtime_from_metadata(
     } else {
         QuadratureRule::from_metadata(&metadata.quadrature, cell_type)?
     };
+    if quadrature.dimension() != basis.dimension() {
+        return Err(MeshSieveError::InvalidGeometry(format!(
+            "quadrature dimension {} does not match basis dimension {} for {cell_type:?}",
+            quadrature.dimension(),
+            basis.dimension()
+        )));
+    }
     Ok(ElementRuntime { basis, quadrature })
 }
 
@@ -829,55 +919,117 @@ fn parse_trailing_degree(name: &str) -> Option<usize> {
     (!digits.is_empty()).then(|| digits.parse().ok()).flatten()
 }
 
-/// Runtime finite-element support policy.
+/// Runtime finite-element/FV support policy.
 ///
-/// The table below is the single source of truth for combinations implemented by
-/// this module. Unsupported entries are intentionally rejected before node,
-/// quadrature, or Jacobian code is reached.
-///
-/// | Cell topology | Lagrange families | Quadrature | Jacobian |
-/// | --- | --- | --- | --- |
-/// | `Vertex`, `Simplex(0)` | `Simplex`, `TensorProduct` | point rule | 0D |
-/// | `Segment`, `Simplex(1)` | `Simplex`, `TensorProduct` | Gauss-Legendre | 1D |
-/// | `Triangle`, `Simplex(2)` | `Simplex` | simplex triangle | 2D |
-/// | `Quadrilateral` | `TensorProduct` | tensor-product Gauss | 2D |
-/// | `Tetrahedron`, `Simplex(3)` | `Simplex` | simplex tetrahedron | 3D |
-/// | `Simplex(d)` | `Simplex` | centroid/simplex rule | dD |
-/// | `Polygon(n)` | `TensorProduct` | centroid fan rule | 2D |
-/// | `Polyhedron` | `TensorProduct` | centroid rule | 3D |
-/// | `Hexahedron` | `TensorProduct` | tensor-product Gauss | 3D |
-/// | `Prism` | `Prism` | triangle × segment product | 3D |
-/// | `Pyramid` | `Pyramid` | one-point pyramid rule | 3D |
-const RUNTIME_CAPABILITIES: &[RuntimeCapability] = &[
-    RuntimeCapability::new(
+/// This table is the single source of truth for combinations implemented by
+/// this module. Unsupported entries are rejected as policy errors before node,
+/// quadrature, Jacobian, or stencil code is reached. The degree and geometry
+/// order limits are intentionally finite because the current runtime tabulator
+/// builds dense interpolation matrices and the built-in quadrature rules are
+/// only intended for common low-order PetscFE/PetscFV setup paths.
+const MAX_RUNTIME_ORDER: usize = 4;
+
+const SIMPLEX_FAMILIES: &[BasisFamily] = &[BasisFamily::Simplex];
+const SEGMENT_FAMILIES: &[BasisFamily] = &[BasisFamily::Simplex, BasisFamily::TensorProduct];
+const TENSOR_FAMILIES: &[BasisFamily] = &[BasisFamily::TensorProduct];
+const PRISM_FAMILIES: &[BasisFamily] = &[BasisFamily::Prism];
+const PYRAMID_FAMILIES: &[BasisFamily] = &[BasisFamily::Pyramid];
+const POINT_FAMILIES: &[BasisFamily] = &[BasisFamily::Simplex, BasisFamily::TensorProduct];
+
+const POINT_QUADRATURE: &[QuadratureFamily] =
+    &[QuadratureFamily::Point, QuadratureFamily::Explicit];
+const GAUSS_QUADRATURE: &[QuadratureFamily] =
+    &[QuadratureFamily::GaussLegendre, QuadratureFamily::Explicit];
+const SIMPLEX_QUADRATURE: &[QuadratureFamily] =
+    &[QuadratureFamily::Simplex, QuadratureFamily::Explicit];
+const PRISM_QUADRATURE: &[QuadratureFamily] =
+    &[QuadratureFamily::PrismProduct, QuadratureFamily::Explicit];
+const PYRAMID_QUADRATURE: &[QuadratureFamily] =
+    &[QuadratureFamily::Pyramid, QuadratureFamily::Explicit];
+
+const RUNTIME_CAPABILITIES: &[DiscretizationCapability] = &[
+    DiscretizationCapability::new(
         CellType::Vertex,
-        &[BasisFamily::Simplex, BasisFamily::TensorProduct],
+        0,
+        POINT_FAMILIES,
+        (0, MAX_RUNTIME_ORDER),
+        POINT_QUADRATURE,
+        (1, 1),
+        false,
     ),
-    RuntimeCapability::new(
+    DiscretizationCapability::new(
         CellType::Segment,
-        &[BasisFamily::Simplex, BasisFamily::TensorProduct],
+        1,
+        SEGMENT_FAMILIES,
+        (1, MAX_RUNTIME_ORDER),
+        GAUSS_QUADRATURE,
+        (1, MAX_RUNTIME_ORDER),
+        true,
     ),
-    RuntimeCapability::new(CellType::Triangle, &[BasisFamily::Simplex]),
-    RuntimeCapability::new(CellType::Quadrilateral, &[BasisFamily::TensorProduct]),
-    RuntimeCapability::new(CellType::Tetrahedron, &[BasisFamily::Simplex]),
-    RuntimeCapability::new(CellType::Hexahedron, &[BasisFamily::TensorProduct]),
-    RuntimeCapability::new(CellType::Prism, &[BasisFamily::Prism]),
-    RuntimeCapability::new(CellType::Pyramid, &[BasisFamily::Pyramid]),
+    DiscretizationCapability::new(
+        CellType::Triangle,
+        2,
+        SIMPLEX_FAMILIES,
+        (1, MAX_RUNTIME_ORDER),
+        SIMPLEX_QUADRATURE,
+        (1, MAX_RUNTIME_ORDER),
+        true,
+    ),
+    DiscretizationCapability::new(
+        CellType::Quadrilateral,
+        2,
+        TENSOR_FAMILIES,
+        (1, MAX_RUNTIME_ORDER),
+        GAUSS_QUADRATURE,
+        (1, MAX_RUNTIME_ORDER),
+        true,
+    ),
+    DiscretizationCapability::new(
+        CellType::Tetrahedron,
+        3,
+        SIMPLEX_FAMILIES,
+        (1, MAX_RUNTIME_ORDER),
+        SIMPLEX_QUADRATURE,
+        (1, MAX_RUNTIME_ORDER),
+        true,
+    ),
+    DiscretizationCapability::new(
+        CellType::Hexahedron,
+        3,
+        TENSOR_FAMILIES,
+        (1, MAX_RUNTIME_ORDER),
+        GAUSS_QUADRATURE,
+        (1, MAX_RUNTIME_ORDER),
+        true,
+    ),
+    DiscretizationCapability::new(
+        CellType::Prism,
+        3,
+        PRISM_FAMILIES,
+        (1, MAX_RUNTIME_ORDER),
+        PRISM_QUADRATURE,
+        (1, MAX_RUNTIME_ORDER),
+        true,
+    ),
+    DiscretizationCapability::new(
+        CellType::Pyramid,
+        3,
+        PYRAMID_FAMILIES,
+        (1, MAX_RUNTIME_ORDER),
+        PYRAMID_QUADRATURE,
+        (1, MAX_RUNTIME_ORDER),
+        true,
+    ),
 ];
 
-#[derive(Clone, Copy, Debug)]
-struct RuntimeCapability {
-    cell_type: CellType,
-    families: &'static [BasisFamily],
+/// Return the explicit runtime capability row for a cell type, when one exists.
+pub fn discretization_capability(cell_type: CellType) -> Option<DiscretizationCapability> {
+    capability_for(cell_type).copied()
 }
 
-impl RuntimeCapability {
-    const fn new(cell_type: CellType, families: &'static [BasisFamily]) -> Self {
-        Self {
-            cell_type,
-            families,
-        }
-    }
+/// Iterate over the static supported-discretization matrix.
+pub fn supported_discretizations() -> &'static [DiscretizationCapability] {
+    RUNTIME_CAPABILITIES
 }
 
 fn canonical_cell_type(cell_type: CellType) -> CellType {
@@ -899,11 +1051,124 @@ fn is_dynamic_lagrange_supported(cell_type: CellType, family: BasisFamily) -> bo
     )
 }
 
-fn capability_for(cell_type: CellType) -> Option<&'static RuntimeCapability> {
+fn capability_for(cell_type: CellType) -> Option<&'static DiscretizationCapability> {
     let canonical = canonical_cell_type(cell_type);
     RUNTIME_CAPABILITIES
         .iter()
         .find(|capability| capability.cell_type == canonical)
+}
+
+fn quadrature_family_from_name(
+    normalized: &str,
+    cell_type: CellType,
+) -> Result<QuadratureFamily, MeshSieveError> {
+    if normalized.contains("explicit") || normalized.contains("custom") {
+        return Ok(QuadratureFamily::Explicit);
+    }
+    let canonical = canonical_cell_type(cell_type);
+    match canonical {
+        CellType::Vertex => Ok(QuadratureFamily::Point),
+        CellType::Segment | CellType::Quadrilateral | CellType::Hexahedron => {
+            if normalized.contains("gauss")
+                || normalized.contains("legendre")
+                || normalized.contains("gll")
+                || normalized.contains("lobatto")
+                || normalized.contains("tensor")
+            {
+                Ok(QuadratureFamily::GaussLegendre)
+            } else {
+                Err(MeshSieveError::InvalidGeometry(format!(
+                    "unsupported quadrature '{normalized}' for {cell_type:?}; expected a Gauss/tensor-product rule"
+                )))
+            }
+        }
+        CellType::Triangle | CellType::Tetrahedron | CellType::Simplex(_) => {
+            if normalized.contains("gauss")
+                || normalized.contains("simplex")
+                || normalized.contains("centroid")
+                || normalized.contains("midpoint")
+            {
+                Ok(QuadratureFamily::Simplex)
+            } else {
+                Err(MeshSieveError::InvalidGeometry(format!(
+                    "unsupported quadrature '{normalized}' for {cell_type:?}; expected a simplex rule"
+                )))
+            }
+        }
+        CellType::Prism => Ok(QuadratureFamily::PrismProduct),
+        CellType::Pyramid => Ok(QuadratureFamily::Pyramid),
+        CellType::Polygon(_) => Ok(QuadratureFamily::PolygonCentroid),
+        CellType::Polyhedron => Ok(QuadratureFamily::PolyhedronCentroid),
+    }
+}
+
+fn ensure_quadrature_supported(
+    cell_type: CellType,
+    family: QuadratureFamily,
+) -> Result<(), MeshSieveError> {
+    if matches!(cell_type, CellType::Simplex(_))
+        && matches!(
+            family,
+            QuadratureFamily::Simplex | QuadratureFamily::Explicit
+        )
+    {
+        return Ok(());
+    }
+    if matches!(cell_type, CellType::Polygon(_))
+        && matches!(
+            family,
+            QuadratureFamily::PolygonCentroid | QuadratureFamily::Explicit
+        )
+    {
+        return Ok(());
+    }
+    if matches!(cell_type, CellType::Polyhedron)
+        && matches!(
+            family,
+            QuadratureFamily::PolyhedronCentroid | QuadratureFamily::Explicit
+        )
+    {
+        return Ok(());
+    }
+    let capability = capability_for(cell_type).ok_or_else(|| {
+        MeshSieveError::InvalidGeometry(format!(
+            "unsupported cell type {cell_type:?} for quadrature"
+        ))
+    })?;
+    if !capability.supports_quadrature(family) {
+        return Err(MeshSieveError::InvalidGeometry(format!(
+            "unsupported quadrature family {family:?} for {cell_type:?}; supported families: {:?}",
+            capability.quadrature_families
+        )));
+    }
+    Ok(())
+}
+
+/// Validate a coordinate geometry order against the explicit support matrix.
+pub fn ensure_geometry_order_supported(
+    cell_type: CellType,
+    geometry_order: usize,
+) -> Result<(), MeshSieveError> {
+    if matches!(
+        cell_type,
+        CellType::Simplex(_) | CellType::Polygon(_) | CellType::Polyhedron
+    ) {
+        if (1..=MAX_RUNTIME_ORDER).contains(&geometry_order) {
+            return Ok(());
+        }
+    }
+    let capability = capability_for(cell_type).ok_or_else(|| {
+        MeshSieveError::InvalidGeometry(format!(
+            "unsupported cell type {cell_type:?} for geometry order {geometry_order}"
+        ))
+    })?;
+    if !capability.supports_geometry_order(geometry_order) {
+        return Err(MeshSieveError::InvalidGeometry(format!(
+            "unsupported geometry order {geometry_order} for {cell_type:?}; supported range: {:?}",
+            capability.geometry_order_range
+        )));
+    }
+    Ok(())
 }
 
 fn default_lagrange_family(cell_type: CellType) -> Result<BasisFamily, MeshSieveError> {
@@ -914,7 +1179,7 @@ fn default_lagrange_family(cell_type: CellType) -> Result<BasisFamily, MeshSieve
         return Ok(BasisFamily::TensorProduct);
     }
     capability_for(cell_type)
-        .and_then(|capability| capability.families.first().copied())
+        .and_then(|capability| capability.basis_families.first().copied())
         .ok_or_else(|| {
             MeshSieveError::InvalidGeometry(format!(
                 "unsupported cell type {cell_type:?} for Lagrange basis"
@@ -933,17 +1198,22 @@ fn ensure_lagrange_supported(
         ));
     }
     if is_dynamic_lagrange_supported(cell_type, family) {
-        return Ok(());
+        if degree <= MAX_RUNTIME_ORDER {
+            return Ok(());
+        }
+        return Err(MeshSieveError::InvalidGeometry(format!(
+            "unsupported Lagrange degree {degree} for {cell_type:?}; maximum supported degree is {MAX_RUNTIME_ORDER}"
+        )));
     }
     let capability = capability_for(cell_type).ok_or_else(|| {
         MeshSieveError::InvalidGeometry(format!(
             "unsupported cell type {cell_type:?} for Lagrange basis"
         ))
     })?;
-    if !capability.families.contains(&family) {
+    if !capability.supports_basis(family, degree) {
         return Err(MeshSieveError::InvalidGeometry(format!(
-            "unsupported Lagrange family {family:?} for {cell_type:?}; supported families: {:?}",
-            capability.families
+            "unsupported Lagrange family/degree {family:?}/P{degree} for {cell_type:?}; supported families: {:?}, degree range: {:?}",
+            capability.basis_families, capability.degree_range
         )));
     }
     Ok(())
@@ -1700,7 +1970,7 @@ mod tests {
     fn capability_supports(cell_type: CellType, family: BasisFamily) -> bool {
         is_dynamic_lagrange_supported(cell_type, family)
             || capability_for(cell_type)
-                .map(|capability| capability.families.contains(&family))
+                .map(|capability| capability.basis_families.contains(&family))
                 .unwrap_or(false)
     }
 
@@ -1721,7 +1991,7 @@ mod tests {
     #[test]
     fn supported_basis_quadrature_and_node_layouts_tabulate() {
         for capability in RUNTIME_CAPABILITIES {
-            for &family in capability.families {
+            for &family in capability.basis_families {
                 for degree in 1..=2 {
                     let basis =
                         Basis::lagrange_with_family(capability.cell_type, degree, family).unwrap();
