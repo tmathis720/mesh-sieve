@@ -192,8 +192,8 @@ pub fn validate_coastal_metadata(
         });
     }
 
-    if options.require_complete_boundary_partition {
-        if let Some(expected) = expected_boundary_points {
+    if options.require_complete_boundary_partition
+        && let Some(expected) = expected_boundary_points {
             let expected: BTreeSet<_> = expected.iter().copied().collect();
             let mut labeled = BTreeSet::new();
             labeled.extend(fs.iter().copied());
@@ -210,7 +210,6 @@ pub fn validate_coastal_metadata(
                 return Err(CoastalMetadataError::UnexpectedBoundaryClass { points: extra });
             }
         }
-    }
 
     let inflow: BTreeSet<_> = labels.inflow_points().into_iter().collect();
     let outflow: BTreeSet<_> = labels.outflow_points().into_iter().collect();
@@ -237,8 +236,8 @@ pub fn validate_coastal_metadata(
         });
     }
 
-    if options.require_complete_vertical_coverage {
-        if let Some(expected) = expected_vertical_points {
+    if options.require_complete_vertical_coverage
+        && let Some(expected) = expected_vertical_points {
             let expected: BTreeSet<_> = expected.iter().copied().collect();
             let labeled: BTreeSet<_> = labels
                 .iter()
@@ -249,7 +248,6 @@ pub fn validate_coastal_metadata(
                 return Err(CoastalMetadataError::MissingVerticalLayer { points: missing });
             }
         }
-    }
 
     Ok(())
 }

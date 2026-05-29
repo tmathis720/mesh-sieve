@@ -291,11 +291,10 @@ where
                 overlap.validate_invariants()?;
                 if let Some(ownership) = self.ownership_ref {
                     for src in overlap.base_points() {
-                        if let Some(point) = src.as_local() {
-                            if ownership.entry(point).is_none() {
+                        if let Some(point) = src.as_local()
+                            && ownership.entry(point).is_none() {
                                 return Err(MeshSieveError::OverlapPointMissingOwnership { point });
                             }
-                        }
                     }
                 }
             }

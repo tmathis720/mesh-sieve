@@ -148,8 +148,7 @@ where
     fn permutation(&self, point: PointId, orientation: O, _dof_count: usize) -> Option<Vec<usize>> {
         self.by_point_orientation
             .get(&(point, orientation))
-            .or_else(|| self.by_orientation.get(&orientation))
-            .map(|perm| perm.clone())
+            .or_else(|| self.by_orientation.get(&orientation)).cloned()
     }
 }
 
@@ -207,9 +206,9 @@ where
             section_version: section.atlas().version(),
             topology_version,
         };
-        if !self.entries.contains_key(&key) {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.entries.entry(key) {
             let index = build_closure_index(topology, section, cell, topology_version, order, sym)?;
-            self.entries.insert(key, index);
+            e.insert(index);
         }
         Ok(self.entries.get(&key).expect("inserted or present"))
     }
@@ -236,7 +235,7 @@ impl ClosureIndexCache<()> {
             section_version: section.atlas().version(),
             topology_version,
         };
-        if !self.entries.contains_key(&key) {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.entries.entry(key) {
             let index = build_closure_index_unoriented(
                 topology,
                 section,
@@ -245,7 +244,7 @@ impl ClosureIndexCache<()> {
                 order,
                 sym,
             )?;
-            self.entries.insert(key, index);
+            e.insert(index);
         }
         Ok(self.entries.get(&key).expect("inserted or present"))
     }

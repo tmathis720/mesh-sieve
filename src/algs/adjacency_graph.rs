@@ -153,7 +153,7 @@ where
     S: Sieve<Point = PointId>,
 {
     let strata = compute_strata(sieve)?;
-    let cells = strata.strata.get(0).cloned().unwrap_or_default();
+    let cells = strata.strata.first().cloned().unwrap_or_default();
     Ok(build_cell_adjacency_graph_with_cells(sieve, cells, opts))
 }
 

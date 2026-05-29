@@ -79,6 +79,12 @@ pub type QuadForest = Forest<2>;
 /// An octree forest (`D = 3`).
 pub type OctForest = Forest<3>;
 
+impl<const D: usize> Default for Forest<D> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<const D: usize> Forest<D> {
     /// Create a new forest with a single root cell.
     pub fn new() -> Self {

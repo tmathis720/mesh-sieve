@@ -78,8 +78,8 @@ where
         }
         let cell_type = cell_slice[0];
 
-        if options.check_cone_sizes {
-            if let Some(expected) = expected_cone_size(cell_type) {
+        if options.check_cone_sizes
+            && let Some(expected) = expected_cone_size(cell_type) {
                 let found = sieve.cone_points(cell).count();
                 if found != expected {
                     return Err(MeshSieveError::ConeSizeMismatch {
@@ -90,10 +90,9 @@ where
                     });
                 }
             }
-        }
 
-        if options.check_closure_consistency {
-            if let Some(expected) = expected_cone_size(cell_type) {
+        if options.check_closure_consistency
+            && let Some(expected) = expected_cone_size(cell_type) {
                 let found = closure_vertex_count(sieve, cell);
                 if found != expected {
                     return Err(MeshSieveError::ClosureVertexCountMismatch {
@@ -104,7 +103,6 @@ where
                     });
                 }
             }
-        }
     }
 
     validate_non_manifold(sieve, options.non_manifold)?;

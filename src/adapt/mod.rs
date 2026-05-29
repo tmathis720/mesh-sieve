@@ -178,6 +178,7 @@ impl MetricTensor {
 /// field before selection/refinement and can later be passed unchanged to
 /// external remeshers that implement equivalent options.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Default)]
 pub struct MetricNormalizationControls {
     /// Desired global metric complexity. Values > 0 rescale metric magnitudes.
     pub target_complexity: Option<f64>,
@@ -195,19 +196,6 @@ pub struct MetricNormalizationControls {
     pub max_magnitude: Option<f64>,
 }
 
-impl Default for MetricNormalizationControls {
-    fn default() -> Self {
-        Self {
-            target_complexity: None,
-            gradation: None,
-            hausdorff_number: None,
-            min_anisotropy: None,
-            max_anisotropy: None,
-            min_magnitude: None,
-            max_magnitude: None,
-        }
-    }
-}
 
 impl MetricNormalizationControls {
     /// Returns true when no normalization or backend policy controls are set.
@@ -827,8 +815,7 @@ where
     if let Some(gradation) = controls
         .gradation
         .filter(|value| value.is_finite() && *value >= 1.0)
-    {
-        if !tensors.is_empty() {
+        && !tensors.is_empty() {
             let min_mag = tensors
                 .iter()
                 .map(|(_, tensor)| metric_magnitude_proxy(*tensor))
@@ -844,7 +831,6 @@ where
                 }
             }
         }
-    }
 
     let mut atlas = Atlas::default();
     for (point, _) in &tensors {
@@ -903,8 +889,7 @@ fn clamp_metric_tensor(tensor: &mut MetricTensor, controls: MetricNormalizationC
             if let Some(max_aniso) = controls
                 .max_anisotropy
                 .filter(|value| value.is_finite() && *value >= 1.0)
-            {
-                if max_diag / min_diag > max_aniso {
+                && max_diag / min_diag > max_aniso {
                     let floor = max_diag / max_aniso;
                     for i in 0..dim {
                         if tensor.data[i].abs() < floor {
@@ -912,12 +897,10 @@ fn clamp_metric_tensor(tensor: &mut MetricTensor, controls: MetricNormalizationC
                         }
                     }
                 }
-            }
             if let Some(min_aniso) = controls
                 .min_anisotropy
                 .filter(|value| value.is_finite() && *value >= 1.0)
-            {
-                if max_diag / min_diag < min_aniso {
+                && max_diag / min_diag < min_aniso {
                     let ceiling = min_diag * min_aniso;
                     let max_idx = (0..dim)
                         .max_by(|a, b| {
@@ -929,7 +912,6 @@ fn clamp_metric_tensor(tensor: &mut MetricTensor, controls: MetricNormalizationC
                         .unwrap();
                     tensor.data[max_idx] = ceiling.copysign(tensor.data[max_idx]);
                 }
-            }
         }
     }
 }

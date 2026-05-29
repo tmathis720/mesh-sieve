@@ -252,7 +252,7 @@ fn reserve_tag_range(n: u16) -> Result<CommTag, MeshSieveError> {
 }
 
 fn encode_u64_le(values: &[u64]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(values.len() * core::mem::size_of::<u64>());
+    let mut out = Vec::with_capacity(std::mem::size_of_val(values));
     for value in values {
         out.extend_from_slice(&value.to_le_bytes());
     }
@@ -260,7 +260,7 @@ fn encode_u64_le(values: &[u64]) -> Vec<u8> {
 }
 
 fn decode_u64_le(bytes: &[u8], out: &mut [u64]) {
-    debug_assert_eq!(bytes.len(), out.len() * core::mem::size_of::<u64>());
+    debug_assert_eq!(bytes.len(), std::mem::size_of_val(out));
     for (chunk, slot) in bytes
         .chunks_exact(core::mem::size_of::<u64>())
         .zip(out.iter_mut())
@@ -272,7 +272,7 @@ fn decode_u64_le(bytes: &[u8], out: &mut [u64]) {
 }
 
 fn add_u64_le(bytes: &[u8], accum: &mut [u64]) {
-    debug_assert_eq!(bytes.len(), accum.len() * core::mem::size_of::<u64>());
+    debug_assert_eq!(bytes.len(), std::mem::size_of_val(accum));
     for (chunk, slot) in bytes
         .chunks_exact(core::mem::size_of::<u64>())
         .zip(accum.iter_mut())

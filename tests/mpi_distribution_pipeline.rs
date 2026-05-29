@@ -8,6 +8,7 @@ use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::section::Section;
 use mesh_sieve::data::storage::VecStorage;
 use mesh_sieve::io::MeshData;
+use mesh_sieve::topology::MeshSieve;
 use mesh_sieve::topology::Sieve;
 use mesh_sieve::topology::cell_type::CellType;
 use mesh_sieve::topology::point::PointId;

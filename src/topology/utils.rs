@@ -53,13 +53,11 @@ where
     S: Sieve<Point = PointId>,
     CtSt: Storage<CellType>,
 {
-    if let Some(cell_types) = cell_types {
-        if let Ok(slice) = cell_types.try_restrict(point) {
-            if let Some(cell_type) = slice.first() {
+    if let Some(cell_types) = cell_types
+        && let Ok(slice) = cell_types.try_restrict(point)
+            && let Some(cell_type) = slice.first() {
                 return Ok(u32::from(cell_type.dimension()));
             }
-        }
-    }
     dim_of_point(s, point)
 }
 

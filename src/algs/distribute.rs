@@ -822,11 +822,10 @@ fn ensure_periodic_remote_links(overlap: &mut Overlap) -> Result<(), MeshSieveEr
     let mut extras: Vec<(PointId, usize)> = Vec::new();
     for nbr in overlap.neighbor_ranks() {
         for (local, remote) in overlap.links_to(nbr) {
-            if let Some(remote_point) = remote {
-                if remote_point != local {
+            if let Some(remote_point) = remote
+                && remote_point != local {
                     extras.push((remote_point, nbr));
                 }
-            }
         }
     }
     extras.sort_unstable();
@@ -1042,16 +1041,15 @@ where
         match h.wait() {
             Some(raw) if raw.len() == buf.len() => {
                 buf.copy_from_slice(&raw);
-                if let Err(err) = decode_label_payload(&buf, nbr).and_then(|entries| {
+                if let Err(err) = decode_label_payload(&buf, nbr).map(|entries| {
                     for (point, name, value) in entries {
                         labels.set_label(point, &name, value);
                     }
-                    Ok(())
-                }) {
-                    if maybe_err.is_none() {
+                    
+                })
+                    && maybe_err.is_none() {
                         maybe_err = Some(err);
                     }
-                }
             }
             Some(raw) if maybe_err.is_none() => {
                 maybe_err = Some(MeshSieveError::CommError {

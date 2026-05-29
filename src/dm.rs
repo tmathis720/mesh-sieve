@@ -625,21 +625,19 @@ where
                     MeshDMTransferStrategy::PreserveLabels
                         | MeshDMTransferStrategy::PreserveCoordinatesAndLabels
                         | MeshDMTransferStrategy::PreserveAll
-                ) {
-                    if let Some(labels) = self.mesh_data.labels.as_ref() {
+                )
+                    && let Some(labels) = self.mesh_data.labels.as_ref() {
                         self.mesh_data.labels =
                             Some(transfer_labels_refinement(labels, &mesh.cell_refinement));
                     }
-                }
                 if matches!(
                     strategy,
                     MeshDMTransferStrategy::PreserveCoordinatesAndLabels
                         | MeshDMTransferStrategy::PreserveAll
-                ) {
-                    if let Some(coords) = mesh.coordinates.clone() {
+                )
+                    && let Some(coords) = mesh.coordinates.clone() {
                         self.mesh_data.coordinates = Some(convert_coordinates_storage(coords)?);
                     }
-                }
                 if matches!(strategy, MeshDMTransferStrategy::PreserveAll) {
                     if let Some(cell_types) = self.mesh_data.cell_types.as_ref() {
                         self.mesh_data.cell_types = Some(convert_cell_type_section_storage(
@@ -716,7 +714,7 @@ where
             let faces = face_metrics.iter().map(|m| m.face);
             let loops = crate::physics::fvm::classify_face_loops(&self.mesh_data.sieve, faces)?;
             let mut packed = crate::physics::fvm::FvmInputs::new(
-                loops.internal.into_iter().chain(loops.boundary.into_iter()),
+                loops.internal.into_iter().chain(loops.boundary),
                 Vec::new(),
                 Vec::new(),
             );
@@ -834,14 +832,13 @@ where
             let mut accum = vec![0.0; first.len()];
             let mut count = 0.0;
             for (old, _) in old_points {
-                if let Ok(slice) = section.try_restrict(*old) {
-                    if slice.len() == accum.len() {
+                if let Ok(slice) = section.try_restrict(*old)
+                    && slice.len() == accum.len() {
                         for (a, v) in accum.iter_mut().zip(slice) {
                             *a += *v;
                         }
                         count += 1.0;
                     }
-                }
             }
             if count > 0.0 {
                 for a in &mut accum {
@@ -1640,13 +1637,12 @@ where
         point_dofs: &[(PointId, usize)],
         constraints: &[LabelConstraintSpec],
     ) -> Result<ConstrainedSection<V, St>, MeshSieveError> {
-        if let Some(discretization) = self.discretization() {
-            if discretization.field(field_name).is_none() {
+        if let Some(discretization) = self.discretization()
+            && discretization.field(field_name).is_none() {
                 return Err(MeshSieveError::MissingSectionName {
                     name: field_name.to_string(),
                 });
             }
-        }
         let labels = self
             .labels()
             .ok_or_else(|| MeshSieveError::MissingSectionName {

@@ -27,14 +27,13 @@ const EPS: f64 = 1e-12;
 /// For 2D cells embedded in 3D, the returned area is the magnitude of the
 /// area vector (unsigned).
 pub fn cell_volume(cell_type: CellType, vertices: &[[f64; 3]]) -> Result<f64, MeshSieveError> {
-    if let Some(expected) = expected_vertex_count(cell_type) {
-        if vertices.len() != expected {
+    if let Some(expected) = expected_vertex_count(cell_type)
+        && vertices.len() != expected {
             return Err(MeshSieveError::InvalidGeometry(format!(
                 "vertex count mismatch: expected {expected}, got {}",
                 vertices.len()
             )));
         }
-    }
     match cell_type {
         CellType::Vertex => Ok(0.0),
         CellType::Segment => Ok(norm(sub(vertices[1], vertices[0]))),
@@ -97,14 +96,13 @@ pub fn cell_normals(
     cell_type: CellType,
     vertices: &[[f64; 3]],
 ) -> Result<Vec<[f64; 3]>, MeshSieveError> {
-    if let Some(expected) = expected_vertex_count(cell_type) {
-        if vertices.len() != expected {
+    if let Some(expected) = expected_vertex_count(cell_type)
+        && vertices.len() != expected {
             return Err(MeshSieveError::InvalidGeometry(format!(
                 "vertex count mismatch: expected {expected}, got {}",
                 vertices.len()
             )));
         }
-    }
     match cell_type {
         CellType::Triangle => Ok(vec![unit_normal(vertices[0], vertices[1], vertices[2])?]),
         CellType::Quadrilateral => Ok(vec![unit_normal(vertices[0], vertices[1], vertices[2])?]),
@@ -199,12 +197,12 @@ pub fn jacobian(
             vertices.len()
         )));
     }
-    let dim = grads.get(0).map(|g| g.len()).unwrap_or(0);
+    let dim = grads.first().map(|g| g.len()).unwrap_or(0);
     let mut out = vec![0.0; 3 * dim];
     for (vertex, grad) in vertices.iter().zip(grads.iter()) {
         for ref_dim in 0..dim {
             out[0 * dim + ref_dim] += vertex[0] * grad[ref_dim];
-            out[1 * dim + ref_dim] += vertex[1] * grad[ref_dim];
+            out[dim + ref_dim] += vertex[1] * grad[ref_dim];
             out[2 * dim + ref_dim] += vertex[2] * grad[ref_dim];
         }
     }
@@ -242,7 +240,7 @@ pub fn push_forward_vector(
     let mut out = [0.0; 3];
     for ref_dim in 0..dim {
         out[0] += jac[0 * dim + ref_dim] * reference_vector[ref_dim];
-        out[1] += jac[1 * dim + ref_dim] * reference_vector[ref_dim];
+        out[1] += jac[dim + ref_dim] * reference_vector[ref_dim];
         out[2] += jac[2 * dim + ref_dim] * reference_vector[ref_dim];
     }
     Ok(out)
@@ -709,7 +707,7 @@ fn jacobian_columns(jac: &[f64], dim: usize) -> Vec<[f64; 3]> {
     for ref_dim in 0..dim {
         cols.push([
             jac[0 * dim + ref_dim],
-            jac[1 * dim + ref_dim],
+            jac[dim + ref_dim],
             jac[2 * dim + ref_dim],
         ]);
     }

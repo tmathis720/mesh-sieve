@@ -628,11 +628,9 @@ where
             if ownership
                 .owner(send_loc)
                 .is_some_and(|owner| owner == comm.rank())
-            {
-                if let Some(id) = ids.get(&send_loc).copied() {
+                && let Some(id) = ids.get(&send_loc).copied() {
                     scratch.push(id);
                 }
-            }
         }
         let bytes = cast_slice(&scratch);
         pending_sends.push(comm.isend_result(nbr, tag.as_u16(), bytes)?);

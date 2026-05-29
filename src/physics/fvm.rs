@@ -377,7 +377,7 @@ fn preflight_fv_assembly(
         }
     }
     let boundary_faces: HashSet<_> = inputs.boundary_faces().map(|s| s.face).collect();
-    for (face, _) in &boundary_policy.boundary_face_branches {
+    for face in boundary_policy.boundary_face_branches.keys() {
         if inputs.face_metrics(*face).is_none() {
             return Err(FvmAssemblyError::LabelMappedToUnknownFace { face: *face });
         }
@@ -710,7 +710,7 @@ pub fn interpolate_face_centered_scalar<S: Storage<f64>>(
     if let Some(right_cell) = stencil.right {
         let right = section.try_restrict(right_cell)?;
         let rval = *right.first().ok_or_else(|| {
-            MeshSieveError::InvalidGeometry(format!("missing scalar value at cell {}", right_cell))
+            MeshSieveError::InvalidGeometry(format!("missing scalar value at cell {right_cell}"))
         })?;
         Ok(0.5 * (lval + rval))
     } else {
@@ -731,7 +731,7 @@ pub fn interpolate_cell_centered_scalar<S: Storage<f64>>(
     for face in incident_faces {
         let value = section.try_restrict(*face)?;
         let scalar = *value.first().ok_or_else(|| {
-            MeshSieveError::InvalidGeometry(format!("missing scalar value at face {}", face))
+            MeshSieveError::InvalidGeometry(format!("missing scalar value at face {face}"))
         })?;
         accum += scalar;
     }
@@ -847,7 +847,7 @@ pub fn assemble_convective_fluxes_masked(
         })?;
         let rcell = stencil.right.expect("internal face must have neighbor");
         let r = *cell_scalar.get(&rcell).ok_or_else(|| {
-            MeshSieveError::InvalidGeometry(format!("missing scalar for cell {}", rcell))
+            MeshSieveError::InvalidGeometry(format!("missing scalar for cell {rcell}"))
         })?;
         let phi_f = convective_face_value(l, r, mdot, scheme, reconstruction.limiter);
         let flux = mdot * phi_f;
@@ -991,13 +991,13 @@ pub fn assemble_diffusive_fluxes_with_hooks(
         })?;
         let rcell = stencil.right.expect("internal face");
         let rc = inputs.cell_metrics(rcell).ok_or_else(|| {
-            MeshSieveError::InvalidGeometry(format!("missing cell geometry for cell {}", rcell))
+            MeshSieveError::InvalidGeometry(format!("missing cell geometry for cell {rcell}"))
         })?;
         let phi_l = *cell_scalar.get(&stencil.left).ok_or_else(|| {
             MeshSieveError::InvalidGeometry(format!("missing scalar for cell {}", stencil.left))
         })?;
         let phi_r = *cell_scalar.get(&rcell).ok_or_else(|| {
-            MeshSieveError::InvalidGeometry(format!("missing scalar for cell {}", rcell))
+            MeshSieveError::InvalidGeometry(format!("missing scalar for cell {rcell}"))
         })?;
         let d = sub(&rc.centroid, &lc.centroid);
         let d2 = dot(&d, &d);

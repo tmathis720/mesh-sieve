@@ -636,7 +636,7 @@ impl Overlap {
                 .inner
                 .adjacency_in
                 .get(&part_id)
-                .map_or(true, |incoming| incoming.is_empty());
+                .is_none_or(|incoming| incoming.is_empty());
 
             if is_empty {
                 crate::topology::sieve::MutableSieve::remove_cap_point(&mut self.inner, part_id);

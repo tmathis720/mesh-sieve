@@ -2,8 +2,10 @@
 
 /// Common cell types for mesh elements.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Default)]
 pub enum CellType {
     /// 0D vertex.
+    #[default]
     Vertex,
     /// 1D segment/edge.
     Segment,
@@ -27,11 +29,6 @@ pub enum CellType {
     Polyhedron,
 }
 
-impl Default for CellType {
-    fn default() -> Self {
-        CellType::Vertex
-    }
-}
 
 impl CellType {
     /// Returns the topological dimension of the cell, when well-defined.

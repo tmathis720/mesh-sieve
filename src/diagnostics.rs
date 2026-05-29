@@ -320,14 +320,13 @@ where
         compute_strata(sieve)?;
     }
 
-    if options.check_symmetry {
-        if let Some(cell_types) = cell_types {
+    if options.check_symmetry
+        && let Some(cell_types) = cell_types {
             validate_oriented_sieve_topology(sieve, cell_types, TopologyValidationOptions::all())?;
         }
-    }
 
-    if options.check_geometry {
-        if let Some(coords) = coords {
+    if options.check_geometry
+        && let Some(coords) = coords {
             for (point, (_offset, len)) in coords.section().atlas().iter_entries() {
                 if len != coords.embedding_dimension() {
                     return Err(MeshSieveError::SliceLengthMismatch {
@@ -338,13 +337,11 @@ where
                 }
             }
         }
-    }
 
-    if options.check_overlap || options.check_ownership {
-        if let Some(ownership) = ownership {
+    if (options.check_overlap || options.check_ownership)
+        && let Some(ownership) = ownership {
             validate_overlap_ownership_topology(sieve, ownership, overlap, 0)?;
         }
-    }
 
     if options.check_sections {
         for section in sections {
@@ -728,7 +725,7 @@ pub fn mesh_dot_graph<S: Sieve<Point = PointId>>(sieve: &S) -> String {
     let mut out = String::from("digraph MeshSieve {\n");
     for src in sieve.points() {
         for dst in sieve.cone_points(src) {
-            let _ = writeln!(&mut out, "  \"{:?}\" -> \"{:?}\";", src, dst);
+            let _ = writeln!(&mut out, "  \"{src:?}\" -> \"{dst:?}\";");
         }
     }
     out.push_str("}\n");
@@ -777,15 +774,14 @@ pub fn fem_diagnostics_report(
     local_vector: &[f64],
 ) -> String {
     format!(
-        "FEM diagnostics: closure={:?}, basis={:?}, quadrature={:?}, Ke={:?}, Fe={:?}",
-        element_closure, basis_values, quadrature_weights, local_matrix, local_vector
+        "FEM diagnostics: closure={element_closure:?}, basis={basis_values:?}, quadrature={quadrature_weights:?}, Ke={local_matrix:?}, Fe={local_vector:?}"
     )
 }
 
 pub fn fvm_flux_diagnostics(flux_updates: &[(PointId, f64)]) -> String {
     let mut out = String::from("FVM flux updates:");
     for (p, f) in flux_updates {
-        let _ = write!(&mut out, " ({:?}: {f})", p);
+        let _ = write!(&mut out, " ({p:?}: {f})");
     }
     out
 }

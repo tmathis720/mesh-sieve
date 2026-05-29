@@ -146,15 +146,14 @@ impl PeriodicMap {
     ///
     /// Returns an error if the slave already maps to a different master.
     pub fn insert_pair(&mut self, master: PointId, slave: PointId) -> Result<(), MeshSieveError> {
-        if let Some(existing) = self.master_for.get(&slave) {
-            if *existing != master {
+        if let Some(existing) = self.master_for.get(&slave)
+            && *existing != master {
                 return Err(MeshSieveError::PeriodicMappingConflict {
                     slave,
                     existing: *existing,
                     new: master,
                 });
             }
-        }
         self.master_for.insert(slave, master);
         Ok(())
     }

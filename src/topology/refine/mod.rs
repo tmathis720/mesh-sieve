@@ -365,8 +365,8 @@ where
     S: Storage<CellType>,
     Cs: Storage<f64>,
 {
-    if let Some(hints) = &options.anisotropic_splits {
-        if !hints.is_empty() {
+    if let Some(hints) = &options.anisotropic_splits
+        && !hints.is_empty() {
             let cell_ids: HashSet<_> = cell_types.iter().map(|(cell, _)| cell).collect();
             for cell in hints.edge_splits.keys().chain(hints.face_splits.keys()) {
                 if !cell_ids.contains(cell) {
@@ -376,7 +376,6 @@ where
                 }
             }
         }
-    }
     let mut dimension: Option<u8> = None;
     for (cell, cell_slice) in cell_types.iter() {
         if cell_slice.len() != 1 {
@@ -1354,11 +1353,10 @@ fn face_vertices(
     if cone.iter().all(|p| coarse.cone_points(*p).next().is_none()) {
         return Ok(cone);
     }
-    if cone.iter().all(|p| coarse.cone_points(*p).count() == 2) {
-        if let Some(ordered) = ordered_vertices_from_edges(coarse, &cone) {
+    if cone.iter().all(|p| coarse.cone_points(*p).count() == 2)
+        && let Some(ordered) = ordered_vertices_from_edges(coarse, &cone) {
             return Ok(ordered);
         }
-    }
     let mut vertices = Vec::new();
     for p in coarse.closure(std::iter::once(face)) {
         if coarse.cone_points(p).next().is_none() {
@@ -1400,7 +1398,7 @@ where
         }
         let cell_type = cell_slice[0];
         let dim = cell_type.dimension();
-        if mesh_dim.map_or(false, |target| target == dim) {
+        if mesh_dim == Some(dim) {
             has_mesh_dim = true;
         }
         max_dim = Some(max_dim.map_or(dim, |current| current.max(dim)));
@@ -1590,13 +1588,10 @@ fn cell_vertices(
     if (expected == 3 || expected == 4)
         && !cone.is_empty()
         && cone.iter().all(|p| coarse.cone_points(*p).count() == 2)
-    {
-        if let Some(ordered) = ordered_vertices_from_edges(coarse, &cone) {
-            if ordered.len() == expected {
+        && let Some(ordered) = ordered_vertices_from_edges(coarse, &cone)
+            && ordered.len() == expected {
                 return Ok(ordered);
             }
-        }
-    }
 
     let mut vertices = Vec::new();
     for p in coarse.closure(std::iter::once(cell)) {

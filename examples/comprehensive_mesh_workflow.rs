@@ -14,6 +14,7 @@
 
 #[cfg(feature = "mpi-support")]
 use mesh_sieve::algs::dual_graph::build_dual;
+use mesh_sieve::topology::MeshSieve;
 #[cfg(feature = "mpi-support")]
 use mesh_sieve::{
     data::{bundle::Bundle, storage::VecStorage},
@@ -152,6 +153,7 @@ fn build_hierarchical_tetrahedral_mesh() -> (MeshSieve, Vec<PointId>, MeshSieve,
     use mesh_sieve::data::storage::VecStorage;
     use mesh_sieve::prelude::Stack;
     use mesh_sieve::prelude::*;
+    use mesh_sieve::topology::MeshSieve;
     use mesh_sieve::topology::arrow::Polarity;
     use mesh_sieve::topology::sieve::MutableSieve;
     use std::marker::PhantomData;
@@ -457,6 +459,7 @@ fn test_distributed_completion(
 ) {
     use mesh_sieve::algs::distribute_mesh;
     use mesh_sieve::data::storage::VecStorage;
+    use mesh_sieve::topology::MeshSieve;
     use mesh_sieve::prelude::*;
 
     println!("[rank {}] Testing distributed completion...", rank);
@@ -651,6 +654,7 @@ fn test_sieved_array_operations(rank: usize) {
 fn test_error_handling_robustness(rank: usize) {
     use mesh_sieve::{
         data::storage::VecStorage,
+        topology::MeshSieve,
         overlap::delta::ZeroDelta,
         prelude::{Atlas, Section, Sieve, ValueDelta},
     };

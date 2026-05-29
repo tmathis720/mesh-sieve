@@ -315,11 +315,10 @@ impl LabelSet {
             .into_iter()
             .collect();
         for p in remove {
-            if self.get_label(p, dst_name) == Some(dst_value) {
-                if let Some(map) = self.labels.get_mut(dst_name) {
+            if self.get_label(p, dst_name) == Some(dst_value)
+                && let Some(map) = self.labels.get_mut(dst_name) {
                     map.remove(&p);
                 }
-            }
         }
     }
 

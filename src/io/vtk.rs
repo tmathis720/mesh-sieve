@@ -583,12 +583,12 @@ impl SieveSectionReader for VtkReader {
 
         let topo_dim = fields
             .get(FIELD_COORD_TOPO_DIM)
-            .and_then(|field| field.values.get(0))
+            .and_then(|field| field.values.first())
             .and_then(|v| v.parse::<usize>().ok())
             .unwrap_or(3);
         let embed_dim = fields
             .get(FIELD_COORD_EMBED_DIM)
-            .and_then(|field| field.values.get(0))
+            .and_then(|field| field.values.first())
             .and_then(|v| v.parse::<usize>().ok())
             .unwrap_or(3);
 
@@ -630,8 +630,8 @@ impl SieveSectionReader for VtkReader {
         let mut labels = LabelSet::new();
 
         for (name, field) in &fields {
-            if let Some(rest) = name.strip_prefix(FIELD_SECTION_PREFIX) {
-                if let Some(section_name) = rest.strip_suffix(":ids") {
+            if let Some(rest) = name.strip_prefix(FIELD_SECTION_PREFIX)
+                && let Some(section_name) = rest.strip_suffix(":ids") {
                     let values_field = fields
                         .get(&format!("{FIELD_SECTION_PREFIX}{section_name}:values"))
                         .ok_or_else(|| {
@@ -656,9 +656,8 @@ impl SieveSectionReader for VtkReader {
                     }
                     sections.insert(section_name.to_string(), section);
                 }
-            }
-            if let Some(rest) = name.strip_prefix(FIELD_LABEL_PREFIX) {
-                if let Some(label_name) = rest.strip_suffix(":ids") {
+            if let Some(rest) = name.strip_prefix(FIELD_LABEL_PREFIX)
+                && let Some(label_name) = rest.strip_suffix(":ids") {
                     let values_field = fields
                         .get(&format!("{FIELD_LABEL_PREFIX}{label_name}:values"))
                         .ok_or_else(|| {
@@ -673,7 +672,6 @@ impl SieveSectionReader for VtkReader {
                         labels.set_label(point, label_name, *value as i32);
                     }
                 }
-            }
         }
 
         let labels = if labels.is_empty() {

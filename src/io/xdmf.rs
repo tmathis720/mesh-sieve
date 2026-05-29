@@ -726,16 +726,15 @@ impl SieveSectionReader for XdmfReader {
 
         let mut attributes = HashMap::new();
         for attr in grid.descendants().filter(|n| n.has_tag_name("Attribute")) {
-            if let Some(name) = attr.attribute("Name") {
-                if let Some(data) = attr.descendants().find(|n| n.has_tag_name("DataItem")) {
+            if let Some(name) = attr.attribute("Name")
+                && let Some(data) = attr.descendants().find(|n| n.has_tag_name("DataItem")) {
                     let item = Self::parse_data_item(data)?;
                     attributes.insert(name.to_string(), item);
                 }
-            }
         }
 
         let geometry_dims = geometry_item.effective_dimensions()?;
-        let num_points = geometry_dims.get(0).copied().unwrap_or(0);
+        let num_points = geometry_dims.first().copied().unwrap_or(0);
         let point_ids = if let Some(item) = attributes.get(ATTR_POINT_IDS) {
             item.values_as_i64()?
                 .into_iter()
@@ -765,12 +764,12 @@ impl SieveSectionReader for XdmfReader {
 
         let topo_dim = attributes
             .get(ATTR_COORD_TOPO_DIM)
-            .and_then(|item| item.values.get(0))
+            .and_then(|item| item.values.first())
             .and_then(|v| v.parse::<usize>().ok())
             .unwrap_or(3);
         let embed_dim = attributes
             .get(ATTR_COORD_EMBED_DIM)
-            .and_then(|item| item.values.get(0))
+            .and_then(|item| item.values.first())
             .and_then(|v| v.parse::<usize>().ok())
             .unwrap_or(3);
 
@@ -833,8 +832,8 @@ impl SieveSectionReader for XdmfReader {
         let mut sections = BTreeMap::new();
         let mut labels = LabelSet::new();
         for (name, item) in &attributes {
-            if let Some(rest) = name.strip_prefix(ATTR_SECTION_PREFIX) {
-                if let Some(section_name) = rest.strip_suffix(":ids") {
+            if let Some(rest) = name.strip_prefix(ATTR_SECTION_PREFIX)
+                && let Some(section_name) = rest.strip_suffix(":ids") {
                     let values_item = attributes
                         .get(&format!("{ATTR_SECTION_PREFIX}{section_name}:values"))
                         .ok_or_else(|| {
@@ -860,9 +859,8 @@ impl SieveSectionReader for XdmfReader {
                     }
                     sections.insert(section_name.to_string(), section);
                 }
-            }
-            if let Some(rest) = name.strip_prefix(ATTR_LABEL_PREFIX) {
-                if let Some(label_name) = rest.strip_suffix(":ids") {
+            if let Some(rest) = name.strip_prefix(ATTR_LABEL_PREFIX)
+                && let Some(label_name) = rest.strip_suffix(":ids") {
                     let values_item = attributes
                         .get(&format!("{ATTR_LABEL_PREFIX}{label_name}:values"))
                         .ok_or_else(|| {
@@ -877,7 +875,6 @@ impl SieveSectionReader for XdmfReader {
                         labels.set_label(point, label_name, *value as i32);
                     }
                 }
-            }
         }
 
         let labels = if labels.is_empty() {

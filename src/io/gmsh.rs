@@ -1018,7 +1018,7 @@ impl GmshReader {
                             tags.push(tag);
                         }
                         let mut conn = Vec::new();
-                        while let Some(node_id) = parts.next() {
+                        for node_id in parts {
                             conn.push(Self::parse_point_id(node_id)?);
                         }
                         let min_nodes = Self::element_min_nodes(cell_type);
@@ -1028,14 +1028,13 @@ impl GmshReader {
                                 found = conn.len()
                             )));
                         }
-                        if let Some(expected) = Self::element_node_count(elem_type) {
-                            if conn.len() != expected {
+                        if let Some(expected) = Self::element_node_count(elem_type)
+                            && conn.len() != expected {
                                 return Err(MeshSieveError::MeshIoParse(format!(
                                     "element {elem_id:?} expected {expected} nodes, got {found}",
                                     found = conn.len()
                                 )));
                             }
-                        }
                         elements.push(ElementRecord {
                             id: elem_id,
                             conn,
@@ -1140,14 +1139,13 @@ impl GmshReader {
         for element in &elements {
             MutableSieve::add_point(&mut sieve, element.id);
             for node in &element.conn {
-                if let Some(ref mut seen) = seen_arrows {
-                    if !seen.insert((element.id, *node)) {
+                if let Some(ref mut seen) = seen_arrows
+                    && !seen.insert((element.id, *node)) {
                         return Err(MeshSieveError::DuplicateArrow {
                             src: element.id,
                             dst: *node,
                         });
                     }
-                }
                 Sieve::add_arrow(&mut sieve, element.id, *node, ());
             }
         }
@@ -1233,7 +1231,7 @@ impl GmshReader {
                 labels.set_label(element.id, "gmsh:entity", tag);
                 has_labels = true;
             }
-            if let Some(tag) = element.tags.get(0) {
+            if let Some(tag) = element.tags.first() {
                 labels.set_label(element.id, "gmsh:physical", *tag);
                 has_labels = true;
             }
@@ -1751,11 +1749,10 @@ impl GmshWriter {
                 "gmsh:physical" => entry.0 = Some(value),
                 "gmsh:entity" => entry.1 = Some(value),
                 _ => {
-                    if let Some(suffix) = name.strip_prefix("gmsh:tag") {
-                        if let Ok(index) = suffix.parse::<usize>() {
+                    if let Some(suffix) = name.strip_prefix("gmsh:tag")
+                        && let Ok(index) = suffix.parse::<usize>() {
                             entry.2.insert(index, value);
                         }
-                    }
                 }
             }
         }
@@ -1861,7 +1858,7 @@ impl SieveSectionWriter for GmshWriter {
         for element in &element_ids {
             let cell_slice = cell_types.try_restrict(*element)?;
             let cell_type = *cell_slice.first().ok_or_else(|| {
-                MeshSieveError::MeshIoParse(format!("missing cell type for element {:?}", element))
+                MeshSieveError::MeshIoParse(format!("missing cell type for element {element:?}"))
             })?;
             let conn: Vec<PointId> = mesh.sieve.cone_points(*element).collect();
             let elem_type = Self::gmsh_element_type(cell_type, conn.len()).ok_or_else(|| {
@@ -1878,7 +1875,7 @@ impl SieveSectionWriter for GmshWriter {
                 .unwrap_or_default();
             write!(writer, "{} {} {}", element.get(), elem_type, tags.len())?;
             for tag in &tags {
-                write!(writer, " {}", tag)?;
+                write!(writer, " {tag}")?;
             }
             for node in &conn {
                 write!(writer, " {}", node.get())?;

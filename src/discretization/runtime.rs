@@ -261,7 +261,7 @@ impl QuadratureRule {
         let family = quadrature_family_from_name(&normalized, cell_type)?;
         ensure_quadrature_supported(cell_type, family)?;
         let order =
-            parse_trailing_degree(&normalized).unwrap_or_else(|| match normalized.as_str() {
+            parse_trailing_degree(&normalized).unwrap_or(match normalized.as_str() {
                 "midpoint" | "centroid" => 1,
                 _ => 2,
             });
@@ -1152,11 +1152,10 @@ pub fn ensure_geometry_order_supported(
     if matches!(
         cell_type,
         CellType::Simplex(_) | CellType::Polygon(_) | CellType::Polyhedron
-    ) {
-        if (1..=MAX_RUNTIME_ORDER).contains(&geometry_order) {
+    )
+        && (1..=MAX_RUNTIME_ORDER).contains(&geometry_order) {
             return Ok(());
         }
-    }
     let capability = capability_for(cell_type).ok_or_else(|| {
         MeshSieveError::InvalidGeometry(format!(
             "unsupported cell type {cell_type:?} for geometry order {geometry_order}"
@@ -1878,8 +1877,8 @@ fn polygon_area(vertices: &[Vec<f64>]) -> f64 {
 }
 
 fn bounding_box_volume(vertices: &[Vec<f64>]) -> f64 {
-    let mut mins = vec![f64::INFINITY; 3];
-    let mut maxs = vec![f64::NEG_INFINITY; 3];
+    let mut mins = [f64::INFINITY; 3];
+    let mut maxs = [f64::NEG_INFINITY; 3];
     for v in vertices {
         for d in 0..3 {
             mins[d] = mins[d].min(v[d]);
