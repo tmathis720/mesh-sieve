@@ -200,7 +200,22 @@ pub struct ElementClosureData<V> {
     /// Flattened closure values after applying point orientation symmetries.
     pub values: Vec<V>,
     /// Local point/slot to global-index map for each closure scalar DOF, when provided.
+    ///
+    /// Constrained/eliminated DOFs that have no owned global slot are recorded
+    /// as `u64::MAX`; constraint-aware insertion helpers distribute those
+    /// entries through their parent equations instead of using the sentinel.
     pub global_indices: Option<Vec<u64>>,
+    /// Closure point and local-DOF order corresponding to `values`.
+    pub points: Vec<ElementClosurePoint>,
+}
+
+/// One point contribution in an element closure.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ElementClosurePoint {
+    /// Point in the closure.
+    pub point: PointId,
+    /// Local DOF indices in oriented closure order.
+    pub local_dofs: Vec<usize>,
 }
 
 /// Extract closure values for a FE cell using DMPLEX-like ordering.
@@ -225,10 +240,19 @@ where
         &IdentitySectionSym,
     )?;
     let values = get_closure(section, &index)?;
+    let points = index
+        .points
+        .iter()
+        .map(|entry| ElementClosurePoint {
+            point: entry.point,
+            local_dofs: entry.permutation.clone(),
+        })
+        .collect();
     Ok(ElementClosureData {
         cell,
         values,
         global_indices: None,
+        points,
     })
 }
 
@@ -255,16 +279,102 @@ where
         let mut indices = Vec::with_capacity(index.len);
         for entry in &index.points {
             for &local_dof in &entry.permutation {
-                indices.push(map.global_index(entry.point, local_dof)?);
+                match map.global_index(entry.point, local_dof) {
+                    Ok(global) => indices.push(global),
+                    Err(MeshSieveError::ConstraintIndexOutOfBounds { .. }) => {
+                        indices.push(u64::MAX)
+                    }
+                    Err(err) => return Err(err),
+                }
             }
         }
         Some(indices)
     } else {
         None
     };
+    let points = index
+        .points
+        .iter()
+        .map(|entry| ElementClosurePoint {
+            point: entry.point,
+            local_dofs: entry.permutation.clone(),
+        })
+        .collect();
     Ok(ElementClosureData {
         cell,
         values,
         global_indices,
+        points,
     })
+}
+
+/// Scatter an element residual into a global vector while honoring hanging-node constraints.
+///
+/// Free closure DOFs are inserted at their own global index. Contributions for a
+/// hanging DOF are distributed to its parent DOFs using the constraint weights,
+/// matching the transpose action of linear constraint elimination.
+pub fn insert_element_residual_with_hanging_constraints<V>(
+    closure: &ElementClosureData<V>,
+    element_residual: &[V],
+    global_map: &LocalToGlobalMap,
+    constraints: &crate::data::hanging_node_constraints::HangingNodeConstraints<V>,
+    global_residual: &mut [V],
+) -> Result<(), MeshSieveError>
+where
+    V: Clone + Default + core::ops::AddAssign + core::ops::Mul<Output = V>,
+{
+    if closure.values.len() != element_residual.len() {
+        return Err(MeshSieveError::InvalidGeometry(format!(
+            "element residual length {} does not match closure length {} for {:?}",
+            element_residual.len(),
+            closure.values.len(),
+            closure.cell
+        )));
+    }
+
+    let Some(global_indices) = &closure.global_indices else {
+        return Err(MeshSieveError::InvalidGeometry(
+            "global indices are required for constrained residual insertion".to_string(),
+        ));
+    };
+    if global_indices.len() != element_residual.len() {
+        return Err(MeshSieveError::InvalidGeometry(format!(
+            "global-index length {} does not match residual length {} for {:?}",
+            global_indices.len(),
+            element_residual.len(),
+            closure.cell
+        )));
+    }
+
+    let mut cursor = 0usize;
+    for entry in &closure.points {
+        for &local_dof in &entry.local_dofs {
+            let value = element_residual[cursor].clone();
+            if let Some(point_constraints) = constraints.constraints_for(entry.point)
+                && let Some(constraint) = point_constraints.iter().find(|c| c.index == local_dof)
+            {
+                for term in &constraint.terms {
+                    let global = global_map.global_index(term.point, term.index)? as usize;
+                    let len = global_residual.len();
+                    let slot = global_residual.get_mut(global).ok_or_else(|| {
+                        MeshSieveError::InvalidGeometry(format!(
+                            "global residual index {global} out of bounds (len={len})"
+                        ))
+                    })?;
+                    *slot += value.clone() * term.weight.clone();
+                }
+            } else {
+                let global = global_indices[cursor] as usize;
+                let len = global_residual.len();
+                let slot = global_residual.get_mut(global).ok_or_else(|| {
+                    MeshSieveError::InvalidGeometry(format!(
+                        "global residual index {global} out of bounds (len={len})"
+                    ))
+                })?;
+                *slot += value;
+            }
+            cursor += 1;
+        }
+    }
+    Ok(())
 }

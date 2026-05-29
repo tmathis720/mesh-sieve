@@ -76,7 +76,8 @@ pub use debug_invariants::DebugInvariants;
 /// A convenient prelude to import the most-used traits & types:
 pub mod prelude {
     pub use crate::algs::assembly::{
-        AssemblyCommTags, assemble_section_with_ownership, assemble_section_with_tags_and_ownership,
+        AssemblyCommTags, assemble_section_with_hanging_constraints_and_ownership,
+        assemble_section_with_ownership, assemble_section_with_tags_and_ownership,
     };
     pub use crate::algs::assembly::{
         GlobalCsrPattern, cell_closure_dof_map, global_preallocation_csr_from_closure,
@@ -165,8 +166,9 @@ pub mod prelude {
     pub use crate::overlap::delta::{AddDelta, CopyDelta, ValueDelta};
     pub use crate::overlap::overlap::Overlap;
     pub use crate::physics::fe::{
-        ElementClosureData, ElementMatrices, ReferenceElementEvaluation, assemble_element_matrices,
-        evaluate_reference_element, extract_element_closure, extract_oriented_element_closure,
+        ElementClosureData, ElementClosurePoint, ElementMatrices, ReferenceElementEvaluation,
+        assemble_element_matrices, evaluate_reference_element, extract_element_closure,
+        extract_oriented_element_closure, insert_element_residual_with_hanging_constraints,
         integrate_reference_scalar,
     };
     pub use crate::physics::fvm::{

@@ -8,6 +8,9 @@
 use crate::algs::communicator::{CommTag, Communicator, SectionCommTags};
 use crate::algs::completion::section_completion::complete_section_with_tags_and_ownership;
 use crate::data::constrained_section::{ConstraintSet, apply_constraints_to_section};
+use crate::data::hanging_node_constraints::{
+    HangingNodeConstraints, apply_hanging_constraints_to_section,
+};
 use crate::data::section::Section;
 use crate::data::storage::Storage;
 use crate::mesh_error::MeshSieveError;
@@ -67,6 +70,59 @@ where
         tags.reduce,
     )?;
 
+    apply_constraints_to_section(section, constraints)?;
+
+    complete_section_with_tags_and_ownership::<V, S, CopyDelta, C>(
+        section,
+        overlap,
+        ownership,
+        comm,
+        my_rank,
+        tags.complete,
+    )?;
+
+    Ok(())
+}
+
+/// High-level assembly across overlap with ownership, hanging-node constraints,
+/// and fixed constraints. Hanging constraints are applied before fixed values so
+/// Dirichlet-like constraints can override interpolated values on the same DOF.
+pub fn assemble_section_with_hanging_constraints_and_ownership<V, S, D, C, Con>(
+    section: &mut Section<V, S>,
+    overlap: &Overlap,
+    ownership: &PointOwnership,
+    comm: &C,
+    my_rank: usize,
+    tags: AssemblyCommTags,
+    hanging_constraints: &HangingNodeConstraints<V>,
+    constraints: &Con,
+) -> Result<(), MeshSieveError>
+where
+    V: Clone
+        + Default
+        + Send
+        + PartialEq
+        + bytemuck::Pod
+        + Copy
+        + 'static
+        + core::ops::AddAssign
+        + core::ops::Mul<Output = V>,
+    S: Storage<V>,
+    D: ValueDelta<V> + Send + Sync + 'static,
+    D::Part: bytemuck::Pod + Default + Copy,
+    C: Communicator + Sync,
+    Con: ConstraintSet<V>,
+{
+    complete_section_with_tags_and_ownership::<V, S, D, C>(
+        section,
+        overlap,
+        ownership,
+        comm,
+        my_rank,
+        tags.reduce,
+    )?;
+
+    apply_hanging_constraints_to_section(section, hanging_constraints)?;
     apply_constraints_to_section(section, constraints)?;
 
     complete_section_with_tags_and_ownership::<V, S, CopyDelta, C>(
