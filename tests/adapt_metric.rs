@@ -1,5 +1,6 @@
 use mesh_sieve::adapt::{
-    MetricAdaptationAction, MetricTensor, MetricThresholds, adapt_with_metric_and_transfer,
+    MetricAdaptationAction, MetricNormalizationControls, MetricTensor, MetricThresholds,
+    adapt_with_metric_and_transfer, normalize_metric_section,
 };
 use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::coordinates::Coordinates;
@@ -110,4 +111,31 @@ fn refine_cells_from_metric_tensor() {
         let fine_slice = refined_data.try_get(*fine_cell).unwrap();
         assert_eq!(fine_slice, &[2.0]);
     }
+}
+
+#[test]
+fn metric_normalization_clamps_magnitude_and_complexity() {
+    let cell = pt(20);
+    let mut atlas = Atlas::default();
+    atlas.try_insert(cell, 1).unwrap();
+    let mut metrics = Section::<MetricTensor, VecStorage<MetricTensor>>::new(atlas);
+    metrics
+        .try_set(cell, &[MetricTensor::new_2d(100.0, 0.001, 0.0)])
+        .unwrap();
+
+    let normalized = normalize_metric_section(
+        &metrics,
+        MetricNormalizationControls {
+            target_complexity: Some(2.0),
+            max_anisotropy: Some(2.0),
+            min_magnitude: Some(0.1),
+            max_magnitude: Some(4.0),
+            ..MetricNormalizationControls::default()
+        },
+    )
+    .unwrap();
+    let tensor = normalized.try_restrict(cell).unwrap()[0];
+    assert!(tensor.data[0] <= 4.0);
+    assert!(tensor.data[1] >= 0.1);
+    assert!(tensor.data[0] / tensor.data[1] <= 2.0 + 1.0e-12);
 }
