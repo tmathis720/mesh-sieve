@@ -1,5 +1,6 @@
 //! Hanging node constraints: linear relationships between DOFs.
 
+use crate::data::constrained_section::DofConstraint;
 use crate::data::section::Section;
 use crate::data::storage::Storage;
 use crate::mesh_error::MeshSieveError;
@@ -69,6 +70,48 @@ impl<V> HangingNodeConstraints<V> {
     /// Mutable access to the constraint map.
     pub fn constraints_mut(&mut self) -> &mut BTreeMap<PointId, Vec<HangingDofConstraint<V>>> {
         &mut self.constraints
+    }
+
+    /// Return constraints for one point.
+    pub fn constraints_for(&self, point: PointId) -> Option<&[HangingDofConstraint<V>]> {
+        self.constraints
+            .get(&point)
+            .map(|constraints| constraints.as_slice())
+    }
+
+    /// Return true when `point`/`index` is governed by a hanging-node equation.
+    pub fn is_constrained_dof(&self, point: PointId, index: usize) -> bool {
+        self.constraints.get(&point).is_some_and(|constraints| {
+            constraints
+                .iter()
+                .any(|constraint| constraint.index == index)
+        })
+    }
+
+    /// Convert hanging equations to a fixed-constraint mask for layout/numbering.
+    ///
+    /// The values are placeholders; only the constrained local DOF indices are
+    /// used by [`ConstraintSet`](crate::data::constrained_section::ConstraintSet)
+    /// layout helpers.
+    pub fn to_dof_constraint_mask(&self, value: V) -> BTreeMap<PointId, Vec<DofConstraint<V>>>
+    where
+        V: Clone,
+    {
+        self.constraints
+            .iter()
+            .map(|(point, constraints)| {
+                (
+                    *point,
+                    constraints
+                        .iter()
+                        .map(|constraint| DofConstraint {
+                            index: constraint.index,
+                            value: value.clone(),
+                        })
+                        .collect(),
+                )
+            })
+            .collect()
     }
 
     /// Insert or update a linear constraint for a point DOF.

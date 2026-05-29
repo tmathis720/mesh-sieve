@@ -30,6 +30,9 @@ use crate::data::closure::{ClosureIndex, ClosureOrder, IdentitySectionSym, build
 use crate::data::coordinates::Coordinates;
 use crate::data::discretization::Discretization;
 use crate::data::global_map::{LocalToGlobalMap, global_vector_for_map};
+use crate::data::hanging_node_constraints::{
+    HangingNodeConstraints, apply_hanging_constraints_to_section,
+};
 use crate::data::multi_section::constrained_section_from_label_specs;
 use crate::data::section::Section;
 use crate::data::storage::{Storage, VecStorage};
@@ -45,6 +48,7 @@ use crate::mesh_error::MeshSieveError;
 use crate::mesh_graph::{AdjacencyWeighting, MeshGraph, cell_adjacency_graph_with_cells};
 use crate::overlap::overlap::Overlap;
 use crate::physics::fe::{ElementClosureData, extract_oriented_element_closure};
+use crate::topology::anchors::TopologicalAnchors;
 use crate::topology::cache::InvalidateCache;
 use crate::topology::cell_type::CellType;
 use crate::topology::labels::LabelSet;
@@ -925,6 +929,8 @@ where
     ownership: Option<PointOwnership>,
     overlap: Option<Overlap>,
     global_sections: BTreeMap<String, LocalToGlobalMap>,
+    anchors: TopologicalAnchors,
+    hanging_constraints: BTreeMap<String, HangingNodeConstraints<V>>,
     distribution: Option<MeshDMDistribution>,
     provenance_maps: MeshDMProvenance<crate::algs::communicator::NoComm>,
 }
@@ -956,6 +962,8 @@ where
             ownership: None,
             overlap: None,
             global_sections: BTreeMap::new(),
+            anchors: TopologicalAnchors::default(),
+            hanging_constraints: BTreeMap::new(),
             distribution: None,
             provenance_maps: MeshDMProvenance::default(),
         }
@@ -1042,6 +1050,50 @@ where
     /// Borrow DM setup options.
     pub fn options(&self) -> &MeshDMOptions {
         &self.options
+    }
+
+    /// Replace topological anchor metadata used by nonconforming setup flows.
+    pub fn set_topological_anchors(&mut self, anchors: TopologicalAnchors) {
+        self.anchors = anchors;
+    }
+
+    /// Borrow topological anchor metadata for nonconforming/adapted points.
+    pub fn topological_anchors(&self) -> &TopologicalAnchors {
+        &self.anchors
+    }
+
+    /// Attach hanging-node constraints to a named section.
+    pub fn set_hanging_constraints_for_section(
+        &mut self,
+        section_name: impl Into<String>,
+        constraints: HangingNodeConstraints<V>,
+    ) {
+        self.hanging_constraints
+            .insert(section_name.into(), constraints);
+    }
+
+    /// Borrow hanging-node constraints attached to a named section.
+    pub fn hanging_constraints_for_section(
+        &self,
+        section_name: &str,
+    ) -> Option<&HangingNodeConstraints<V>> {
+        self.hanging_constraints.get(section_name)
+    }
+
+    fn apply_hanging_constraints_to_sections(&mut self) -> Result<(), MeshSieveError>
+    where
+        V: core::ops::AddAssign + core::ops::Mul<Output = V>,
+    {
+        let constraints = self.hanging_constraints.clone();
+        for (name, hanging) in constraints {
+            let section = self
+                .mesh_data
+                .sections
+                .get_mut(&name)
+                .ok_or_else(|| MeshSieveError::MissingSectionName { name: name.clone() })?;
+            apply_hanging_constraints_to_section(section, &hanging)?;
+        }
+        Ok(())
     }
 
     /// Run local setup actions that do not require a partitioner/communicator.
@@ -1378,6 +1430,8 @@ where
         let mut dm = MeshDM::from_mesh_data_with_options(mesh_data, self.options.clone());
         dm.ownership = remap_ownership_to_submesh(self.ownership.as_ref(), &maps)?;
         dm.global_sections = remap_global_sections_to_submesh(&self.global_sections, &maps)?;
+        dm.anchors = self.anchors.clone();
+        dm.hanging_constraints = self.hanging_constraints.clone();
         dm.provenance_maps = MeshDMProvenance {
             load_map: None,
             redistribute_map: None,
@@ -1439,8 +1493,15 @@ where
     ) -> Result<PrepareForSolveDiagnostics, MeshSieveError>
     where
         C: Communicator + Sync,
-        V: Send + PartialEq + bytemuck::Pod + 'static,
+        V: Send
+            + PartialEq
+            + bytemuck::Pod
+            + 'static
+            + core::ops::AddAssign
+            + core::ops::Mul<Output = V>,
     {
+        self.apply_hanging_constraints_to_sections()?;
+
         if options.create_serial_ownership && comm.size() == 1 {
             self.ensure_serial_ownership(comm.rank())?;
         }
@@ -1595,16 +1656,29 @@ where
         let overlap = self.overlap.as_ref().unwrap_or(&empty_overlap);
         let mut maps = BTreeMap::new();
         for (name, section) in &self.mesh_data.sections {
-            maps.insert(
-                name.clone(),
+            let map = if let Some(hanging) = self.hanging_constraints.get(name) {
+                let mask = hanging.to_dof_constraint_mask(V::default());
+                LocalToGlobalMap::from_section_with_constraints_and_ownership(
+                    section,
+                    &mask,
+                    overlap,
+                    ownership,
+                    comm,
+                    comm.rank(),
+                    crate::algs::communicator::SectionCommTags::from_base(
+                        crate::algs::communicator::CommTag::new(0xBEEF),
+                    ),
+                )?
+            } else {
                 LocalToGlobalMap::from_section_with_ownership(
                     section,
                     overlap,
                     ownership,
                     comm,
                     comm.rank(),
-                )?,
-            );
+                )?
+            };
+            maps.insert(name.clone(), map);
         }
         self.global_sections = maps;
         Ok(())
@@ -1738,6 +1812,8 @@ where
             ownership: Some(data.ownership),
             overlap: Some(data.overlap),
             global_sections: BTreeMap::new(),
+            anchors: TopologicalAnchors::default(),
+            hanging_constraints: BTreeMap::new(),
             distribution: Some(MeshDMDistribution {
                 point_owners: data.point_owners,
                 cell_parts: data.cell_parts,
