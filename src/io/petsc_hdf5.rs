@@ -402,6 +402,13 @@ pub fn read_mesh_and_migration_provenance(
         .unwrap_or_else(|| PointSF::<NoComm>::identity(0, order.iter().copied()));
     let redistribute_map = read_sf_dataset(file, DATASET_REDISTRIBUTE_SF)?;
     let section_map = read_sf_dataset(file, DATASET_SECTION_SF)?;
+    validate_migration_provenance(
+        &mesh,
+        &metadata,
+        &load_map,
+        redistribute_map.as_ref(),
+        section_map.as_ref(),
+    )?;
     Ok((
         mesh,
         PetscMigrationProvenance {
@@ -411,6 +418,58 @@ pub fn read_mesh_and_migration_provenance(
             section_map,
         },
     ))
+}
+
+fn validate_migration_provenance(
+    mesh: &MeshData<MeshSieve, f64, VecStorage<f64>, VecStorage<CellType>>,
+    metadata: &PetscProvenance,
+    load_map: &PointSF<'_, NoComm>,
+    redistribute_map: Option<&PointSF<'_, NoComm>>,
+    section_map: Option<&PointSF<'_, NoComm>>,
+) -> Result<(), MeshSieveError> {
+    if matches!(
+        (metadata.saved_rank_count, metadata.loaded_rank_count),
+        (Some(0), _) | (_, Some(0))
+    ) {
+        return Err(MeshSieveError::MeshIoParse(
+            "DMPlex HDF5 migration metadata contains a zero rank count".to_string(),
+        ));
+    }
+    if let (Some(saved), Some(loaded)) = (metadata.saved_rank_count, metadata.loaded_rank_count)
+        && saved != loaded
+        && redistribute_map.is_none()
+    {
+        return Err(MeshSieveError::MeshIoParse(format!(
+            "DMPlex HDF5 metadata records save/load rank change {saved}->{loaded} without redistribution SF"
+        )));
+    }
+
+    let loaded = metadata.loaded_rank_count;
+    load_map.validate_provenance_stage("load", loaded)?;
+    if let Some(sf) = redistribute_map {
+        sf.validate_provenance_stage("redistribute", loaded)?;
+    }
+    if let Some(sf) = section_map {
+        sf.validate_provenance_stage("section", loaded)?;
+        let mut required = BTreeSet::new();
+        for section in mesh.sections.values() {
+            required.extend(section.atlas().points());
+        }
+        if let Some(coords) = &mesh.coordinates {
+            required.extend(coords.section().atlas().points());
+        }
+        if let Some(cell_types) = &mesh.cell_types {
+            required.extend(cell_types.atlas().points());
+        }
+        let missing = sf.missing_leaf_points(required);
+        if !missing.is_empty() {
+            return Err(MeshSieveError::MeshIoParse(format!(
+                "section SF is missing points with section/coordinate/cell-type data: {:?}",
+                missing
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn point_order(

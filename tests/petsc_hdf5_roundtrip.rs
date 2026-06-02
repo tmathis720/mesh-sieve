@@ -5,6 +5,7 @@ use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::coordinates::Coordinates;
 use mesh_sieve::data::section::Section;
 use mesh_sieve::data::storage::VecStorage;
+use mesh_sieve::dm::MeshDMProvenance;
 use mesh_sieve::io::petsc_hdf5::{
     DMPLEX_STORAGE_VERSION, PetscHdf5Reader, PetscHdf5Writer, PetscLoadFilter, PetscLoadMode,
     PetscLoadOptions, read_mesh_and_migration_provenance, read_mesh_from_petsc_hdf5,
@@ -401,6 +402,8 @@ fn migration_provenance_records_rank_count_changes_and_section_maps() {
             (p(2), 0, p(2)),
             (p(3), 0, p(3)),
             (p(6), 1, p(6)),
+            (p(4), 0, p(4)),
+            (p(5), 1, p(5)),
         ],
     );
     write_migration_metadata(
@@ -429,8 +432,84 @@ fn migration_provenance_records_rank_count_changes_and_section_maps() {
             .count(),
         2
     );
-    assert_eq!(provenance.section_map.as_ref().unwrap().leaf_count(), 4);
+    assert_eq!(provenance.section_map.as_ref().unwrap().leaf_count(), 6);
     let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn cross_rank_provenance_validation_rejects_missing_section_points_and_bad_ranks() {
+    let mesh = fixture_mesh(true);
+    let path = std::env::temp_dir().join("mesh_sieve_invalid_migration_provenance_fixture.h5");
+    let _ = std::fs::remove_file(&path);
+    let file = File::create(&path).unwrap();
+    write_mesh_to_petsc_hdf5(&file, &mesh, "mesh", "dm").unwrap();
+
+    let load_map = PointSF::<NoComm>::from_point_map(
+        0,
+        [
+            (p(1), 0, p(1)),
+            (p(2), 0, p(2)),
+            (p(3), 0, p(3)),
+            (p(6), 1, p(6)),
+        ],
+    );
+    let redistribute_map = PointSF::<NoComm>::from_point_map(0, [(p(4), 2, p(4))]);
+    let incomplete_section_map =
+        PointSF::<NoComm>::from_point_map(0, [(p(1), 0, p(1)), (p(2), 0, p(2))]);
+    write_migration_metadata(
+        &file,
+        1,
+        2,
+        &load_map,
+        Some(&redistribute_map),
+        Some(&incomplete_section_map),
+    )
+    .unwrap();
+
+    let err = read_mesh_and_migration_provenance(&file, "mesh", "dm", &PetscLoadOptions::default())
+        .unwrap_err();
+    assert!(err.to_string().contains("references rank 2"));
+
+    let valid_redistribute_map = PointSF::<NoComm>::from_point_map(0, [(p(4), 0, p(4))]);
+    write_migration_metadata(
+        &file,
+        1,
+        2,
+        &load_map,
+        Some(&valid_redistribute_map),
+        Some(&incomplete_section_map),
+    )
+    .unwrap();
+    let err = read_mesh_and_migration_provenance(&file, "mesh", "dm", &PetscLoadOptions::default())
+        .unwrap_err();
+    assert!(err.to_string().contains("section SF is missing"));
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn mesh_dm_provenance_requires_redistribution_for_rank_count_changes() {
+    let load_map = PointSF::<NoComm>::from_point_map(0, [(p(1), 0, p(1)), (p(2), 1, p(2))]);
+    let section_map = PointSF::<NoComm>::from_point_map(0, [(p(1), 0, p(1)), (p(2), 1, p(2))]);
+    let missing_redistribution = MeshDMProvenance {
+        load_map: Some(load_map.clone()),
+        redistribute_map: None,
+        section_map: Some(section_map.clone()),
+        storage_version: Some(DMPLEX_STORAGE_VERSION),
+        permutation_source: Some("/topologies/mesh/topology/permutation".into()),
+        redistribution_map_id: Some("petsc:load-1-to-2".into()),
+        saved_rank_count: Some(1),
+        loaded_rank_count: Some(2),
+    };
+    assert!(missing_redistribution.validate_consistency().is_err());
+
+    let valid = MeshDMProvenance {
+        redistribute_map: Some(PointSF::<NoComm>::from_point_map(
+            0,
+            [(p(1), 0, p(1)), (p(2), 1, p(2))],
+        )),
+        ..missing_redistribution
+    };
+    valid.validate_consistency().unwrap();
 }
 
 #[test]

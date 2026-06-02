@@ -7,7 +7,7 @@
 //! "build topology → attach data → validate → distribute → number sections →
 //! assemble vectors/matrices" workflow.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use crate::adapt::{
     AdaptationProvenanceMap, BoundaryRemeshingPolicy, FvStabilityThresholds,
@@ -385,6 +385,60 @@ pub struct MeshDMProvenance<C: Communicator + Sync + 'static> {
     pub storage_version: Option<i32>,
     pub permutation_source: Option<String>,
     pub redistribution_map_id: Option<String>,
+    pub saved_rank_count: Option<usize>,
+    pub loaded_rank_count: Option<usize>,
+}
+
+impl<C> MeshDMProvenance<C>
+where
+    C: Communicator + Sync + 'static,
+{
+    /// Validate that load, redistribution, and section migration SFs form a coherent DMPlex pipeline.
+    pub fn validate_consistency(&self) -> Result<(), MeshSieveError> {
+        if matches!(
+            (self.saved_rank_count, self.loaded_rank_count),
+            (Some(0), _) | (_, Some(0))
+        ) {
+            return Err(MeshSieveError::MeshIoParse(
+                "DMPlex provenance rank counts must be non-zero".to_string(),
+            ));
+        }
+        if let (Some(saved), Some(loaded)) = (self.saved_rank_count, self.loaded_rank_count)
+            && saved != loaded
+            && self.redistribute_map.is_none()
+        {
+            return Err(MeshSieveError::MeshIoParse(format!(
+                "DMPlex provenance records save/load rank change {saved}->{loaded} without a redistribution SF"
+            )));
+        }
+
+        let loaded = self.loaded_rank_count;
+        if let Some(sf) = &self.load_map {
+            sf.validate_provenance_stage("load", loaded)?;
+        }
+        if let Some(sf) = &self.redistribute_map {
+            sf.validate_provenance_stage("redistribute", loaded)?;
+        }
+        if let Some(sf) = &self.section_map {
+            sf.validate_provenance_stage("section", loaded)?;
+        }
+        if self.section_map.is_some() && self.load_map.is_none() {
+            return Err(MeshSieveError::MeshIoParse(
+                "DMPlex provenance has a section SF but no load SF".to_string(),
+            ));
+        }
+        if let (Some(load), Some(section)) = (&self.load_map, &self.section_map) {
+            let load_range: BTreeSet<_> = load.leaves().map(|leaf| leaf.remote.point).collect();
+            let missing = section.missing_leaf_points(load_range);
+            if !missing.is_empty() {
+                return Err(MeshSieveError::MeshIoParse(format!(
+                    "section SF does not cover loaded points {:?}",
+                    missing
+                )));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl<St, CtSt> MeshDM<f64, St, CtSt>
@@ -1439,6 +1493,8 @@ where
             storage_version: self.provenance_maps.storage_version,
             permutation_source: Some("sub_dm_by_label".to_string()),
             redistribution_map_id: self.provenance_maps.redistribution_map_id.clone(),
+            saved_rank_count: self.provenance_maps.saved_rank_count,
+            loaded_rank_count: self.provenance_maps.loaded_rank_count,
         };
         Ok(MeshDMSubmesh { dm, maps })
     }
@@ -1827,6 +1883,8 @@ where
                 storage_version: None,
                 permutation_source: None,
                 redistribution_map_id: None,
+                saved_rank_count: Some(size),
+                loaded_rank_count: Some(size),
             },
         }
     }
