@@ -63,3 +63,25 @@ cell 1 2 3 4
     );
     assert_eq!(mesh.sieve.cone_points(PointId::new(5).unwrap()).count(), 4);
 }
+
+#[test]
+fn reads_ply_fixture_file() {
+    let ply = include_bytes!("fixtures/io/surface.ply");
+    let mesh = PlyReader::default().read(&ply[..]).unwrap();
+    assert!(mesh.coordinates.is_some());
+    assert_eq!(mesh.sieve.cone_points(PointId::new(6).unwrap()).count(), 3);
+}
+
+#[test]
+fn reads_fluent_fixture_file_with_labels() {
+    let fluent = include_bytes!("fixtures/io/fluent_quad.msh");
+    let mesh = FluentReader::default().read(&fluent[..]).unwrap();
+    assert_eq!(mesh.sieve.cone_points(PointId::new(5).unwrap()).count(), 4);
+    assert_eq!(
+        mesh.labels
+            .as_ref()
+            .unwrap()
+            .get_label(PointId::new(1).unwrap(), "fluent:bc"),
+        Some(7)
+    );
+}

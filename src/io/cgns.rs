@@ -64,6 +64,14 @@ mod enabled {
         cell_type: CellType,
     }
 
+    #[derive(Debug)]
+    struct ZoneImport {
+        name: String,
+        first_vertex: PointId,
+        coords: Vec<[f64; 3]>,
+        elements: Vec<ElementRecord>,
+    }
+
     impl SieveSectionReader for CgnsReader {
         type Sieve = MeshSieve;
         type Value = f64;
@@ -100,58 +108,103 @@ mod enabled {
                 || g.name()
                     .rsplit('/')
                     .next()
-                    .is_some_and(|n| n.starts_with("Zone"))
+                    .is_some_and(|n| n.starts_with("Zone") && n != "ZoneBC")
         })?;
-        let zone = zones.first().ok_or_else(|| {
-            MeshSieveError::MeshIoParse("CGNS file contains no Zone_t group".into())
-        })?;
-        let coords = read_coordinates(zone)?;
-        let elements = read_elements(zone, coords.len())?;
-        build_mesh(zone, coords, elements)
+        if zones.is_empty() {
+            return Err(MeshSieveError::MeshIoParse(
+                "CGNS file contains no Zone_t group".into(),
+            ));
+        }
+
+        let mut imports = Vec::with_capacity(zones.len());
+        let mut first_vertex = 1_u64;
+        let mut next_cell_id = 1_u64;
+        for zone in &zones {
+            let name = zone.name().rsplit('/').next().unwrap_or("Zone").to_string();
+            let coords = read_coordinates(zone)?;
+            let start = PointId::new(first_vertex)?;
+            next_cell_id = next_cell_id.max(first_vertex + coords.len() as u64);
+            let elements = read_elements(zone, coords.len(), first_vertex, &mut next_cell_id)?;
+            first_vertex += coords.len() as u64;
+            imports.push(ZoneImport {
+                name,
+                first_vertex: start,
+                coords,
+                elements,
+            });
+        }
+        build_mesh(&zones, imports)
     }
 
     fn build_mesh(
-        zone: &Group,
-        coords_in: Vec<[f64; 3]>,
-        elements: Vec<ElementRecord>,
+        zones: &[Group],
+        imports: Vec<ZoneImport>,
     ) -> Result<MeshData<MeshSieve, f64, VecStorage<f64>, VecStorage<CellType>>, MeshSieveError>
     {
         let mut sieve = MeshSieve::default();
         let mut coord_atlas = Atlas::default();
-        for i in 0..coords_in.len() {
-            let p = PointId::new((i as u64) + 1)?;
-            MutableSieve::add_point(&mut sieve, p);
-            coord_atlas.try_insert(p, 3)?;
+        for zone in &imports {
+            for i in 0..zone.coords.len() {
+                let p = PointId::new(zone.first_vertex.get() + i as u64)?;
+                MutableSieve::add_point(&mut sieve, p);
+                coord_atlas.try_insert(p, 3)?;
+            }
         }
         let mut cell_atlas = Atlas::default();
-        for elem in &elements {
+        for elem in imports.iter().flat_map(|zone| zone.elements.iter()) {
             MutableSieve::add_point(&mut sieve, elem.id);
             for vertex in &elem.conn {
                 Sieve::add_arrow(&mut sieve, elem.id, *vertex, ());
             }
             cell_atlas.try_insert(elem.id, 1)?;
         }
-        let mesh_dim = elements
+        let mesh_dim = imports
             .iter()
+            .flat_map(|zone| zone.elements.iter())
             .map(|e| e.cell_type.dimension())
             .max()
             .unwrap_or(0);
         let mut coords = Coordinates::try_new(mesh_dim as usize, 3, coord_atlas)?;
-        for (i, xyz) in coords_in.iter().enumerate() {
-            coords
-                .section_mut()
-                .try_set(PointId::new((i as u64) + 1)?, xyz)?;
+        for zone in &imports {
+            for (i, xyz) in zone.coords.iter().enumerate() {
+                coords
+                    .section_mut()
+                    .try_set(PointId::new(zone.first_vertex.get() + i as u64)?, xyz)?;
+            }
         }
         let mut cell_types = Section::<CellType, VecStorage<CellType>>::new(cell_atlas);
-        for elem in &elements {
+        for elem in imports.iter().flat_map(|zone| zone.elements.iter()) {
             cell_types.try_set(elem.id, &[elem.cell_type])?;
         }
 
-        let mut labels = read_boundary_labels(zone)?;
-        for elem in &elements {
-            labels.set_label(elem.id, "cgns:cell", 1);
+        let mut labels = LabelSet::new();
+        let multiple_zones = imports.len() > 1;
+        let mut sections = std::collections::BTreeMap::new();
+        for (zone_index, (zone_group, zone)) in zones.iter().zip(imports.iter()).enumerate() {
+            let zone_value = i32::try_from(zone_index + 1).unwrap_or(i32::MAX);
+            for i in 0..zone.coords.len() {
+                let p = PointId::new(zone.first_vertex.get() + i as u64)?;
+                labels.set_label(p, "cgns:zone", zone_value);
+                labels.set_label(p, &format!("cgns:zone:{}", zone.name), 1);
+            }
+            for elem in &zone.elements {
+                labels.set_label(elem.id, "cgns:cell", 1);
+                labels.set_label(elem.id, "cgns:zone", zone_value);
+                labels.set_label(elem.id, &format!("cgns:zone:{}", zone.name), 1);
+            }
+            let zone_labels = read_boundary_labels(zone_group, zone.first_vertex.get())?;
+            for (name, point, value) in zone_labels.iter() {
+                labels.set_label(point, name, value);
+            }
+            let zone_sections = read_solution_sections(
+                zone_group,
+                zone.first_vertex.get(),
+                zone.coords.len(),
+                &zone.elements,
+                multiple_zones.then_some(zone.name.as_str()),
+            )?;
+            sections.extend(zone_sections);
         }
-        let sections = read_solution_sections(zone, coords_in.len(), &elements)?;
 
         let mut mesh = MeshData::new(sieve);
         mesh.coordinates = Some(coords);
@@ -185,13 +238,15 @@ mod enabled {
     fn read_elements(
         zone: &Group,
         vertex_count: usize,
+        vertex_offset: u64,
+        next_id: &mut u64,
     ) -> Result<Vec<ElementRecord>, MeshSieveError> {
         let groups = collect_groups(zone, |g| {
             group_label(g).as_deref() == Some("Elements_t")
                 || g.dataset("ElementConnectivity").is_ok()
         })?;
         let mut records = Vec::new();
-        let mut next_id = vertex_count as u64 + 1;
+        *next_id = (*next_id).max(vertex_offset + vertex_count as u64);
         for group in groups {
             let conn = match group.dataset("ElementConnectivity") {
                 Ok(ds) => read_i64_dataset(&ds)?,
@@ -213,11 +268,11 @@ mod enabled {
                             "truncated CGNS MIXED connectivity".into(),
                         ));
                     }
-                    let id = PointId::new(next_id)?;
-                    next_id += 1;
+                    let id = PointId::new(*next_id)?;
+                    *next_id += 1;
                     let nodes = conn[i..i + n]
                         .iter()
-                        .map(|v| PointId::new(*v as u64))
+                        .map(|v| PointId::new(vertex_offset + (*v as u64) - 1))
                         .collect::<Result<Vec<_>, _>>()?;
                     i += n;
                     records.push(ElementRecord {
@@ -239,11 +294,11 @@ mod enabled {
                     )));
                 }
                 for chunk in conn.chunks(n) {
-                    let id = PointId::new(next_id)?;
-                    next_id += 1;
+                    let id = PointId::new(*next_id)?;
+                    *next_id += 1;
                     let nodes = chunk
                         .iter()
-                        .map(|v| PointId::new(*v as u64))
+                        .map(|v| PointId::new(vertex_offset + (*v as u64) - 1))
                         .collect::<Result<Vec<_>, _>>()?;
                     records.push(ElementRecord {
                         id,
@@ -256,7 +311,7 @@ mod enabled {
         Ok(records)
     }
 
-    fn read_boundary_labels(zone: &Group) -> Result<LabelSet, MeshSieveError> {
+    fn read_boundary_labels(zone: &Group, vertex_offset: u64) -> Result<LabelSet, MeshSieveError> {
         let mut labels = LabelSet::new();
         let bcs = collect_groups(zone, |g| {
             group_label(g).as_deref() == Some("BC_t")
@@ -268,7 +323,7 @@ mod enabled {
             let value = i32::try_from(idx + 1).unwrap_or(i32::MAX);
             if let Ok(points) = read_dataset_i64_any(bc, &["PointList"]) {
                 for p in points {
-                    let point = PointId::new(p as u64)?;
+                    let point = PointId::new(vertex_offset + p as u64 - 1)?;
                     labels.set_label(point, "cgns:bc", value);
                     labels.set_label(point, &format!("cgns:bc:{name}"), 1);
                 }
@@ -276,7 +331,7 @@ mod enabled {
             if let Ok(range) = read_dataset_i64_any(bc, &["PointRange"]) {
                 if range.len() >= 2 {
                     for raw in range[0]..=range[1] {
-                        let point = PointId::new(raw as u64)?;
+                        let point = PointId::new(vertex_offset + raw as u64 - 1)?;
                         labels.set_label(point, "cgns:bc", value);
                         labels.set_label(point, &format!("cgns:bc:{name}"), 1);
                     }
@@ -288,8 +343,10 @@ mod enabled {
 
     fn read_solution_sections(
         zone: &Group,
+        vertex_offset: u64,
         vertex_count: usize,
         elements: &[ElementRecord],
+        zone_prefix: Option<&str>,
     ) -> Result<std::collections::BTreeMap<String, Section<f64, VecStorage<f64>>>, MeshSieveError>
     {
         let mut out = std::collections::BTreeMap::new();
@@ -317,8 +374,8 @@ mod enabled {
                 let values = read_f64_dataset(&ds)?;
                 let (points, dof): (Vec<PointId>, usize) = if values.len() == vertex_count {
                     (
-                        (1..=vertex_count)
-                            .map(|i| PointId::new(i as u64))
+                        (0..vertex_count)
+                            .map(|i| PointId::new(vertex_offset + i as u64))
                             .collect::<Result<_, _>>()?,
                         1,
                     )
@@ -326,8 +383,8 @@ mod enabled {
                     (elements.iter().map(|e| e.id).collect(), 1)
                 } else if vertex_count > 0 && values.len() % vertex_count == 0 {
                     (
-                        (1..=vertex_count)
-                            .map(|i| PointId::new(i as u64))
+                        (0..vertex_count)
+                            .map(|i| PointId::new(vertex_offset + i as u64))
                             .collect::<Result<_, _>>()?,
                         values.len() / vertex_count,
                     )
@@ -342,7 +399,11 @@ mod enabled {
                 for (i, p) in points.iter().enumerate() {
                     section.try_set(*p, &values[i * dof..(i + 1) * dof])?;
                 }
-                out.insert(format!("{sol_name}/{name}"), section);
+                let key = match zone_prefix {
+                    Some(zone_name) => format!("{zone_name}/{sol_name}/{name}"),
+                    None => format!("{sol_name}/{name}"),
+                };
+                out.insert(key, section);
             }
         }
         Ok(out)
