@@ -215,6 +215,28 @@ pub enum ExternalRemeshingBackend {
     Mmg,
 }
 
+impl ExternalRemeshingBackend {
+    /// Returns true when this backend's mesh-generation feature is enabled in this build.
+    pub fn is_feature_enabled(self) -> bool {
+        match self {
+            ExternalRemeshingBackend::Triangle => cfg!(feature = "triangle-support"),
+            ExternalRemeshingBackend::TetGen => cfg!(feature = "tetgen-support"),
+            ExternalRemeshingBackend::Gmsh => cfg!(feature = "gmsh-support"),
+            ExternalRemeshingBackend::Mmg => false,
+        }
+    }
+
+    /// Returns the Cargo feature that wires this backend into mesh-generation/remeshing helpers.
+    pub fn cargo_feature(self) -> Option<&'static str> {
+        match self {
+            ExternalRemeshingBackend::Triangle => Some("triangle-support"),
+            ExternalRemeshingBackend::TetGen => Some("tetgen-support"),
+            ExternalRemeshingBackend::Gmsh => Some("gmsh-support"),
+            ExternalRemeshingBackend::Mmg => None,
+        }
+    }
+}
+
 /// Backend policy for metric adaptation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MetricRemeshingBackend {
@@ -1397,8 +1419,16 @@ where
     C: Fn(&[MetricSplitHint]) -> Vec<CoarsenEntity>,
 {
     if let MetricRemeshingBackend::External(backend) = options.backend {
+        let feature = backend
+            .cargo_feature()
+            .unwrap_or("no cargo feature is currently available");
+        let availability = if backend.is_feature_enabled() {
+            "the mesh-generation feature is enabled; invoke the corresponding meshgen remesher to obtain a MeshData round trip"
+        } else {
+            "enable the backend feature before invoking the corresponding meshgen remesher"
+        };
         return Err(MeshSieveError::InvalidGeometry(format!(
-            "external metric remeshing backend {backend:?} is not linked yet"
+            "external metric remeshing backend {backend:?} is selected through MetricRemeshingBackend; {availability}. Required feature: {feature}."
         )));
     }
     let normalized_metric = normalized_metric_section(metric, options.normalization)?;
