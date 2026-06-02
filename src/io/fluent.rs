@@ -9,6 +9,7 @@ use crate::data::storage::VecStorage;
 use crate::io::{MeshData, SieveSectionReader};
 use crate::mesh_error::MeshSieveError;
 use crate::topology::cell_type::CellType;
+use crate::topology::labels::LabelSet;
 use crate::topology::point::PointId;
 use crate::topology::sieve::MeshSieve;
 use std::io::Read;
@@ -48,6 +49,7 @@ fn parse_compact(
 ) -> Result<MeshData<MeshSieve, f64, VecStorage<f64>, VecStorage<CellType>>, MeshSieveError> {
     let mut vertices = Vec::new();
     let mut cells = Vec::new();
+    let mut labels = LabelSet::new();
     for line in text.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -56,6 +58,14 @@ fn parse_compact(
         let parts: Vec<_> = line.split_whitespace().collect();
         match parts.as_slice() {
             ["v", x, y, z] => vertices.push([parse_f64(x)?, parse_f64(y)?, parse_f64(z)?]),
+            ["label", name, value, ids @ ..] if !ids.is_empty() => {
+                let value = value.parse::<i32>().map_err(|_| {
+                    MeshSieveError::MeshIoParse(format!("invalid Fluent label value: {value}"))
+                })?;
+                for id in ids {
+                    labels.set_label(PointId::new(parse_u64(id)?)?, name, value);
+                }
+            }
             ["cell", rest @ ..] if !rest.is_empty() => {
                 let conn = rest
                     .iter()
@@ -71,7 +81,9 @@ fn parse_compact(
             }
         }
     }
-    crate::io::ply::build_mesh(vertices, cells)
+    let mut mesh = crate::io::ply::build_mesh(vertices, cells)?;
+    mesh.labels = (!labels.is_empty()).then_some(labels);
+    Ok(mesh)
 }
 
 fn parse_sexpr_subset(
@@ -79,6 +91,7 @@ fn parse_sexpr_subset(
 ) -> Result<MeshData<MeshSieve, f64, VecStorage<f64>, VecStorage<CellType>>, MeshSieveError> {
     let mut vertices: Vec<[f64; 3]> = Vec::new();
     let mut cells: Vec<Vec<PointId>> = Vec::new();
+    let mut labels = LabelSet::new();
     let lines: Vec<_> = text.lines().collect();
     let mut i = 0;
     while i < lines.len() {
@@ -132,6 +145,37 @@ fn parse_sexpr_subset(
             }
             continue;
         }
+        if line.starts_with("(13 (") && !line.contains(" 0 ") {
+            let zone_id = line
+                .split_whitespace()
+                .nth(1)
+                .and_then(|raw| raw.trim_matches('(').parse::<i32>().ok())
+                .unwrap_or(1);
+            i += 1;
+            while i < lines.len() {
+                let l = lines[i].trim().trim_matches(|c| c == '(' || c == ')');
+                if l.is_empty() {
+                    i += 1;
+                    break;
+                }
+                let vals: Vec<_> = l.split_whitespace().collect();
+                if vals.len() < 4 {
+                    break;
+                }
+                let vertex_tokens = &vals[..vals.len().saturating_sub(2)];
+                for token in vertex_tokens {
+                    let point = PointId::new(parse_hex_u64(token)?)?;
+                    labels.set_label(point, "fluent:bc", zone_id);
+                    labels.set_label(point, &format!("fluent:zone:{zone_id}"), 1);
+                }
+                if lines[i].contains("))") {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            continue;
+        }
         i += 1;
     }
     if vertices.is_empty() {
@@ -139,7 +183,9 @@ fn parse_sexpr_subset(
             "no Fluent vertex coordinates found".into(),
         ));
     }
-    crate::io::ply::build_mesh(vertices, cells)
+    let mut mesh = crate::io::ply::build_mesh(vertices, cells)?;
+    mesh.labels = (!labels.is_empty()).then_some(labels);
+    Ok(mesh)
 }
 
 fn parse_f64(token: &str) -> Result<f64, MeshSieveError> {

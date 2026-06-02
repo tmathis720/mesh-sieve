@@ -1,0 +1,12 @@
+EXODUS
+DIM 2
+NODES 3
+1 0 0
+2 1 0
+3 0 1
+ELEMENTS 1
+10 Triangle 3 1 2 3
+LABELS 2
+10 exodus:material 7
+10 exodus:region 42
+END

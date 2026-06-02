@@ -1,0 +1,5 @@
+{
+  "format": "PETSc DMPlex HDF5 v3",
+  "purpose": "Schema manifest for the deterministic DMPlex HDF5 fixture produced by tests/petsc_hdf5_roundtrip.rs.",
+  "coverage": ["cone sizes", "cones", "permutation", "labels", "sections", "coordinate DM", "migration metadata"]
+}

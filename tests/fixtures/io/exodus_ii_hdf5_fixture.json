@@ -1,0 +1,5 @@
+{
+  "format": "Exodus II / HDF5",
+  "purpose": "Schema manifest for the minimal Exodus II HDF5 fixture shape exercised by the Exodus II reader/writer tests.",
+  "coverage": ["coord arrays", "connectivity blocks", "node sets", "element variables"]
+}

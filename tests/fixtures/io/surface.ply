@@ -1,0 +1,17 @@
+ply
+format ascii 1.0
+comment mesh-sieve DMPlex-class PLY fixture
+element vertex 5
+property float x
+property float y
+property float z
+element face 2
+property list uchar int vertex_indices
+end_header
+0 0 0
+1 0 0
+1 1 0
+0 1 0
+2 0 0
+3 0 1 2
+4 1 4 2 3
