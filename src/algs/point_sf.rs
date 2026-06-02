@@ -167,6 +167,55 @@ where
         self.leaves.len()
     }
 
+    /// Highest rank mentioned by a leaf remote or owner entry.
+    pub fn max_referenced_rank(&self) -> Option<usize> {
+        self.leaves
+            .iter()
+            .flat_map(|leaf| [leaf.remote.rank, leaf.owner_rank])
+            .max()
+    }
+
+    /// Return local points from `required` that are not represented as leaves.
+    pub fn missing_leaf_points<I>(&self, required: I) -> Vec<PointId>
+    where
+        I: IntoIterator<Item = PointId>,
+    {
+        let domain: BTreeSet<_> = self.leaves.iter().map(|leaf| leaf.local).collect();
+        required
+            .into_iter()
+            .filter(|point| !domain.contains(point))
+            .collect()
+    }
+
+    /// Validate this SF as provenance for a named migration stage.
+    pub fn validate_provenance_stage(
+        &self,
+        stage: &str,
+        loaded_rank_count: Option<usize>,
+    ) -> Result<SfValidationReport, MeshSieveError> {
+        let report = self.validate_mapping();
+        if !report.duplicate_leaves.is_empty() {
+            return Err(MeshSieveError::MeshIoParse(format!(
+                "{stage} SF has duplicate leaves for points {:?}",
+                report.duplicate_leaves
+            )));
+        }
+        if !report.unmapped_ghosts.is_empty() {
+            return Err(MeshSieveError::MeshIoParse(format!(
+                "{stage} SF has ghost ownership entries without leaves for points {:?}",
+                report.unmapped_ghosts
+            )));
+        }
+        if let (Some(size), Some(max_rank)) = (loaded_rank_count, self.max_referenced_rank())
+            && max_rank >= size
+        {
+            return Err(MeshSieveError::MeshIoParse(format!(
+                "{stage} SF references rank {max_rank}, but loaded_rank_count is {size}"
+            )));
+        }
+        Ok(report)
+    }
+
     /// Create a PointSF without ownership metadata from an overlap graph.
     pub fn new(overlap: &'a Overlap, comm: &'a C, my_rank: usize) -> Self {
         Self::from_overlap(overlap, None, Some(comm), my_rank)
