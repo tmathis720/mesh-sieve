@@ -66,6 +66,7 @@ fn main() {
             [7, 4],
         ],
         holes: vec![[0.5, 0.5]],
+        ..TriangleInput::default()
     };
     let triangle_options = TriangleOptions {
         max_area: Some(0.02),
@@ -116,7 +117,7 @@ fn main() {
             [0.0, 0.0, 1.0],
         ],
         facets: vec![vec![0, 2, 1], vec![0, 1, 3], vec![1, 2, 3], vec![2, 0, 3]],
-        holes: Vec::new(),
+        ..TetGenInput::default()
     };
     report(
         "tetgen create",

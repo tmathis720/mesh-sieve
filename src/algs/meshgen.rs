@@ -138,6 +138,34 @@ fn build_mesh(
     })
 }
 
+#[cfg(any(feature = "triangle-support", feature = "tetgen-support"))]
+fn generated_vertex_point(vertex_index: usize) -> Result<PointId, MeshSieveError> {
+    PointId::new(vertex_index as u64 + 1)
+}
+
+#[cfg(any(feature = "triangle-support", feature = "tetgen-support"))]
+fn generated_cell_point(vertex_count: usize, cell_index: usize) -> Result<PointId, MeshSieveError> {
+    PointId::new((vertex_count + cell_index) as u64 + 1)
+}
+
+#[cfg(any(feature = "triangle-support", feature = "tetgen-support"))]
+fn merge_labels(
+    mesh: &mut MeshData<InMemorySieve<PointId, ()>, f64, VecStorage<f64>, VecStorage<CellType>>,
+    labels: LabelSet,
+) {
+    if labels.is_empty() {
+        return;
+    }
+    match mesh.labels.as_mut() {
+        Some(existing) => {
+            for (name, point, value) in labels.iter() {
+                existing.set_label(point, &name, value);
+            }
+        }
+        None => mesh.labels = Some(labels),
+    }
+}
+
 pub fn structured_box_1d(nx: usize, min: f64, max: f64, options: MeshGenOptions) -> MeshGenResult {
     let mut out = interval_mesh(
         nx,
@@ -367,12 +395,30 @@ pub fn cylinder_shell(
 /// Polygonal input for Triangle constrained Delaunay triangulation.
 #[derive(Clone, Debug, Default)]
 pub struct TriangleInput {
-    /// Planar vertex coordinates. Indices used by segments and holes are zero-based.
+    /// Planar vertex coordinates. Indices used by segments, holes, and regions are zero-based.
     pub vertices: Vec<[f64; 2]>,
+    /// Optional per-vertex boundary markers written to Triangle `.poly` input and restored as
+    /// `triangle:vertex_marker` labels when present in `.node` output. Missing entries default to 0.
+    pub vertex_markers: Vec<i32>,
     /// Constrained segments as zero-based vertex index pairs.
     pub segments: Vec<[usize; 2]>,
+    /// Optional per-segment boundary markers written to `.poly` input. Missing entries default to 0.
+    pub segment_markers: Vec<i32>,
     /// Hole seed points in Triangle `.poly` syntax.
     pub holes: Vec<[f64; 2]>,
+    /// Region seed points with attributes and optional maximum area.
+    pub regions: Vec<TriangleRegion>,
+}
+
+/// Region metadata for Triangle `.poly` inputs.
+#[derive(Clone, Copy, Debug)]
+pub struct TriangleRegion {
+    /// Interior point identifying the region.
+    pub point: [f64; 2],
+    /// Region attribute restored as `triangle:region` labels on output cells.
+    pub attribute: i32,
+    /// Optional maximum area for this region.
+    pub max_area: Option<f64>,
 }
 
 /// Runtime options for the Triangle command-line backend.
@@ -407,10 +453,27 @@ impl Default for TriangleOptions {
 pub struct TetGenInput {
     /// Spatial vertex coordinates. Facets use zero-based vertex indices.
     pub vertices: Vec<[f64; 3]>,
+    /// Optional per-vertex boundary markers restored as `tetgen:vertex_marker` labels when present.
+    pub vertex_markers: Vec<i32>,
     /// Boundary facets, each represented by one polygon with at least three vertices.
     pub facets: Vec<Vec<usize>>,
+    /// Optional per-facet boundary markers written to `.poly` input. Missing entries default to 0.
+    pub facet_markers: Vec<i32>,
     /// Hole seed points in TetGen `.poly` syntax.
     pub holes: Vec<[f64; 3]>,
+    /// Region seed points with attributes and optional maximum volume.
+    pub regions: Vec<TetGenRegion>,
+}
+
+/// Region metadata for TetGen `.poly` inputs.
+#[derive(Clone, Copy, Debug)]
+pub struct TetGenRegion {
+    /// Interior point identifying the region.
+    pub point: [f64; 3],
+    /// Region attribute restored as `tetgen:region` labels on output cells.
+    pub attribute: i32,
+    /// Optional maximum volume for this region.
+    pub max_volume: Option<f64>,
 }
 
 /// Runtime options for the TetGen command-line backend.
@@ -583,30 +646,83 @@ fn write_triangle_poly(path: &Path, input: &TriangleInput) -> Result<(), MeshSie
         }
     }
     let mut file = File::create(path)?;
-    writeln!(file, "{} 2 0 0", input.vertices.len())?;
+    let has_vertex_markers = input.vertex_markers.iter().any(|marker| *marker != 0);
+    writeln!(
+        file,
+        "{} 2 0 {}",
+        input.vertices.len(),
+        usize::from(has_vertex_markers)
+    )?;
     for (idx, [x, y]) in input.vertices.iter().enumerate() {
-        writeln!(file, "{} {x} {y}", idx + 1)?;
+        if has_vertex_markers {
+            let marker = input.vertex_markers.get(idx).copied().unwrap_or_default();
+            writeln!(file, "{} {x} {y} {marker}", idx + 1)?;
+        } else {
+            writeln!(file, "{} {x} {y}", idx + 1)?;
+        }
     }
-    writeln!(file, "{} 0", input.segments.len())?;
+    let has_segment_markers = input.segment_markers.iter().any(|marker| *marker != 0);
+    writeln!(
+        file,
+        "{} {}",
+        input.segments.len(),
+        usize::from(has_segment_markers)
+    )?;
     for (idx, [a, b]) in input.segments.iter().enumerate() {
-        writeln!(file, "{} {} {}", idx + 1, a + 1, b + 1)?;
+        let marker = input.segment_markers.get(idx).copied().unwrap_or_default();
+        if has_segment_markers {
+            writeln!(file, "{} {} {} {marker}", idx + 1, a + 1, b + 1)?;
+        } else {
+            writeln!(file, "{} {} {}", idx + 1, a + 1, b + 1)?;
+        }
     }
     writeln!(file, "{}", input.holes.len())?;
     for (idx, [x, y]) in input.holes.iter().enumerate() {
         writeln!(file, "{} {x} {y}", idx + 1)?;
+    }
+    writeln!(file, "{}", input.regions.len())?;
+    for (idx, region) in input.regions.iter().enumerate() {
+        let [x, y] = region.point;
+        if let Some(area) = region.max_area {
+            writeln!(file, "{} {x} {y} {} {area}", idx + 1, region.attribute)?;
+        } else {
+            writeln!(file, "{} {x} {y} {}", idx + 1, region.attribute)?;
+        }
     }
     Ok(())
 }
 
 #[cfg(feature = "triangle-support")]
 fn read_triangle_output(prefix: &Path) -> MeshGenResult {
-    let nodes = read_triangle_nodes(&prefix.with_extension("1.node"))?;
-    let cells = read_triangle_elements(&prefix.with_extension("1.ele"), 3)?;
-    build_mesh(2, &nodes, &cells, CellType::Triangle, None)
+    let (nodes, node_markers) = read_triangle_nodes(&prefix.with_extension("1.node"))?;
+    let (cells, cell_attrs) = read_triangle_elements(&prefix.with_extension("1.ele"), 3)?;
+    let mut mesh = build_mesh(2, &nodes, &cells, CellType::Triangle, None)?;
+    let mut labels = LabelSet::new();
+    for (idx, marker) in node_markers.into_iter().enumerate() {
+        if marker != 0 {
+            labels.set_label(
+                generated_vertex_point(idx)?,
+                "triangle:vertex_marker",
+                marker,
+            );
+            labels.set_label(generated_vertex_point(idx)?, "boundary", marker);
+        }
+    }
+    for (idx, attrs) in cell_attrs.into_iter().enumerate() {
+        if let Some(region) = attrs.first().copied() {
+            labels.set_label(
+                generated_cell_point(nodes.len(), idx)?,
+                "triangle:region",
+                region,
+            );
+        }
+    }
+    merge_labels(&mut mesh, labels);
+    Ok(mesh)
 }
 
 #[cfg(feature = "triangle-support")]
-fn read_triangle_nodes(path: &Path) -> Result<Vec<Vec<f64>>, MeshSieveError> {
+fn read_triangle_nodes(path: &Path) -> Result<(Vec<Vec<f64>>, Vec<i32>), MeshSieveError> {
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
     let header = read_non_comment_line(&mut reader)?;
@@ -617,7 +733,9 @@ fn read_triangle_nodes(path: &Path) -> Result<Vec<Vec<f64>>, MeshSieveError> {
         ));
     }
     let count = parse_usize(parts[0], "Triangle .node header")?;
+    let has_marker = parts.get(3).is_some_and(|raw| *raw != "0");
     let mut out = Vec::with_capacity(count);
+    let mut markers = Vec::with_capacity(count);
     for _ in 0..count {
         let line = read_non_comment_line(&mut reader)?;
         let parts: Vec<_> = line.split_whitespace().collect();
@@ -628,15 +746,25 @@ fn read_triangle_nodes(path: &Path) -> Result<Vec<Vec<f64>>, MeshSieveError> {
             parse_f64(parts[1], "Triangle .node row")?,
             parse_f64(parts[2], "Triangle .node row")?,
         ]);
+        markers.push(if has_marker && parts.len() > 3 {
+            parts[3].parse::<i32>().map_err(|_| {
+                invalid_geometry(format!(
+                    "invalid marker in Triangle .node row: {}",
+                    parts[3]
+                ))
+            })?
+        } else {
+            0
+        });
     }
-    Ok(out)
+    Ok((out, markers))
 }
 
 #[cfg(feature = "triangle-support")]
 fn read_triangle_elements(
     path: &Path,
     expected_nodes: usize,
-) -> Result<Vec<Vec<usize>>, MeshSieveError> {
+) -> Result<(Vec<Vec<usize>>, Vec<Vec<i32>>), MeshSieveError> {
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
     let header = read_non_comment_line(&mut reader)?;
@@ -647,7 +775,11 @@ fn read_triangle_elements(
         ));
     }
     let count = parse_usize(parts[0], "Triangle .ele header")?;
+    let attribute_count = parts
+        .get(2)
+        .map_or(Ok(0), |raw| parse_usize(raw, "Triangle .ele header"))?;
     let mut out = Vec::with_capacity(count);
+    let mut attrs = Vec::with_capacity(count);
     for _ in 0..count {
         let line = read_non_comment_line(&mut reader)?;
         let parts: Vec<_> = line.split_whitespace().collect();
@@ -663,9 +795,16 @@ fn read_triangle_elements(
                     .ok_or_else(|| invalid_geometry("Triangle wrote node id 0"))?,
             );
         }
+        let mut row_attrs = Vec::with_capacity(attribute_count);
+        for raw in parts.iter().skip(expected_nodes + 1).take(attribute_count) {
+            row_attrs.push(raw.parse::<i32>().map_err(|_| {
+                invalid_geometry(format!("invalid attribute in Triangle .ele row: {raw}"))
+            })?);
+        }
         out.push(cell);
+        attrs.push(row_attrs);
     }
-    Ok(out)
+    Ok((out, attrs))
 }
 
 /// Generate a 2-D constrained triangulation by invoking Triangle.
@@ -710,11 +849,28 @@ fn write_tetgen_poly(path: &Path, input: &TetGenInput) -> Result<(), MeshSieveEr
         return Err(invalid_geometry("TetGen requires at least four vertices"));
     }
     let mut file = File::create(path)?;
-    writeln!(file, "{} 3 0 0", input.vertices.len())?;
+    let has_vertex_markers = input.vertex_markers.iter().any(|marker| *marker != 0);
+    writeln!(
+        file,
+        "{} 3 0 {}",
+        input.vertices.len(),
+        usize::from(has_vertex_markers)
+    )?;
     for (idx, [x, y, z]) in input.vertices.iter().enumerate() {
-        writeln!(file, "{} {x} {y} {z}", idx + 1)?;
+        if has_vertex_markers {
+            let marker = input.vertex_markers.get(idx).copied().unwrap_or_default();
+            writeln!(file, "{} {x} {y} {z} {marker}", idx + 1)?;
+        } else {
+            writeln!(file, "{} {x} {y} {z}", idx + 1)?;
+        }
     }
-    writeln!(file, "{} 0", input.facets.len())?;
+    let has_facet_markers = input.facet_markers.iter().any(|marker| *marker != 0);
+    writeln!(
+        file,
+        "{} {}",
+        input.facets.len(),
+        usize::from(has_facet_markers)
+    )?;
     for (facet_idx, facet) in input.facets.iter().enumerate() {
         if facet.len() < 3 {
             return Err(invalid_geometry(format!(
@@ -728,7 +884,16 @@ fn write_tetgen_poly(path: &Path, input: &TetGenInput) -> Result<(), MeshSieveEr
                 )));
             }
         }
-        writeln!(file, "1 0")?;
+        if has_facet_markers {
+            let marker = input
+                .facet_markers
+                .get(facet_idx)
+                .copied()
+                .unwrap_or_default();
+            writeln!(file, "1 0 {marker}")?;
+        } else {
+            writeln!(file, "1 0")?;
+        }
         write!(file, "{}", facet.len())?;
         for idx in facet {
             write!(file, " {}", idx + 1)?;
@@ -739,19 +904,50 @@ fn write_tetgen_poly(path: &Path, input: &TetGenInput) -> Result<(), MeshSieveEr
     for (idx, [x, y, z]) in input.holes.iter().enumerate() {
         writeln!(file, "{} {x} {y} {z}", idx + 1)?;
     }
-    writeln!(file, "0")?;
+    writeln!(file, "{}", input.regions.len())?;
+    for (idx, region) in input.regions.iter().enumerate() {
+        let [x, y, z] = region.point;
+        if let Some(volume) = region.max_volume {
+            writeln!(
+                file,
+                "{} {x} {y} {z} {} {volume}",
+                idx + 1,
+                region.attribute
+            )?;
+        } else {
+            writeln!(file, "{} {x} {y} {z} {}", idx + 1, region.attribute)?;
+        }
+    }
     Ok(())
 }
 
 #[cfg(feature = "tetgen-support")]
 fn read_tetgen_output(prefix: &Path) -> MeshGenResult {
-    let nodes = read_tetgen_nodes(&prefix.with_extension("1.node"))?;
-    let cells = read_tetgen_elements(&prefix.with_extension("1.ele"))?;
-    build_mesh(3, &nodes, &cells, CellType::Tetrahedron, None)
+    let (nodes, node_markers) = read_tetgen_nodes(&prefix.with_extension("1.node"))?;
+    let (cells, cell_attrs) = read_tetgen_elements(&prefix.with_extension("1.ele"))?;
+    let mut mesh = build_mesh(3, &nodes, &cells, CellType::Tetrahedron, None)?;
+    let mut labels = LabelSet::new();
+    for (idx, marker) in node_markers.into_iter().enumerate() {
+        if marker != 0 {
+            labels.set_label(generated_vertex_point(idx)?, "tetgen:vertex_marker", marker);
+            labels.set_label(generated_vertex_point(idx)?, "boundary", marker);
+        }
+    }
+    for (idx, attrs) in cell_attrs.into_iter().enumerate() {
+        if let Some(region) = attrs.first().copied() {
+            labels.set_label(
+                generated_cell_point(nodes.len(), idx)?,
+                "tetgen:region",
+                region,
+            );
+        }
+    }
+    merge_labels(&mut mesh, labels);
+    Ok(mesh)
 }
 
 #[cfg(feature = "tetgen-support")]
-fn read_tetgen_nodes(path: &Path) -> Result<Vec<Vec<f64>>, MeshSieveError> {
+fn read_tetgen_nodes(path: &Path) -> Result<(Vec<Vec<f64>>, Vec<i32>), MeshSieveError> {
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
     let header = read_non_comment_line(&mut reader)?;
@@ -762,7 +958,9 @@ fn read_tetgen_nodes(path: &Path) -> Result<Vec<Vec<f64>>, MeshSieveError> {
         ));
     }
     let count = parse_usize(parts[0], "TetGen .node header")?;
+    let has_marker = parts.get(3).is_some_and(|raw| *raw != "0");
     let mut out = Vec::with_capacity(count);
+    let mut markers = Vec::with_capacity(count);
     for _ in 0..count {
         let line = read_non_comment_line(&mut reader)?;
         let parts: Vec<_> = line.split_whitespace().collect();
@@ -774,12 +972,19 @@ fn read_tetgen_nodes(path: &Path) -> Result<Vec<Vec<f64>>, MeshSieveError> {
             parse_f64(parts[2], "TetGen .node row")?,
             parse_f64(parts[3], "TetGen .node row")?,
         ]);
+        markers.push(if has_marker && parts.len() > 4 {
+            parts[4].parse::<i32>().map_err(|_| {
+                invalid_geometry(format!("invalid marker in TetGen .node row: {}", parts[4]))
+            })?
+        } else {
+            0
+        });
     }
-    Ok(out)
+    Ok((out, markers))
 }
 
 #[cfg(feature = "tetgen-support")]
-fn read_tetgen_elements(path: &Path) -> Result<Vec<Vec<usize>>, MeshSieveError> {
+fn read_tetgen_elements(path: &Path) -> Result<(Vec<Vec<usize>>, Vec<Vec<i32>>), MeshSieveError> {
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
     let header = read_non_comment_line(&mut reader)?;
@@ -790,7 +995,11 @@ fn read_tetgen_elements(path: &Path) -> Result<Vec<Vec<usize>>, MeshSieveError> 
         ));
     }
     let count = parse_usize(parts[0], "TetGen .ele header")?;
+    let attribute_count = parts
+        .get(2)
+        .map_or(Ok(0), |raw| parse_usize(raw, "TetGen .ele header"))?;
     let mut out = Vec::with_capacity(count);
+    let mut attrs = Vec::with_capacity(count);
     for _ in 0..count {
         let line = read_non_comment_line(&mut reader)?;
         let parts: Vec<_> = line.split_whitespace().collect();
@@ -806,9 +1015,16 @@ fn read_tetgen_elements(path: &Path) -> Result<Vec<Vec<usize>>, MeshSieveError> 
                     .ok_or_else(|| invalid_geometry("TetGen wrote node id 0"))?,
             );
         }
+        let mut row_attrs = Vec::with_capacity(attribute_count);
+        for raw in parts.iter().skip(5).take(attribute_count) {
+            row_attrs.push(raw.parse::<i32>().map_err(|_| {
+                invalid_geometry(format!("invalid attribute in TetGen .ele row: {raw}"))
+            })?);
+        }
         out.push(cell);
+        attrs.push(row_attrs);
     }
-    Ok(out)
+    Ok((out, attrs))
 }
 
 /// Generate a 3-D tetrahedralization by invoking TetGen.
@@ -927,7 +1143,24 @@ fn write_plain_gmsh_v2(
             CellType::Pyramid => 7,
             _ => continue,
         };
-        write!(file, "{} {} 0", point.get(), elem_type)?;
+        let (physical, entity) = mesh
+            .labels
+            .as_ref()
+            .map(|labels| {
+                (
+                    labels
+                        .get_label(point, "gmsh:physical")
+                        .or_else(|| labels.get_label(point, "region"))
+                        .unwrap_or_default(),
+                    labels.get_label(point, "gmsh:entity").unwrap_or_default(),
+                )
+            })
+            .unwrap_or_default();
+        if physical != 0 || entity != 0 {
+            write!(file, "{} {} 2 {physical} {entity}", point.get(), elem_type)?;
+        } else {
+            write!(file, "{} {} 0", point.get(), elem_type)?;
+        }
         for node in mesh.sieve.cone_points(point) {
             write!(file, " {}", node.get())?;
         }
