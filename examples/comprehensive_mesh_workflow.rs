@@ -14,6 +14,7 @@
 
 #[cfg(feature = "mpi-support")]
 use mesh_sieve::algs::dual_graph::build_dual;
+#[cfg(feature = "mpi-support")]
 use mesh_sieve::topology::MeshSieve;
 #[cfg(feature = "mpi-support")]
 use mesh_sieve::{
