@@ -157,7 +157,7 @@ pub mod prelude {
     };
     pub use crate::dm::{
         MeshDM, MeshDMBuilder, MeshDMDistribution, MeshDMLabelSelection, MeshDMOptions,
-        MeshDMSubmesh, MeshVector, PreallocationGraph,
+        MeshDMSubmesh, MeshPointChart, MeshVector, MeshVectorInsertMode, PreallocationGraph,
     };
     pub use crate::dm_options::{
         DmplexCheckProfile, DmplexConfigProfile, DmplexDistributionProfile, DmplexIoProfile,

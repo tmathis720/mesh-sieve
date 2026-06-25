@@ -7,7 +7,10 @@ use mesh_sieve::topology::cell_type::CellType;
 use mesh_sieve::topology::point::PointId;
 use mesh_sieve::topology::sieve::Sieve;
 use std::fs;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+static NEXT_TEMP_FILE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn reads_cgns_hdf5_mixed_elements_labels_and_solution() {
@@ -216,6 +219,10 @@ fn temp_path() -> std::path::PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    path.push(format!("mesh_sieve_test_{nanos}.cgns"));
+    let sequence = NEXT_TEMP_FILE.fetch_add(1, Ordering::Relaxed);
+    path.push(format!(
+        "mesh_sieve_cgns_test_{}_{nanos}_{sequence}.cgns",
+        std::process::id()
+    ));
     path
 }

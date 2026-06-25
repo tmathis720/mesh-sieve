@@ -23,6 +23,27 @@ pub fn rayons() -> (RayonComm, RayonComm) {
     (RayonComm::new(0, 2), RayonComm::new(1, 2))
 }
 
+/// Return an MPI world-size hint only when a recognized launcher populated
+/// its process environment. This lets ordinary `cargo test` skip MPI runtime
+/// initialization, which some MPI implementations do not support in singleton
+/// mode and may abort rather than return an error.
+#[cfg(feature = "mpi-support")]
+pub fn mpi_launcher_world_size() -> Option<usize> {
+    [
+        "OMPI_COMM_WORLD_SIZE",
+        "PMI_SIZE",
+        "PMIX_UNIV_SIZE",
+        "MV2_COMM_WORLD_SIZE",
+    ]
+    .into_iter()
+    .find_map(|name| {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|size| *size > 0)
+    })
+}
+
 /// Assert vec is a permutation of another vec (order-agnostic).
 pub fn assert_permutation<T: Ord + Copy + std::fmt::Debug>(got: &[T], want: &[T]) {
     let mut a = got.to_vec();

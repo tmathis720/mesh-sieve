@@ -1,5 +1,7 @@
 #![cfg(feature = "mpi-support")]
 
+mod util;
+
 use mesh_sieve::algs::communicator::{Communicator, MpiComm};
 use mesh_sieve::algs::completion::section_completion::complete_section;
 use mesh_sieve::data::{atlas::Atlas, section::Section, storage::VecStorage};
@@ -68,10 +70,11 @@ fn run_layout(comm: &MpiComm, swap_partitioning: bool) -> (PointId, f64, f64) {
 
 #[test]
 fn mpi_fvm_modes_parity_and_partitioning_invariance() {
-    let comm = MpiComm::new().expect("MPI init");
-    if comm.size() != 2 {
+    if util::mpi_launcher_world_size() != Some(2) {
         return;
     }
+    let comm = MpiComm::new().expect("MPI init");
+    assert_eq!(comm.size(), 2);
 
     let (cell_a, residual_a, iface_a) = run_layout(&comm, false);
     let (cell_b, residual_b, iface_b) = run_layout(&comm, true);

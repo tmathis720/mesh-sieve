@@ -186,8 +186,11 @@ proptest! {
         prop_assume!(a != b);
         let edge = if a < b { (a, b) } else { (b, a) };
         let mut m1 = HashMap::new();
-        m1.insert(edge, o1);
-        m1.insert(edge, o2);
+        // A HashMap cannot hold two owner candidates under the same key. Use
+        // both directed representations of the undirected edge so the helper
+        // must canonicalize them before applying its minimum-owner reduction.
+        m1.insert((a, b), o1);
+        m1.insert((b, a), o2);
         let out = exchange_cut_edge_owner_decisions(&m1);
         let got = *out.get(&edge).expect("owner decision exists");
         prop_assert_eq!(got, o1.min(o2));

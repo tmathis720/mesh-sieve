@@ -52,6 +52,9 @@ fn rayon_comm_roundtrip_and_tag_isolation() {
 #[test]
 fn mpi_comm_smoke_if_available() {
     use mesh_sieve::algs::communicator::MpiComm;
+    if mpi_launcher_world_size().is_none() {
+        return;
+    }
     let world = MpiComm::new().expect("MPI initialization failed");
     let me = world.rank();
     let n = world.size();

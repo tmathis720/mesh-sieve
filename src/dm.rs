@@ -56,7 +56,7 @@ use crate::topology::ownership::PointOwnership;
 use crate::topology::point::PointId;
 use crate::topology::refine::refine_mesh;
 use crate::topology::sieve::strata::compute_strata;
-use crate::topology::sieve::{MeshSieve, Sieve};
+use crate::topology::sieve::{MeshSieve, OrientedSieve, Sieve};
 
 /// Options for a DMPLEX-like setup pipeline.
 ///
@@ -215,6 +215,32 @@ pub struct MeshVector<V> {
     pub section: Option<String>,
     /// Contiguous values in local or global numbering order.
     pub values: Vec<V>,
+}
+
+/// DMPlex-style insertion policy for local-vector closure updates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MeshVectorInsertMode {
+    /// Replace every scalar value in the selected closure.
+    InsertValues,
+    /// Accumulate every scalar value into the selected closure.
+    AddValues,
+}
+
+/// Numeric chart containing all topology point identifiers.
+///
+/// Unlike PETSc, mesh-sieve permits sparse point identifiers. `start` and
+/// `end_inclusive` therefore bound the identifiers while `point_count` and
+/// `is_dense` state whether the interval itself is a complete point set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MeshPointChart {
+    /// Smallest point identifier in the topology.
+    pub start: u64,
+    /// Largest point identifier in the topology.
+    pub end_inclusive: u64,
+    /// Number of points actually present in the topology.
+    pub point_count: usize,
+    /// Whether every identifier in the bounded interval is present.
+    pub is_dense: bool,
 }
 
 /// Matrix/preallocation graph derived from a DM adjacency graph and section map.
@@ -1040,6 +1066,7 @@ where
 
     /// Mutably borrow the topology.
     pub fn topology_mut(&mut self) -> &mut MeshSieve {
+        self.invalidate_numbering();
         &mut self.mesh_data.sieve
     }
 
@@ -1053,9 +1080,28 @@ where
         self.mesh_data.coordinates.as_ref()
     }
 
+    /// Mutably borrow coordinate metadata.
+    pub fn coordinates_mut(&mut self) -> Option<&mut Coordinates<V, St>> {
+        self.mesh_data.coordinates.as_mut()
+    }
+
+    /// Attach or replace coordinate metadata.
+    pub fn set_coordinates(
+        &mut self,
+        coordinates: Coordinates<V, St>,
+    ) -> Option<Coordinates<V, St>> {
+        self.mesh_data.coordinates.replace(coordinates)
+    }
+
     /// Borrow a named local section.
     pub fn section(&self, name: &str) -> Option<&Section<V, St>> {
         self.mesh_data.sections.get(name)
+    }
+
+    /// Mutably borrow a named local section and invalidate its global numbering.
+    pub fn section_mut(&mut self, name: &str) -> Option<&mut Section<V, St>> {
+        self.global_sections.remove(name);
+        self.mesh_data.sections.get_mut(name)
     }
 
     /// Mutably borrow or create labels.
@@ -1069,7 +1115,16 @@ where
         name: impl Into<String>,
         section: Section<V, St>,
     ) -> Option<Section<V, St>> {
-        self.mesh_data.sections.insert(name.into(), section)
+        let name = name.into();
+        self.global_sections.remove(&name);
+        self.mesh_data.sections.insert(name, section)
+    }
+
+    /// Remove a named local section and any derived global numbering.
+    pub fn remove_section(&mut self, name: &str) -> Option<Section<V, St>> {
+        self.global_sections.remove(name);
+        self.hanging_constraints.remove(name);
+        self.mesh_data.sections.remove(name)
     }
 
     /// Borrow cell type metadata, if present.
@@ -1077,9 +1132,32 @@ where
         self.mesh_data.cell_types.as_ref()
     }
 
+    /// Mutably borrow cell-type metadata.
+    pub fn cell_types_mut(&mut self) -> Option<&mut Section<CellType, CtSt>> {
+        self.mesh_data.cell_types.as_mut()
+    }
+
+    /// Attach or replace cell-type metadata.
+    pub fn set_cell_types(
+        &mut self,
+        cell_types: Section<CellType, CtSt>,
+    ) -> Option<Section<CellType, CtSt>> {
+        self.mesh_data.cell_types.replace(cell_types)
+    }
+
     /// Borrow discretization metadata, if present.
     pub fn discretization(&self) -> Option<&Discretization> {
         self.mesh_data.discretization.as_ref()
+    }
+
+    /// Mutably borrow discretization metadata.
+    pub fn discretization_mut(&mut self) -> Option<&mut Discretization> {
+        self.mesh_data.discretization.as_mut()
+    }
+
+    /// Attach or replace discretization metadata.
+    pub fn set_discretization(&mut self, discretization: Discretization) -> Option<Discretization> {
+        self.mesh_data.discretization.replace(discretization)
     }
 
     /// Borrow ownership metadata, if this DM has been distributed or numbered.
@@ -1278,6 +1356,61 @@ where
         )
     }
 
+    /// Return the numeric point chart and whether it is dense.
+    pub fn point_chart(&self) -> Option<MeshPointChart> {
+        let points = self.mesh_data.sieve.points_sorted();
+        let start = points.first()?.get();
+        let end_inclusive = points.last()?.get();
+        let point_count = points.len();
+        let interval_len = end_inclusive
+            .checked_sub(start)
+            .and_then(|width| width.checked_add(1));
+        Some(MeshPointChart {
+            start,
+            end_inclusive,
+            point_count,
+            is_dense: interval_len == u64::try_from(point_count).ok(),
+        })
+    }
+
+    /// Return the immediate downward cone of a point in deterministic order.
+    pub fn cone_points(&self, point: PointId) -> Vec<PointId> {
+        let mut points: Vec<_> = self.mesh_data.sieve.cone_points(point).collect();
+        points.sort_unstable();
+        points
+    }
+
+    /// Return the immediate downward cone with incidence orientations.
+    pub fn oriented_cone(&self, point: PointId) -> Vec<(PointId, i32)> {
+        let mut points: Vec<_> = self.mesh_data.sieve.cone_o(point).collect();
+        points.sort_unstable_by_key(|(point, _)| *point);
+        points
+    }
+
+    /// Return the immediate upward support of a point in deterministic order.
+    pub fn support_points(&self, point: PointId) -> Vec<PointId> {
+        let mut points: Vec<_> = self.mesh_data.sieve.support_points(point).collect();
+        points.sort_unstable();
+        points
+    }
+
+    /// Return the immediate upward support with forward-incidence orientations.
+    pub fn oriented_support(&self, point: PointId) -> Vec<(PointId, i32)> {
+        let mut points: Vec<_> = self.mesh_data.sieve.support_o(point).collect();
+        points.sort_unstable_by_key(|(point, _)| *point);
+        points
+    }
+
+    /// Return the number of immediate points in a point's downward cone.
+    pub fn cone_size(&self, point: PointId) -> usize {
+        self.mesh_data.sieve.cone_points(point).count()
+    }
+
+    /// Return the number of immediate points in a point's upward support.
+    pub fn support_size(&self, point: PointId) -> usize {
+        self.mesh_data.sieve.support_points(point).count()
+    }
+
     /// Return points in a height stratum (height 0 are cells in DMPLEX terms).
     pub fn height_stratum(&self, height: u32) -> Result<Vec<PointId>, MeshSieveError> {
         let strata = compute_strata(&self.mesh_data.sieve)?;
@@ -1300,6 +1433,58 @@ where
         Ok(points)
     }
 
+    /// Create and register a section from DOF counts indexed by point depth.
+    ///
+    /// `dofs_by_depth[d]` is the number of scalar DOFs assigned to every point
+    /// in depth stratum `d`; zero entries omit that stratum from the section.
+    pub fn create_section_from_depth(
+        &mut self,
+        name: impl Into<String>,
+        dofs_by_depth: &[usize],
+    ) -> Result<Option<Section<V, St>>, MeshSieveError> {
+        self.create_section_from_depth_impl(name.into(), dofs_by_depth, None)
+    }
+
+    /// Create and register a depth-layout section restricted to a label value.
+    pub fn create_section_from_depth_on_label(
+        &mut self,
+        name: impl Into<String>,
+        dofs_by_depth: &[usize],
+        label_name: &str,
+        label_value: i32,
+    ) -> Result<Option<Section<V, St>>, MeshSieveError> {
+        let labels = self
+            .labels()
+            .ok_or_else(|| MeshSieveError::MissingSectionName {
+                name: "labels".to_string(),
+            })?;
+        let support: HashSet<_> = labels.points_with_label(label_name, label_value).collect();
+        self.create_section_from_depth_impl(name.into(), dofs_by_depth, Some(&support))
+    }
+
+    fn create_section_from_depth_impl(
+        &mut self,
+        name: String,
+        dofs_by_depth: &[usize],
+        support: Option<&HashSet<PointId>>,
+    ) -> Result<Option<Section<V, St>>, MeshSieveError> {
+        let strata = compute_strata(&self.mesh_data.sieve)?;
+        let mut entries: Vec<_> = strata.depth.into_iter().collect();
+        entries.sort_unstable_by_key(|(point, _)| *point);
+        let mut atlas = Atlas::default();
+        for (point, depth) in entries {
+            if support.is_some_and(|points| !points.contains(&point)) {
+                continue;
+            }
+            let dofs = dofs_by_depth.get(depth as usize).copied().unwrap_or(0);
+            if dofs > 0 {
+                atlas.try_insert(point, dofs)?;
+            }
+        }
+        self.global_sections.remove(&name);
+        Ok(self.mesh_data.sections.insert(name, Section::new(atlas)))
+    }
+
     /// Return an FE-compatible point order for the downward transitive closure of `point`.
     pub fn closure_points(
         &self,
@@ -1319,6 +1504,21 @@ where
         order: &ClosureOrder,
     ) -> Result<Vec<PointId>, MeshSieveError> {
         self.closure_points(point, order)
+    }
+
+    /// Return closure points lying in one global topology depth stratum.
+    pub fn closure_points_at_depth(
+        &self,
+        point: PointId,
+        depth: u32,
+        order: &ClosureOrder,
+    ) -> Result<Vec<PointId>, MeshSieveError> {
+        let strata = compute_strata(&self.mesh_data.sieve)?;
+        Ok(self
+            .closure_index_for_points(point, order)?
+            .point_order()
+            .filter(|closure_point| strata.depth.get(closure_point).copied() == Some(depth))
+            .collect())
     }
 
     /// Return a deterministic upward star from `point`.
@@ -1701,6 +1901,145 @@ where
         })
     }
 
+    /// Gather values from a local vector over a point's oriented closure.
+    pub fn get_local_vector_closure(
+        &self,
+        section_name: &str,
+        vector: &MeshVector<V>,
+        point: PointId,
+        order: &ClosureOrder,
+    ) -> Result<Vec<V>, MeshSieveError> {
+        let (section, index) =
+            self.local_vector_closure_index(section_name, vector, point, order)?;
+        let mut values = Vec::with_capacity(index.len);
+        for entry in &index.points {
+            let (offset, len) = section
+                .atlas()
+                .get(entry.point)
+                .ok_or(MeshSieveError::PointNotInAtlas(entry.point))?;
+            let point_values = vector.values.get(offset..offset + len).ok_or(
+                MeshSieveError::ScatterLengthMismatch {
+                    expected: section.atlas().total_len(),
+                    found: vector.values.len(),
+                },
+            )?;
+            for &slot in &entry.permutation {
+                values.push(point_values[slot].clone());
+            }
+        }
+        Ok(values)
+    }
+
+    /// Gather local-vector closure values contributed by one topology depth.
+    pub fn get_local_vector_closure_at_depth(
+        &self,
+        section_name: &str,
+        vector: &MeshVector<V>,
+        point: PointId,
+        depth: u32,
+        order: &ClosureOrder,
+    ) -> Result<Vec<V>, MeshSieveError> {
+        let strata = compute_strata(&self.mesh_data.sieve)?;
+        let (section, index) =
+            self.local_vector_closure_index(section_name, vector, point, order)?;
+        let mut values = Vec::new();
+        for entry in &index.points {
+            if strata.depth.get(&entry.point).copied() != Some(depth) {
+                continue;
+            }
+            let (offset, len) = section
+                .atlas()
+                .get(entry.point)
+                .ok_or(MeshSieveError::PointNotInAtlas(entry.point))?;
+            let point_values = &vector.values[offset..offset + len];
+            values.extend(
+                entry
+                    .permutation
+                    .iter()
+                    .map(|&slot| point_values[slot].clone()),
+            );
+        }
+        Ok(values)
+    }
+
+    /// Insert or add values over a point's oriented closure in a local vector.
+    pub fn set_local_vector_closure(
+        &self,
+        section_name: &str,
+        vector: &mut MeshVector<V>,
+        point: PointId,
+        order: &ClosureOrder,
+        values: &[V],
+        mode: MeshVectorInsertMode,
+    ) -> Result<(), MeshSieveError>
+    where
+        V: core::ops::AddAssign<V>,
+    {
+        let (section, index) =
+            self.local_vector_closure_index(section_name, vector, point, order)?;
+        if values.len() != index.len {
+            return Err(MeshSieveError::ScatterLengthMismatch {
+                expected: index.len,
+                found: values.len(),
+            });
+        }
+        for entry in &index.points {
+            let (offset, len) = section
+                .atlas()
+                .get(entry.point)
+                .ok_or(MeshSieveError::PointNotInAtlas(entry.point))?;
+            let expected = section.atlas().total_len();
+            let found = vector.values.len();
+            let point_values = vector
+                .values
+                .get_mut(offset..offset + len)
+                .ok_or(MeshSieveError::ScatterLengthMismatch { expected, found })?;
+            for (local_slot, &section_slot) in entry.permutation.iter().enumerate() {
+                let value = values[entry.offset + local_slot].clone();
+                match mode {
+                    MeshVectorInsertMode::InsertValues => point_values[section_slot] = value,
+                    MeshVectorInsertMode::AddValues => point_values[section_slot] += value,
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn local_vector_closure_index<'a>(
+        &'a self,
+        section_name: &str,
+        vector: &MeshVector<V>,
+        point: PointId,
+        order: &ClosureOrder,
+    ) -> Result<(&'a Section<V, St>, ClosureIndex<i32>), MeshSieveError> {
+        if vector.section.as_deref() != Some(section_name) {
+            return Err(MeshSieveError::VectorSectionMismatch {
+                expected: section_name.to_string(),
+                found: vector.section.clone(),
+            });
+        }
+        let section = self.mesh_data.sections.get(section_name).ok_or_else(|| {
+            MeshSieveError::MissingSectionName {
+                name: section_name.to_string(),
+            }
+        })?;
+        if vector.values.len() != section.atlas().total_len() {
+            return Err(MeshSieveError::ScatterLengthMismatch {
+                expected: section.atlas().total_len(),
+                found: vector.values.len(),
+            });
+        }
+        let index = build_closure_index(
+            &self.mesh_data.sieve,
+            section,
+            point,
+            0,
+            order,
+            &IdentitySectionSym,
+        )?;
+        Ok((section, index))
+    }
+
     /// Build and store global numbering maps for all named local sections.
     pub fn build_global_sections<C>(&mut self, comm: &C) -> Result<(), MeshSieveError>
     where
@@ -1899,6 +2238,10 @@ where
         }
         self.ownership = Some(ownership);
         Ok(())
+    }
+
+    fn invalidate_numbering(&mut self) {
+        self.global_sections.clear();
     }
 
     fn reorder_sections(&mut self, ordering: StratifiedOrdering) -> Result<(), MeshSieveError> {

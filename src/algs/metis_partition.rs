@@ -5,7 +5,7 @@
 use crate::algs::dual_graph::DualGraph;
 
 #[cfg(feature = "metis-support")]
-include!("../metis_bindings.rs"); // idx_t, METIS_PartGraphKway, etc.
+use metis_sys::{METIS_NOPTIONS, METIS_PartGraphKway, METIS_SetDefaultOptions, idx_t};
 
 #[cfg(feature = "metis-support")]
 use once_cell::sync::Lazy;
@@ -20,9 +20,6 @@ const METIS_ERROR_INPUT: i32 = -2;
 const METIS_ERROR_MEMORY: i32 = -3;
 #[cfg(feature = "metis-support")]
 const METIS_ERROR: i32 = -4;
-#[cfg(feature = "metis-support")]
-const METIS_NOPTIONS: usize = 40;
-
 #[cfg(feature = "metis-support")]
 #[derive(Debug, Error)]
 pub enum MetisError {
@@ -82,7 +79,7 @@ fn to_idx_vec<T: TryInto<idx_t> + Copy>(src: &[T]) -> MetisResult<Vec<idx_t>> {
 
 #[cfg(feature = "metis-support")]
 fn default_options() -> Vec<idx_t> {
-    let mut opts = vec![0 as idx_t; METIS_NOPTIONS];
+    let mut opts = vec![0 as idx_t; METIS_NOPTIONS as usize];
     unsafe {
         #[allow(non_snake_case)]
         METIS_SetDefaultOptions(opts.as_mut_ptr());

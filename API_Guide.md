@@ -46,13 +46,13 @@ The default feature set is empty. Important opt-in features:
 | `rayon` | Enable Rayon-backed parallel utilities and `RayonComm`. |
 | `mpi-support` | Enable MPI communication and MPI distribution paths. |
 | `mpi-derive` | Enable derive support from the `mpi` crate. |
-| `metis-support` | Enable METIS bindings and related build dependencies. |
+| `metis-support` | Enable the vendored METIS backend through `metis-sys`. |
 | `fast-hash` | Enable `ahash` in selected hot paths. |
 | `deterministic-order` | Prefer deterministic map/set ordering where supported. |
 | `wgpu` | Enable GPU-backed section storage. |
 | `cgns` | Enable the experimental CGNS/HDF5 reader. |
 
-Feature-gated paths may require system support: MPI, METIS, HDF5, GPU drivers,
+Feature-gated paths may require system support: MPI, HDF5, GPU drivers,
 or a compatible WGPU adapter.
 
 ## 2. Points and Arrows
@@ -586,7 +586,7 @@ The crate has two partitioning surfaces:
 - `algs::partition` and `algs::metis_partition` for algorithm-level helpers.
 - `partitioning` for MPI-gated in-tree partitioning algorithms and metrics.
 
-`metis-support` enables METIS bindings. The `partitioning` module is compiled
+`metis-support` enables the vendored METIS bindings. The `partitioning` module is compiled
 with `mpi-support`.
 
 Related APIs and examples:
@@ -665,12 +665,21 @@ Commonly used exported types:
 - `MeshDMDistribution`
 - `MeshDMLabelSelection`
 - `MeshDMSubmesh`
+- `MeshPointChart`
 - `MeshVector`
+- `MeshVectorInsertMode`
 - `PreallocationGraph`
 
 Use `MeshDM` when you want one object to manage a mesh workflow end to end. Use
 the lower-level `Sieve`, `Atlas`, `Section`, `Coordinates`, and `LabelSet` APIs
 when you need direct control over topology and data layout.
+
+The facade includes DMPlex-style point-chart, cone/support, height/depth, and
+transitive-closure queries. `create_section_from_depth()` builds a named local
+section from per-depth DOF counts, with a label-restricted variant for field
+support. Local vectors created by `create_local_vector()` support oriented
+closure gather and insert/add operations through `get_local_vector_closure()`
+and `set_local_vector_closure()`.
 
 ## 17. Algorithms Overview
 

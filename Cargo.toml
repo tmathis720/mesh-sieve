@@ -1,6 +1,6 @@
 [package]
 name = "mesh-sieve"
-version = "3.8.0"
+version = "3.8.1"
 authors = ["Thomas James Mathis <tmathis720@gmail.com>"]
 edition = "2024"
 description = "Modular, high-performance Rust library for mesh and data management, designed for scientific computing and PDE codes."
@@ -29,9 +29,7 @@ hdf5 = "0.8.1"
 hdf5-sys = { version = "0.8.1", features = ["static"] }
 # MPI optional: enabled only when the mpi-support feature is requested
 mpi = { version = "0.8", optional = true, default-features = false, features = [] }
-# libffi/metis optional to avoid requiring system libs in CI unless explicitly enabled
-libffi-sys = { version = "2.3", default-features = false, features = ["system"], optional = true }
-metis = { version = "0.2", optional = true }
+# METIS remains optional and is built by metis-sys only when requested.
 metis-sys = { version = "0.3.2", optional = true }
 rand = { version = "0.8", features = ["std", "small_rng"], optional = true }
 ahash = { version = "0.8", optional = true }
@@ -60,7 +58,7 @@ default = []
 map-adapter = []
 mpi-support = ["dep:mpi", "rayon", "dep:rand", "dep:ahash"]
 mpi-derive = ["mpi/derive"]
-metis-support = ["metis", "metis-sys", "libffi-sys","bindgen","pkg-config"]
+metis-support = ["dep:metis-sys"]
 strict-invariants = []   # compile-time switch for invariant checking in release
 check-invariants = ["strict-invariants"]
 check-empty-part = []
@@ -84,11 +82,6 @@ triangle-support = []
 tetgen-support = []
 gmsh-support = []
 
-
-[build-dependencies]
-pkg-config = { version = "0.3", optional = true }
-bindgen = { version = "0.65", optional = true }
-regex = "1.8"
 
 [[example]]
 name = "mesh_distribute_two_ranks"

@@ -16,10 +16,15 @@ fn fake_executable(name: &str, body: &str) -> PathBuf {
             .unwrap()
             .as_nanos()
     ));
-    fs::write(&path, body).unwrap();
-    let mut perms = fs::metadata(&path).unwrap().permissions();
+    // Publish the executable only after its writable file handle has been
+    // closed. This avoids transient ETXTBSY failures when tests are run by a
+    // highly parallel runner or on filesystems with coarse timestamp reuse.
+    let staging = path.with_extension("staging");
+    fs::write(&staging, body).unwrap();
+    let mut perms = fs::metadata(&staging).unwrap().permissions();
     perms.set_mode(0o755);
-    fs::set_permissions(&path, perms).unwrap();
+    fs::set_permissions(&staging, perms).unwrap();
+    fs::rename(staging, &path).unwrap();
     path
 }
 

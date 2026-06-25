@@ -155,7 +155,7 @@ The default feature set is empty.
 | `rayon` | Enable Rayon-backed parallel utilities and communicator support. |
 | `mpi-support` | Enable MPI support; also enables `rayon`, `rand`, and `ahash`. |
 | `mpi-derive` | Enable MPI derive support from the `mpi` crate. |
-| `metis-support` | Enable METIS bindings and build-time bindgen/pkg-config support. |
+| `metis-support` | Enable the vendored METIS partitioning backend through `metis-sys`. |
 | `fast-hash` | Use `ahash` in selected hot paths. |
 | `deterministic-order` | Prefer deterministic map/set ordering where supported. |
 | `deterministic-owners` | Deterministic ownership-related behavior in gated paths. |
@@ -371,7 +371,7 @@ cargo test --features mpi-support
 ```
 
 Some feature combinations require system tools or libraries, such as MPI,
-METIS, GPU drivers, or HDF5-compatible runtime support.
+GPU drivers, or HDF5-compatible runtime support.
 
 ## License
 

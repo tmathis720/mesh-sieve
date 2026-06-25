@@ -109,6 +109,12 @@ pub enum MeshSieveError {
     /// Missing section name in a multi/mixed scatter operation.
     #[error("Missing section name {name}")]
     MissingSectionName { name: String },
+    /// A DM vector is associated with a different section than the requested operation.
+    #[error("vector section mismatch: expected {expected}, found {found:?}")]
+    VectorSectionMismatch {
+        expected: String,
+        found: Option<String>,
+    },
     /// Tagged section buffer type mismatch.
     #[error("Tagged section type mismatch (expected {expected:?}, found {found:?})")]
     TaggedSectionTypeMismatch {
@@ -428,6 +434,16 @@ impl PartialEq for MeshSieveError {
                 },
             ) => p1 == p2 && d1 == d2 && c1 == c2,
             (UnsupportedStackOperation(a), UnsupportedStackOperation(b)) => a == b,
+            (
+                VectorSectionMismatch {
+                    expected: e1,
+                    found: f1,
+                },
+                VectorSectionMismatch {
+                    expected: e2,
+                    found: f2,
+                },
+            ) => e1 == e2 && f1 == f2,
             (MissingPointInCone(a), MissingPointInCone(b)) => a == b,
             (UnknownPoint(a), UnknownPoint(b)) => a == b,
             (DuplicatePoint(a), DuplicatePoint(b)) => a == b,

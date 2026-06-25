@@ -1,5 +1,7 @@
 #![cfg(feature = "mpi-support")]
 
+mod util;
+
 use mesh_sieve::algs::communicator::{Communicator, MpiComm};
 use mesh_sieve::algs::distribute::{
     DistributionConfig, ProvidedPartition, distribute_with_overlap,
@@ -52,10 +54,11 @@ fn build_mesh() -> (
 
 #[test]
 fn mpi_distribution_pipeline_resolves_and_maps() {
-    let comm = MpiComm::new().expect("MPI init");
-    if comm.size() != 2 {
+    if util::mpi_launcher_world_size() != Some(2) {
         return;
     }
+    let comm = MpiComm::new().expect("MPI init");
+    assert_eq!(comm.size(), 2);
 
     let (mesh_data, cells) = build_mesh();
     let parts = vec![0usize, 1usize];

@@ -2,7 +2,7 @@ use mesh_sieve::algs::communicator::NoComm;
 use mesh_sieve::data::atlas::Atlas;
 use mesh_sieve::data::section::Section;
 use mesh_sieve::data::storage::VecStorage;
-use mesh_sieve::dm::{MeshDM, MeshDMOptions};
+use mesh_sieve::dm::{MeshDM, MeshDMOptions, MeshVectorInsertMode};
 use mesh_sieve::prelude::{PointId, Sieve};
 use mesh_sieve::topology::sieve::MeshSieve;
 
@@ -94,6 +94,102 @@ fn mesh_dm_closure_and_star_wrappers_use_fe_ordering() {
     let closure = dm.get_closure_values("u", pid(3), &order).unwrap();
     assert_eq!(closure.cell, pid(3));
     assert_eq!(closure.values, vec![3.0, 1.0, 2.0]);
+}
+
+#[test]
+fn mesh_dm_exposes_chart_cones_and_supports() {
+    let dm = MeshDM::<f64>::builder(tiny_mesh()).build().unwrap();
+
+    let chart = dm.point_chart().unwrap();
+    assert_eq!((chart.start, chart.end_inclusive), (1, 5));
+    assert_eq!(chart.point_count, 5);
+    assert!(chart.is_dense);
+    assert_eq!(dm.cone_points(pid(3)), vec![pid(1), pid(2)]);
+    assert_eq!(dm.oriented_cone(pid(3)), vec![(pid(1), 0), (pid(2), 0)]);
+    assert_eq!(dm.cone_size(pid(3)), 2);
+    assert_eq!(dm.support_points(pid(2)), vec![pid(3), pid(4)]);
+    assert_eq!(dm.oriented_support(pid(2)), vec![(pid(3), 0), (pid(4), 0)]);
+    assert_eq!(dm.support_size(pid(2)), 2);
+    assert_eq!(
+        dm.closure_points_at_depth(
+            pid(3),
+            0,
+            &mesh_sieve::data::closure::ClosureOrder::BreadthFirstDmpLex,
+        )
+        .unwrap(),
+        vec![pid(1), pid(2)]
+    );
+}
+
+#[test]
+fn mesh_dm_creates_sections_from_depth_layouts() {
+    let mut labels = mesh_sieve::topology::labels::LabelSet::new();
+    labels.set_label(pid(1), "boundary", 1);
+    labels.set_label(pid(3), "boundary", 1);
+    let mut dm = MeshDM::<f64>::builder(tiny_mesh())
+        .labels(labels)
+        .build()
+        .unwrap();
+
+    dm.create_section_from_depth("all", &[2, 1]).unwrap();
+    let all = dm.section("all").unwrap();
+    assert_eq!(all.atlas().total_len(), 8);
+    assert_eq!(all.atlas().get(pid(1)).unwrap().1, 2);
+    assert_eq!(all.atlas().get(pid(3)).unwrap().1, 1);
+
+    dm.create_section_from_depth_on_label("boundary", &[2, 1], "boundary", 1)
+        .unwrap();
+    let boundary = dm.section("boundary").unwrap();
+    assert_eq!(
+        boundary.atlas().points().collect::<Vec<_>>(),
+        vec![pid(1), pid(3)]
+    );
+    assert_eq!(boundary.atlas().total_len(), 3);
+}
+
+#[test]
+fn mesh_dm_gathers_inserts_and_adds_local_vector_closures() {
+    let dm = MeshDM::<f64>::builder(tiny_mesh())
+        .section("u", scalar_section())
+        .build()
+        .unwrap();
+    let order = mesh_sieve::data::closure::ClosureOrder::BreadthFirstDmpLex;
+    let mut vector = dm.create_local_vector("u").unwrap();
+
+    dm.set_local_vector_closure(
+        "u",
+        &mut vector,
+        pid(3),
+        &order,
+        &[30.0, 10.0, 20.0],
+        MeshVectorInsertMode::InsertValues,
+    )
+    .unwrap();
+    assert_eq!(
+        dm.get_local_vector_closure("u", &vector, pid(3), &order)
+            .unwrap(),
+        vec![30.0, 10.0, 20.0]
+    );
+    assert_eq!(
+        dm.get_local_vector_closure_at_depth("u", &vector, pid(3), 0, &order)
+            .unwrap(),
+        vec![10.0, 20.0]
+    );
+
+    dm.set_local_vector_closure(
+        "u",
+        &mut vector,
+        pid(4),
+        &order,
+        &[4.0, 2.0, 5.0],
+        MeshVectorInsertMode::AddValues,
+    )
+    .unwrap();
+    assert_eq!(
+        dm.get_local_vector_closure("u", &vector, pid(4), &order)
+            .unwrap(),
+        vec![4.0, 22.0, 5.0]
+    );
 }
 
 #[test]

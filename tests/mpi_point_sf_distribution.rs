@@ -1,5 +1,7 @@
 #![cfg(feature = "mpi-support")]
 
+mod util;
+
 use mesh_sieve::algs::communicator::{Communicator, MpiComm};
 use mesh_sieve::algs::distribute::{
     DistributionConfig, ProvidedPartition, distribute_with_overlap,
@@ -86,14 +88,19 @@ fn build_chain_mesh(
     (mesh_data, cells)
 }
 
-fn run_rank_count_case(expected_size: usize) {
-    let comm = MpiComm::new().expect("MPI init");
-    if comm.size() != expected_size {
+fn run_world_size_case() {
+    let Some(launcher_size) = util::mpi_launcher_world_size() else {
+        return;
+    };
+    if !(2..=4).contains(&launcher_size) {
         return;
     }
+    let comm = MpiComm::new().expect("MPI init");
+    let world_size = comm.size();
+    assert_eq!(world_size, launcher_size);
 
-    let (mesh_data, cells) = build_chain_mesh(expected_size);
-    let parts: Vec<_> = (0..expected_size).collect();
+    let (mesh_data, cells) = build_chain_mesh(world_size);
+    let parts: Vec<_> = (0..world_size).collect();
     let dist = distribute_with_overlap(
         &mesh_data,
         &cells,
@@ -135,16 +142,9 @@ fn run_rank_count_case(expected_size: usize) {
 }
 
 #[test]
-fn mpi_point_sf_distribution_two_ranks() {
-    run_rank_count_case(2);
-}
-
-#[test]
-fn mpi_point_sf_distribution_three_ranks() {
-    run_rank_count_case(3);
-}
-
-#[test]
-fn mpi_point_sf_distribution_four_ranks() {
-    run_rank_count_case(4);
+fn mpi_point_sf_distribution_for_world_size() {
+    // One test owns one MPI universe. Multiple tests in this binary would let
+    // the Rust harness initialize/finalize MPI concurrently or repeatedly,
+    // which is invalid and can crash in MPI_Finalize.
+    run_world_size_case();
 }
