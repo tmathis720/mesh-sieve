@@ -6,7 +6,7 @@ topologies, atlas/section storage for degrees of freedom, mesh labels, geometry
 metadata, refinement and assembly utilities, overlap-driven exchange, and
 feature-gated MPI, METIS, and GPU support.
 
-The crate is currently version `3.8.0`, uses Rust edition `2024`, and is licensed
+The crate is currently version `3.8.1`, uses Rust edition `2024`, and is licensed
 under MIT.
 
 ## Status
@@ -17,7 +17,7 @@ evolving:
 
 - Public APIs are `Result`-oriented for data access and layout mutation. Legacy
   panicking map helpers are hidden behind the `map-adapter` feature.
-- MPI, METIS, Rayon, CGNS, and WGPU support are opt-in feature flags.
+- MPI, METIS, Rayon, CGNS, WGPU, and native CUDA support are opt-in feature flags.
 - CGNS/HDF5 reading is experimental and gated by `cgns`; writing CGNS is not
   implemented.
 - Triangle and TetGen feature flags are present, but external generator
@@ -53,6 +53,8 @@ Field data is stored as an `Atlas` plus a `Section`:
 - `Section<V, S>` stores values over that atlas using a storage backend.
 - `VecStorage` is the normal CPU backend.
 - `WgpuStorage` is available with the `wgpu` feature for suitable POD values.
+- `DeviceSection` provides explicit accelerator upload/refresh/download without
+  pretending device memory is a host slice.
 - `MultiSection`, `FieldSection`, and `ConstrainedSection` support multi-field
   layouts and constrained degrees of freedom.
 - `MixedSectionStore` stores named sections with heterogeneous scalar types.
@@ -160,6 +162,11 @@ The default feature set is empty.
 | `deterministic-order` | Prefer deterministic map/set ordering where supported. |
 | `deterministic-owners` | Deterministic ownership-related behavior in gated paths. |
 | `wgpu` | Enable GPU storage support for sections. |
+| `cuda` | Enable native CUDA 12 execution through dynamically loaded `cudarc` driver/NVRTC libraries. |
+| `cuda-cublas` | Add cuBLAS bindings to the CUDA backend. |
+| `cuda-cusparse` | Add cuSPARSE bindings to the CUDA backend. |
+| `cuda-cusolver` | Add cuSOLVER bindings to the CUDA backend. |
+| `cuda-nccl` | Add NCCL bindings for downstream multi-GPU collectives. |
 | `cgns` | Enable the experimental CGNS/HDF5 reader. |
 | `gmsh-support` | Reserved feature flag for Gmsh-related integration paths. |
 | `triangle-support` | Reserved feature flag for Triangle integration paths. |
@@ -180,7 +187,37 @@ cargo test
 cargo test --features strict-invariants
 cargo test --features rayon
 cargo test --features mpi-support
+cargo check --features cuda
+cargo test --features cuda --test cuda_fvm
 ```
+
+## CUDA execution
+
+CUDA is a plan-based execution layer, not a `Section` storage adapter. Mutable
+topology, labels, coordinates, and layout remain authoritative on the host:
+
+```text
+mutable mesh -> FrozenSieveCsr/FvmInputs -> persistent device plan -> batched kernels
+```
+
+`DeviceMeshPlan` uploads dense cone/support CSR arrays. `DeviceFvmPlan` compiles
+cell/face geometry and cell-to-face CSR, while `DeviceFvmState` keeps scalar
+state, face workspaces, gradients, and residuals resident across iterations.
+CUDA currently provides `f32` and `f64` scalar upwind/central convection,
+orthogonal diffusion, Green--Gauss gradients, wet/dry masking, and deterministic
+cell gathering without floating-point atomics. The CPU backend executes the
+same packed plans for parity testing.
+
+The `cuda` feature builds without link-time CUDA dependencies, but execution
+requires the NVIDIA driver and NVRTC shared libraries at runtime. It targets
+the CUDA 12 ABI by default. `ComputeBackend::Auto` probes both the device and
+NVRTC during initialization and reports why it selected CUDA or CPU; it never
+falls back after a kernel error. WGPU remains available as an explicit backend
+for operations that support it.
+
+Plans capture topology, atlas, and geometry epochs. Callers must increment the
+geometry epoch after coordinate changes and the topology version after mesh
+adaptation; stale plans return `AcceleratorError` before launch.
 
 MPI examples normally need an MPI launcher:
 

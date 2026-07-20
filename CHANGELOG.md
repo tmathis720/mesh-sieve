@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+- Added a backend-neutral, plan-based accelerator layer with explicit opaque
+  buffers, `DeviceSection` transfers, frozen CSR topology plans, FVM SoA plans,
+  epoch validation, and a CPU reference executor.
+- Added optional native CUDA 12 execution through `cudarc`, including persistent
+  contexts/streams, cached NVRTC modules, `f32`/`f64` convective and diffusive
+  face kernels, Green--Gauss gradients, wet/dry masks, and deterministic
+  non-atomic cell residual gathering.
+
 - Remove `SieveArcPayload` wrapper. Use `InMemorySieveArc`, `InMemoryOrientedSieveArc`, or `InMemoryStackArc` (store `Arc<T>` directly) for shared payloads.
 - Added optional invariant checking for `Atlas` and `Section` via the
   `DebugInvariants` trait. Enable the `strict-invariants` feature (alias

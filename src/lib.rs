@@ -51,6 +51,7 @@
 //! All Sieve implementations provide `points()`, `base_points()`, and `cap_points()` iterators for global point set access.
 
 // Re-export our major subsystems:
+pub mod accelerator;
 pub mod adapt;
 pub mod algs;
 pub mod data;
@@ -76,6 +77,13 @@ pub use debug_invariants::DebugInvariants;
 
 /// A convenient prelude to import the most-used traits & types:
 pub mod prelude {
+    #[cfg(feature = "cuda")]
+    pub use crate::accelerator::cuda::{CudaBackend, CudaOptions};
+    pub use crate::accelerator::{
+        AcceleratorBackend, AcceleratorError, ComputeBackend, CpuBackend, DeviceBuffer,
+        DeviceFvmPlan, DeviceFvmState, DeviceMeshPlan, DevicePhysicsParams, DeviceSection,
+        DeviceTopology, DeviceValue, FvmScalar, PlanEpochs, ScalarFluxScheme,
+    };
     pub use crate::algs::assembly::{
         AssemblyCommTags, assemble_section_with_hanging_constraints_and_ownership,
         assemble_section_with_ownership, assemble_section_with_tags_and_ownership,
