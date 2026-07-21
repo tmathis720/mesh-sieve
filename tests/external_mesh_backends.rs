@@ -1,10 +1,31 @@
-use std::fs;
-use std::path::PathBuf;
+#[cfg(all(
+    unix,
+    any(
+        feature = "triangle-support",
+        feature = "tetgen-support",
+        feature = "gmsh-support"
+    )
+))]
+use std::{fs, path::PathBuf};
 
-use mesh_sieve::topology::cell_type::CellType;
-use mesh_sieve::topology::point::PointId;
+#[cfg(all(
+    unix,
+    any(
+        feature = "triangle-support",
+        feature = "tetgen-support",
+        feature = "gmsh-support"
+    )
+))]
+use mesh_sieve::topology::{cell_type::CellType, point::PointId};
 
-#[cfg(unix)]
+#[cfg(all(
+    unix,
+    any(
+        feature = "triangle-support",
+        feature = "tetgen-support",
+        feature = "gmsh-support"
+    )
+))]
 fn fake_executable(name: &str, body: &str) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
     let mut path = std::env::temp_dir();
@@ -28,7 +49,7 @@ fn fake_executable(name: &str, body: &str) -> PathBuf {
     path
 }
 
-#[cfg(feature = "triangle-support")]
+#[cfg(all(unix, feature = "triangle-support"))]
 #[test]
 fn triangle_backend_preserves_region_and_boundary_markers() {
     use mesh_sieve::algs::meshgen::{
@@ -97,7 +118,7 @@ EOF
     );
 }
 
-#[cfg(feature = "triangle-support")]
+#[cfg(all(unix, feature = "triangle-support"))]
 #[test]
 fn triangle_backend_reports_malformed_output() {
     use mesh_sieve::algs::meshgen::{TriangleInput, TriangleOptions, generate_with_triangle};
@@ -136,7 +157,7 @@ EOF
     assert!(err.contains("unsupported element order"), "{err}");
 }
 
-#[cfg(feature = "tetgen-support")]
+#[cfg(all(unix, feature = "tetgen-support"))]
 #[test]
 fn tetgen_backend_preserves_region_and_boundary_markers() {
     use mesh_sieve::algs::meshgen::{
@@ -207,7 +228,7 @@ EOF
     );
 }
 
-#[cfg(feature = "gmsh-support")]
+#[cfg(all(unix, feature = "gmsh-support"))]
 #[test]
 fn gmsh_backend_generates_and_remeshes_with_physical_labels() {
     use mesh_sieve::algs::meshgen::{

@@ -1,0 +1,25 @@
+# `cargo test --all-features` builds a large number of integration-test and
+# example crates.  Serializing rustc keeps Windows from exhausting its commit
+# limit while those crates read the mesh-sieve rlib.
+[build]
+jobs = 1
+
+# Keep artifacts produced from a checkout shared by Windows and WSL from
+# receiving the same Cargo output hash.  Native Rust metadata is not portable
+# between these hosts, even when the sources and dependency versions match.
+[target.'cfg(target_os = "windows")']
+rustflags = ["-C", "metadata=mesh-sieve-windows"]
+
+[target.'cfg(target_os = "linux")']
+rustflags = ["-C", "metadata=mesh-sieve-linux"]
+
+[target.'cfg(target_os = "macos")']
+rustflags = ["-C", "metadata=mesh-sieve-macos"]
+
+# Full line tables are sufficient for local tests and substantially reduce the
+# size of the rlib that every integration-test compiler process must map.
+[profile.dev]
+debug = 1
+
+[profile.test]
+debug = 1
