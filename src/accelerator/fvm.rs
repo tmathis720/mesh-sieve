@@ -1,6 +1,7 @@
 //! Device-ready finite-volume plans and CPU reference execution.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use bytemuck::{Pod, Zeroable};
 
@@ -131,65 +132,69 @@ impl FvmScalar for f64 {
 
 /// Structure-of-arrays device plan for conservative face/cell execution.
 pub struct DeviceFvmPlan<B: AcceleratorBackend> {
+    pub(crate) backend_id: u64,
+    plan_id: u64,
     /// Epochs captured when this plan was compiled.
-    pub epochs: PlanEpochs,
+    pub(crate) epochs: PlanEpochs,
     /// Stable cell IDs in dense field order (host-only diagnostics/output map).
-    pub cell_ids: Vec<PointId>,
+    pub(crate) cell_ids: Vec<PointId>,
     /// Stable face IDs in flux-array order: internal, then boundary.
-    pub face_ids: Vec<PointId>,
+    pub(crate) face_ids: Vec<PointId>,
     /// Internal face owner cell indices.
-    pub internal_owner: B::Buffer<u32>,
+    pub(crate) internal_owner: B::Buffer<u32>,
     /// Internal face neighbor cell indices.
-    pub internal_neighbor: B::Buffer<u32>,
+    pub(crate) internal_neighbor: B::Buffer<u32>,
     /// Internal face geometry indices.
-    pub internal_geometry: B::Buffer<u32>,
+    pub(crate) internal_geometry: B::Buffer<u32>,
     /// Boundary face owner cell indices.
-    pub boundary_owner: B::Buffer<u32>,
+    pub(crate) boundary_owner: B::Buffer<u32>,
     /// Boundary face geometry indices.
-    pub boundary_geometry: B::Buffer<u32>,
+    pub(crate) boundary_geometry: B::Buffer<u32>,
     /// Encoded boundary branch.
-    pub boundary_kind: B::Buffer<u32>,
+    pub(crate) boundary_kind: B::Buffer<u32>,
     /// Face area in input geometry order.
-    pub face_area: B::Buffer<f64>,
+    pub(crate) face_area: B::Buffer<f64>,
     /// X component of the owner-oriented face normal.
-    pub face_normal_x: B::Buffer<f64>,
+    pub(crate) face_normal_x: B::Buffer<f64>,
     /// Y component of the owner-oriented face normal.
-    pub face_normal_y: B::Buffer<f64>,
+    pub(crate) face_normal_y: B::Buffer<f64>,
     /// Z component of the owner-oriented face normal.
-    pub face_normal_z: B::Buffer<f64>,
+    pub(crate) face_normal_z: B::Buffer<f64>,
     /// X component of face center.
-    pub face_center_x: B::Buffer<f64>,
+    pub(crate) face_center_x: B::Buffer<f64>,
     /// Y component of face center.
-    pub face_center_y: B::Buffer<f64>,
+    pub(crate) face_center_y: B::Buffer<f64>,
     /// Z component of face center.
-    pub face_center_z: B::Buffer<f64>,
+    pub(crate) face_center_z: B::Buffer<f64>,
     /// Geometry index for each face in combined flux order.
-    pub face_geometry_indices: B::Buffer<u32>,
+    pub(crate) face_geometry_indices: B::Buffer<u32>,
     /// Cell volume in dense field order.
-    pub cell_volume: B::Buffer<f64>,
+    pub(crate) cell_volume: B::Buffer<f64>,
     /// X component of cell center.
-    pub cell_center_x: B::Buffer<f64>,
+    pub(crate) cell_center_x: B::Buffer<f64>,
     /// Y component of cell center.
-    pub cell_center_y: B::Buffer<f64>,
+    pub(crate) cell_center_y: B::Buffer<f64>,
     /// Z component of cell center.
-    pub cell_center_z: B::Buffer<f64>,
+    pub(crate) cell_center_z: B::Buffer<f64>,
     /// Cell-to-face CSR offsets.
-    pub cell_face_offsets: B::Buffer<u32>,
+    pub(crate) cell_face_offsets: B::Buffer<u32>,
     /// Indices into the combined face flux array.
-    pub cell_face_indices: B::Buffer<u32>,
+    pub(crate) cell_face_indices: B::Buffer<u32>,
     /// `+1` for owner and `-1` for neighbor contribution.
-    pub cell_face_signs: B::Buffer<i8>,
+    pub(crate) cell_face_signs: B::Buffer<i8>,
     /// One byte per face; zero suppresses its flux.
-    pub face_active: B::Buffer<u8>,
+    pub(crate) face_active: B::Buffer<u8>,
     /// One byte per cell; zero marks a dry/inactive cell.
-    pub cell_active: B::Buffer<u8>,
+    pub(crate) cell_active: B::Buffer<u8>,
     /// Number of spatial dimensions represented by the geometry.
-    pub dimension: usize,
+    pub(crate) dimension: usize,
     /// Number of internal faces.
-    pub internal_face_count: usize,
+    pub(crate) internal_face_count: usize,
     /// Number of boundary faces.
-    pub boundary_face_count: usize,
+    pub(crate) boundary_face_count: usize,
 }
+
+static NEXT_PLAN_ID: AtomicU64 = AtomicU64::new(1);
 
 impl<B: AcceleratorBackend> DeviceFvmPlan<B> {
     /// Compile FVM stencils, geometry, and optional wet/dry/boundary labels.
@@ -226,6 +231,12 @@ impl<B: AcceleratorBackend> DeviceFvmPlan<B> {
                 "CUDA FVM supports at most 3 dimensions, found {dimension}"
             )));
         }
+        if dimension == 0 && (!inputs.cell_geometry.is_empty() || !inputs.face_geometry.is_empty())
+        {
+            return Err(AcceleratorError::InvalidPlan(
+                "finite-volume geometry must have at least one dimension".into(),
+            ));
+        }
 
         let mut cell_index = HashMap::with_capacity(inputs.cell_geometry.len());
         let mut cell_ids = Vec::with_capacity(inputs.cell_geometry.len());
@@ -244,6 +255,11 @@ impl<B: AcceleratorBackend> DeviceFvmPlan<B> {
                 return Err(AcceleratorError::InvalidPlan(format!(
                     "cell {id} has non-positive or non-finite volume {}",
                     geometry.volume
+                )));
+            }
+            if geometry.centroid.iter().any(|value| !value.is_finite()) {
+                return Err(AcceleratorError::InvalidPlan(format!(
+                    "cell {id} has a non-finite centroid"
                 )));
             }
             if cell_index
@@ -283,10 +299,28 @@ impl<B: AcceleratorBackend> DeviceFvmPlan<B> {
                     geometry.face
                 )));
             }
-            if !geometry.area.is_finite() || geometry.area < 0.0 {
+            if !geometry.area.is_finite() || geometry.area <= 0.0 {
                 return Err(AcceleratorError::InvalidPlan(format!(
-                    "face {id} has negative or non-finite area {}",
+                    "face {id} has non-positive or non-finite area {}",
                     geometry.area
+                )));
+            }
+            if geometry.centroid.iter().any(|value| !value.is_finite())
+                || geometry.normal.iter().any(|value| !value.is_finite())
+            {
+                return Err(AcceleratorError::InvalidPlan(format!(
+                    "face {id} has a non-finite centroid or normal"
+                )));
+            }
+            if geometry
+                .normal
+                .iter()
+                .map(|value| value * value)
+                .sum::<f64>()
+                <= 0.0
+            {
+                return Err(AcceleratorError::InvalidPlan(format!(
+                    "face {id} has a zero normal"
                 )));
             }
             if face_index
@@ -326,7 +360,14 @@ impl<B: AcceleratorBackend> DeviceFvmPlan<B> {
             })
             .collect();
 
+        let mut stencil_faces = HashSet::with_capacity(total_faces);
         for (flux_idx, stencil) in inputs.loops.internal.iter().enumerate() {
+            if !stencil_faces.insert(stencil.face) {
+                return Err(AcceleratorError::InvalidPlan(format!(
+                    "face {} appears in more than one FVM stencil",
+                    stencil.face
+                )));
+            }
             let owner = lookup(&cell_index, stencil.left, "owner cell")?;
             let neighbor_id = stencil.right.ok_or_else(|| {
                 AcceleratorError::InvalidPlan(format!(
@@ -335,7 +376,20 @@ impl<B: AcceleratorBackend> DeviceFvmPlan<B> {
                 ))
             })?;
             let neighbor = lookup(&cell_index, neighbor_id, "neighbor cell")?;
+            if owner == neighbor {
+                return Err(AcceleratorError::InvalidPlan(format!(
+                    "internal face {} uses the same owner and neighbor cell {}",
+                    stencil.face, stencil.left
+                )));
+            }
             let geometry = lookup(&face_index, stencil.face, "face geometry")?;
+            let geometry_neighbors = &inputs.face_geometry[geometry as usize].1.neighbors;
+            if geometry_neighbors.as_slice() != [stencil.left, neighbor_id] {
+                return Err(AcceleratorError::InvalidPlan(format!(
+                    "internal face {} geometry neighbors {:?} do not match owner/neighbor [{}, {}]",
+                    stencil.face, geometry_neighbors, stencil.left, neighbor_id
+                )));
+            }
             internal_owner.push(owner);
             internal_neighbor.push(neighbor);
             internal_geometry.push(geometry);
@@ -350,8 +404,21 @@ impl<B: AcceleratorBackend> DeviceFvmPlan<B> {
         }
         let internal_face_count = internal_owner.len();
         for (boundary_idx, stencil) in inputs.loops.boundary.iter().enumerate() {
+            if !stencil_faces.insert(stencil.face) {
+                return Err(AcceleratorError::InvalidPlan(format!(
+                    "face {} appears in more than one FVM stencil",
+                    stencil.face
+                )));
+            }
             let owner = lookup(&cell_index, stencil.left, "boundary owner cell")?;
             let geometry = lookup(&face_index, stencil.face, "boundary face geometry")?;
+            let geometry_neighbors = &inputs.face_geometry[geometry as usize].1.neighbors;
+            if geometry_neighbors.as_slice() != [stencil.left] {
+                return Err(AcceleratorError::InvalidPlan(format!(
+                    "boundary face {} geometry neighbors {:?} do not match owner {}",
+                    stencil.face, geometry_neighbors, stencil.left
+                )));
+            }
             boundary_owner.push(owner);
             boundary_geometry.push(geometry);
             boundary_kind.push(
@@ -381,6 +448,8 @@ impl<B: AcceleratorBackend> DeviceFvmPlan<B> {
         }
 
         Ok(Self {
+            backend_id: backend.identity(),
+            plan_id: NEXT_PLAN_ID.fetch_add(1, Ordering::Relaxed),
             epochs,
             cell_ids,
             face_ids,
@@ -422,36 +491,80 @@ impl<B: AcceleratorBackend> DeviceFvmPlan<B> {
     pub fn face_count(&self) -> usize {
         self.internal_face_count + self.boundary_face_count
     }
+
+    /// Stable cell IDs in dense field order.
+    pub fn cell_ids(&self) -> &[PointId] {
+        &self.cell_ids
+    }
+
+    /// Stable face IDs in combined internal/boundary order.
+    pub fn face_ids(&self) -> &[PointId] {
+        &self.face_ids
+    }
+
+    /// Number of packed cells.
+    pub fn cell_count(&self) -> usize {
+        self.cell_ids.len()
+    }
+
+    /// Number of spatial dimensions represented by the geometry.
+    pub fn dimension(&self) -> usize {
+        self.dimension
+    }
+
+    /// Number of internal faces.
+    pub fn internal_face_count(&self) -> usize {
+        self.internal_face_count
+    }
+
+    /// Number of boundary faces.
+    pub fn boundary_face_count(&self) -> usize {
+        self.boundary_face_count
+    }
+
+    /// Read-only cell activity mask.
+    pub fn cell_active(&self) -> &B::Buffer<u8> {
+        &self.cell_active
+    }
+
+    /// Read-only face activity mask.
+    pub fn face_active(&self) -> &B::Buffer<u8> {
+        &self.face_active
+    }
 }
 
 /// Persistent scalar fields used by the two-kernel conservative FVM path.
 pub struct DeviceFvmState<T: FvmScalar, B: AcceleratorBackend> {
+    pub(crate) backend_id: u64,
+    plan_id: u64,
     /// Number of component-major fields in each cell/face workspace.
-    pub components: usize,
+    components: usize,
     /// Cell-centered scalar values.
-    pub cell_values: B::Buffer<T>,
+    pub(crate) cell_values: B::Buffer<T>,
     /// Mass flux values in the plan's combined face order.
-    pub face_mass_flux: B::Buffer<T>,
+    pub(crate) face_mass_flux: B::Buffer<T>,
     /// Boundary exterior values in boundary-face order.
-    pub boundary_values: B::Buffer<T>,
+    pub(crate) boundary_values: B::Buffer<T>,
+    /// Marks component/face entries that explicitly override packed Dirichlet values.
+    pub(crate) boundary_override_active: B::Buffer<u8>,
     /// Oriented flux values in combined face order.
-    pub face_flux: B::Buffer<T>,
+    pub(crate) face_flux: B::Buffer<T>,
     /// Explicit caller-provided face flux additions.
-    pub face_source: B::Buffer<T>,
+    pub(crate) face_source: B::Buffer<T>,
     /// Deferred non-orthogonal source contribution per face/component.
-    pub face_deferred_source: B::Buffer<T>,
+    pub(crate) face_deferred_source: B::Buffer<T>,
     /// Interpolated face values used by Green--Gauss gradients.
-    pub face_values: B::Buffer<T>,
+    pub(crate) face_values: B::Buffer<T>,
     /// Gathered cell residuals.
-    pub residual: B::Buffer<T>,
+    pub(crate) residual: B::Buffer<T>,
     /// Explicit caller-provided cell source additions.
-    pub cell_source: B::Buffer<T>,
+    pub(crate) cell_source: B::Buffer<T>,
     /// X component of the cell gradient.
-    pub gradient_x: B::Buffer<T>,
+    pub(crate) gradient_x: B::Buffer<T>,
     /// Y component of the cell gradient.
-    pub gradient_y: B::Buffer<T>,
+    pub(crate) gradient_y: B::Buffer<T>,
     /// Z component of the cell gradient.
-    pub gradient_z: B::Buffer<T>,
+    pub(crate) gradient_z: B::Buffer<T>,
 }
 
 impl<T: FvmScalar, B: AcceleratorBackend> DeviceFvmState<T, B> {
@@ -482,6 +595,7 @@ impl<T: FvmScalar, B: AcceleratorBackend> DeviceFvmState<T, B> {
         face_mass_flux: &[T],
         boundary_values: &[T],
     ) -> Result<Self, AcceleratorError> {
+        ensure_backend(plan.backend_id, backend.identity())?;
         if components == 0 {
             return Err(AcceleratorError::InvalidPlan(
                 "FVM state requires at least one component".into(),
@@ -495,10 +609,18 @@ impl<T: FvmScalar, B: AcceleratorBackend> DeviceFvmState<T, B> {
         check_len(plan.face_count(), face_mass_flux.len())?;
         check_len(boundary_values_len, boundary_values.len())?;
         Ok(Self {
+            backend_id: backend.identity(),
+            plan_id: plan.plan_id,
             components,
             cell_values: upload(backend, cell_values)?,
             face_mass_flux: upload(backend, face_mass_flux)?,
             boundary_values: upload(backend, boundary_values)?,
+            boundary_override_active: backend.allocate(boundary_values_len).map_err(|error| {
+                AcceleratorError::AllocationFailed {
+                    bytes: boundary_values_len,
+                    reason: error.to_string(),
+                }
+            })?,
             face_flux: allocate(backend, face_values_len)?,
             face_source: allocate(backend, face_values_len)?,
             face_deferred_source: allocate(backend, face_values_len)?,
@@ -518,6 +640,7 @@ impl<T: FvmScalar, B: AcceleratorBackend> DeviceFvmState<T, B> {
         face_source: &[T],
         cell_source: &[T],
     ) -> Result<(), AcceleratorError> {
+        ensure_backend(self.backend_id, backend.identity())?;
         check_len(self.face_source.len(), face_source.len())?;
         check_len(self.cell_source.len(), cell_source.len())?;
         backend
@@ -528,8 +651,88 @@ impl<T: FvmScalar, B: AcceleratorBackend> DeviceFvmState<T, B> {
             .map_err(|e| AcceleratorError::DeviceTransferFailed(e.to_string()))
     }
 
+    /// Enable explicit per-component Dirichlet overrides for every boundary face.
+    ///
+    /// Operator evaluations normally use the values packed in the boundary policy.
+    /// This method is the explicit opt-in for component-dependent Dirichlet data.
+    pub fn upload_boundary_overrides(
+        &mut self,
+        backend: &B,
+        values: &[T],
+    ) -> Result<(), AcceleratorError> {
+        ensure_backend(self.backend_id, backend.identity())?;
+        check_len(self.boundary_values.len(), values.len())?;
+        let active = vec![1_u8; values.len()];
+        let replacement_values = upload(backend, values)?;
+        let replacement_active = upload(backend, &active)?;
+        self.boundary_values = replacement_values;
+        self.boundary_override_active = replacement_active;
+        Ok(())
+    }
+
+    /// Disable all explicit per-component Dirichlet overrides.
+    pub fn clear_boundary_overrides(&mut self, backend: &B) -> Result<(), AcceleratorError> {
+        ensure_backend(self.backend_id, backend.identity())?;
+        let inactive = vec![0_u8; self.boundary_override_active.len()];
+        let replacement = upload(backend, &inactive)?;
+        self.boundary_override_active = replacement;
+        Ok(())
+    }
+
+    /// Number of component-major fields in this state.
+    pub fn components(&self) -> usize {
+        self.components
+    }
+
+    /// Read-only resident cell values.
+    pub fn cell_values(&self) -> &B::Buffer<T> {
+        &self.cell_values
+    }
+
+    /// Read-only resident face mass fluxes.
+    pub fn face_mass_flux(&self) -> &B::Buffer<T> {
+        &self.face_mass_flux
+    }
+
+    /// Read-only resident residual values.
+    pub fn residual(&self) -> &B::Buffer<T> {
+        &self.residual
+    }
+
+    /// Read-only resident x-gradient values.
+    pub fn gradient_x(&self) -> &B::Buffer<T> {
+        &self.gradient_x
+    }
+
+    /// Refresh all component-major cell values.
+    pub fn upload_cell_values(
+        &mut self,
+        backend: &B,
+        values: &[T],
+    ) -> Result<(), AcceleratorError> {
+        ensure_backend(self.backend_id, backend.identity())?;
+        check_len(self.cell_values.len(), values.len())?;
+        backend
+            .upload_into(values, &mut self.cell_values)
+            .map_err(|error| AcceleratorError::DeviceTransferFailed(error.to_string()))
+    }
+
+    /// Refresh the shared face mass-flux field.
+    pub fn upload_face_mass_flux(
+        &mut self,
+        backend: &B,
+        values: &[T],
+    ) -> Result<(), AcceleratorError> {
+        ensure_backend(self.backend_id, backend.identity())?;
+        check_len(self.face_mass_flux.len(), values.len())?;
+        backend
+            .upload_into(values, &mut self.face_mass_flux)
+            .map_err(|error| AcceleratorError::DeviceTransferFailed(error.to_string()))
+    }
+
     /// Download the gathered residual vector.
     pub fn download_residual(&self, backend: &B) -> Result<Vec<T>, AcceleratorError> {
+        ensure_backend(self.backend_id, backend.identity())?;
         let mut host = vec![T::zeroed(); self.residual.len()];
         backend
             .download(&self.residual, &mut host)
@@ -544,7 +747,7 @@ impl DeviceFvmPlan<CpuBackend> {
         &self,
         state: &mut DeviceFvmState<T, CpuBackend>,
     ) -> Result<(), AcceleratorError> {
-        validate_state(self, state)?;
+        validate_scalar_state(self, state)?;
         for face in 0..self.internal_face_count {
             let owner = self.internal_owner.0[face] as usize;
             let neighbor = self.internal_neighbor.0[face] as usize;
@@ -599,7 +802,7 @@ impl DeviceFvmPlan<CpuBackend> {
         state: &mut DeviceFvmState<T, CpuBackend>,
         diffusivity: f64,
     ) -> Result<(), AcceleratorError> {
-        validate_state(self, state)?;
+        validate_scalar_state(self, state)?;
         for face in 0..self.internal_face_count {
             if self.face_active.0[face] == 0 {
                 state.face_flux.0[face] = T::zeroed();
@@ -668,7 +871,7 @@ impl DeviceFvmPlan<CpuBackend> {
         state: &mut DeviceFvmState<T, CpuBackend>,
         scheme: ScalarFluxScheme,
     ) -> Result<(), AcceleratorError> {
-        validate_state(self, state)?;
+        validate_scalar_state(self, state)?;
         for face in 0..self.internal_face_count {
             if self.face_active.0[face] == 0 {
                 state.face_flux.0[face] = T::zeroed();
@@ -721,7 +924,7 @@ impl DeviceFvmPlan<CpuBackend> {
         &self,
         state: &mut DeviceFvmState<T, CpuBackend>,
     ) -> Result<(), AcceleratorError> {
-        validate_state(self, state)?;
+        validate_scalar_state(self, state)?;
         for cell in 0..self.cell_ids.len() {
             if self.cell_active.0[cell] == 0 {
                 state.residual.0[cell] = T::zeroed();
@@ -741,77 +944,98 @@ impl DeviceFvmPlan<CpuBackend> {
     }
 }
 
-fn validate_state<T: FvmScalar>(
-    plan: &DeviceFvmPlan<CpuBackend>,
-    state: &DeviceFvmState<T, CpuBackend>,
+pub(crate) fn validate_scalar_state<T: FvmScalar, B: AcceleratorBackend>(
+    plan: &DeviceFvmPlan<B>,
+    state: &DeviceFvmState<T, B>,
 ) -> Result<(), AcceleratorError> {
+    ensure_backend(plan.backend_id, state.backend_id)?;
+    ensure_plan(plan.plan_id, state.plan_id)?;
     if state.components != 1 {
         return Err(AcceleratorError::InvalidPlan(
             "scalar DeviceFvmPlan methods require a one-component state; use DeviceFvmOperator"
                 .into(),
         ));
     }
-    check_len(plan.cell_ids.len(), state.cell_values.0.len())?;
-    check_len(plan.cell_ids.len(), state.residual.0.len())?;
-    check_len(plan.face_count(), state.face_mass_flux.0.len())?;
-    check_len(plan.face_count(), state.face_flux.0.len())?;
-    check_len(plan.face_count(), state.face_values.0.len())?;
-    check_len(plan.cell_ids.len(), state.gradient_x.0.len())?;
-    check_len(plan.cell_ids.len(), state.gradient_y.0.len())?;
-    check_len(plan.cell_ids.len(), state.gradient_z.0.len())?;
-    check_len(plan.boundary_face_count, state.boundary_values.0.len())
+    check_len(plan.cell_ids.len(), state.cell_values.len())?;
+    check_len(plan.cell_ids.len(), state.residual.len())?;
+    check_len(plan.face_count(), state.face_mass_flux.len())?;
+    check_len(plan.face_count(), state.face_flux.len())?;
+    check_len(plan.face_count(), state.face_values.len())?;
+    check_len(plan.cell_ids.len(), state.gradient_x.len())?;
+    check_len(plan.cell_ids.len(), state.gradient_y.len())?;
+    check_len(plan.cell_ids.len(), state.gradient_z.len())?;
+    check_len(plan.boundary_face_count, state.boundary_values.len())?;
+    check_len(
+        plan.boundary_face_count,
+        state.boundary_override_active.len(),
+    )
 }
 
 /// Packed standard boundary conditions for convective and diffusive kernels.
 pub struct DeviceFvmBoundaryConditions<B: AcceleratorBackend> {
     /// Boundary-condition tag: 0 Dirichlet, 1 Neumann, 2 Robin.
-    pub convective_kind: B::Buffer<u8>,
+    pub(crate) convective_kind: B::Buffer<u8>,
     /// Convective Robin/Dirichlet alpha coefficient.
-    pub convective_alpha: B::Buffer<f64>,
+    pub(crate) convective_alpha: B::Buffer<f64>,
     /// Convective beta coefficient.
-    pub convective_beta: B::Buffer<f64>,
+    pub(crate) convective_beta: B::Buffer<f64>,
     /// Convective prescribed value/gradient/gamma coefficient.
-    pub convective_gamma: B::Buffer<f64>,
+    pub(crate) convective_gamma: B::Buffer<f64>,
     /// Boundary-condition tag: 0 Dirichlet, 1 Neumann, 2 Robin.
-    pub diffusive_kind: B::Buffer<u8>,
+    pub(crate) diffusive_kind: B::Buffer<u8>,
     /// Diffusive alpha coefficient.
-    pub diffusive_alpha: B::Buffer<f64>,
+    pub(crate) diffusive_alpha: B::Buffer<f64>,
     /// Diffusive beta coefficient.
-    pub diffusive_beta: B::Buffer<f64>,
+    pub(crate) diffusive_beta: B::Buffer<f64>,
     /// Diffusive prescribed value/gradient/gamma coefficient.
-    pub diffusive_gamma: B::Buffer<f64>,
+    pub(crate) diffusive_gamma: B::Buffer<f64>,
 }
 
 /// Precomputed least-squares coefficients aligned with cell-face CSR entries.
 pub struct DeviceLeastSquaresPlan<B: AcceleratorBackend> {
     /// Neighbor cell, or `u32::MAX` for a boundary sample.
-    pub neighbor: B::Buffer<u32>,
+    pub(crate) neighbor: B::Buffer<u32>,
     /// X coefficient multiplying the neighbor/boundary value difference.
-    pub weight_x: B::Buffer<f64>,
+    pub(crate) weight_x: B::Buffer<f64>,
     /// Y coefficient multiplying the neighbor/boundary value difference.
-    pub weight_y: B::Buffer<f64>,
+    pub(crate) weight_y: B::Buffer<f64>,
     /// Z coefficient multiplying the neighbor/boundary value difference.
-    pub weight_z: B::Buffer<f64>,
+    pub(crate) weight_z: B::Buffer<f64>,
     /// One for cells whose least-squares normal matrix was singular.
-    pub fallback: B::Buffer<u8>,
+    pub(crate) fallback: B::Buffer<u8>,
     fallback_host: Vec<u8>,
 }
 
 /// Complete, persistent finite-volume numerical operator.
 pub struct DeviceFvmOperator<B: AcceleratorBackend> {
     /// Connectivity, geometry, masks, and deterministic gather structure.
-    pub plan: DeviceFvmPlan<B>,
+    pub(crate) plan: DeviceFvmPlan<B>,
     /// Number of transported components and reconstruction order.
-    pub metadata: FiniteVolumeMetadata,
+    pub(crate) metadata: FiniteVolumeMetadata,
     /// Numerical schemes captured by the operator.
-    pub schemes: FvmSchemeSettings,
+    pub(crate) schemes: FvmSchemeSettings,
     /// Packed standard boundary conditions.
-    pub boundary: DeviceFvmBoundaryConditions<B>,
+    pub(crate) boundary: DeviceFvmBoundaryConditions<B>,
     /// Precomputed least-squares reconstruction data.
-    pub least_squares: DeviceLeastSquaresPlan<B>,
+    pub(crate) least_squares: DeviceLeastSquaresPlan<B>,
 }
 
 impl<B: AcceleratorBackend> DeviceFvmOperator<B> {
+    /// Immutable packed plan owned by this operator.
+    pub fn plan(&self) -> &DeviceFvmPlan<B> {
+        &self.plan
+    }
+
+    /// Immutable finite-volume metadata captured at compilation.
+    pub fn metadata(&self) -> &FiniteVolumeMetadata {
+        &self.metadata
+    }
+
+    /// Immutable numerical settings captured at compilation.
+    pub fn schemes(&self) -> &FvmSchemeSettings {
+        &self.schemes
+    }
+
     /// Compile a complete numerical operator without uploading solution state.
     pub fn compile(
         backend: &B,
@@ -911,13 +1135,16 @@ impl<B: AcceleratorBackend> DeviceFvmOperator<B> {
         backend: &B,
         boundary_policy: &FvBoundaryPolicy,
     ) -> Result<(), AcceleratorError> {
+        ensure_backend(self.plan.backend_id, backend.identity())?;
         let host = pack_boundary_conditions(
             self.plan.face_ids[self.plan.internal_face_count..]
                 .iter()
                 .copied(),
             boundary_policy,
         )?;
-        upload_boundary_into(backend, &mut self.boundary, &host)
+        let replacement = upload_boundary(backend, host)?;
+        self.boundary = replacement;
+        Ok(())
     }
 
     /// Validate epochs and component-major state lengths.
@@ -927,6 +1154,8 @@ impl<B: AcceleratorBackend> DeviceFvmOperator<B> {
         current_epochs: PlanEpochs,
     ) -> Result<(), AcceleratorError> {
         self.plan.validate(current_epochs)?;
+        ensure_backend(self.plan.backend_id, state.backend_id)?;
+        ensure_plan(self.plan.plan_id, state.plan_id)?;
         if state.components != self.metadata.components {
             return Err(AcceleratorError::InvalidPlan(format!(
                 "operator has {} components but state has {}",
@@ -951,7 +1180,8 @@ impl<B: AcceleratorBackend> DeviceFvmOperator<B> {
         check_len(faces, state.face_deferred_source.len())?;
         check_len(faces, state.face_values.len())?;
         check_len(self.plan.face_count(), state.face_mass_flux.len())?;
-        check_len(boundaries, state.boundary_values.len())
+        check_len(boundaries, state.boundary_values.len())?;
+        check_len(boundaries, state.boundary_override_active.len())
     }
 }
 
@@ -1006,6 +1236,11 @@ fn pack_boundary_conditions(
         if !boundary_condition_is_finite(convective) || !boundary_condition_is_finite(diffusive) {
             return Err(AcceleratorError::InvalidPlan(format!(
                 "boundary face {face} has non-finite coefficients"
+            )));
+        }
+        if matches!(diffusive, BoundaryCondition::Robin { beta, .. } if beta.abs() < 1.0e-14) {
+            return Err(AcceleratorError::InvalidPlan(format!(
+                "boundary face {face} has a Robin diffusion condition with zero beta"
             )));
         }
         push_boundary(
@@ -1068,29 +1303,6 @@ fn upload_boundary<B: AcceleratorBackend>(
         diffusive_beta: upload(backend, &host.diffusive_beta)?,
         diffusive_gamma: upload(backend, &host.diffusive_gamma)?,
     })
-}
-
-fn upload_boundary_into<B: AcceleratorBackend>(
-    backend: &B,
-    device: &mut DeviceFvmBoundaryConditions<B>,
-    host: &BoundaryHost,
-) -> Result<(), AcceleratorError> {
-    macro_rules! refresh {
-        ($field:ident) => {
-            backend
-                .upload_into(&host.$field, &mut device.$field)
-                .map_err(|e| AcceleratorError::DeviceTransferFailed(e.to_string()))?;
-        };
-    }
-    refresh!(convective_kind);
-    refresh!(convective_alpha);
-    refresh!(convective_beta);
-    refresh!(convective_gamma);
-    refresh!(diffusive_kind);
-    refresh!(diffusive_alpha);
-    refresh!(diffusive_beta);
-    refresh!(diffusive_gamma);
-    Ok(())
 }
 
 #[derive(Default)]
@@ -1321,6 +1533,7 @@ impl DeviceFvmOperator<CpuBackend> {
                     self.boundary.convective_beta.0[boundary],
                     self.boundary.convective_gamma.0[boundary],
                     inside,
+                    state.boundary_override_active.0[component_index * boundaries + boundary] != 0,
                     state.boundary_values.0[component_index * boundaries + boundary].to_f64(),
                 );
                 state.face_values.0[component_index * faces + face] = T::from_f64(exterior);
@@ -1399,6 +1612,9 @@ impl DeviceFvmOperator<CpuBackend> {
                             self.boundary.convective_beta.0[boundary],
                             self.boundary.convective_gamma.0[boundary],
                             center_value,
+                            state.boundary_override_active.0
+                                [component_index * self.plan.boundary_face_count + boundary]
+                                != 0,
                             state.boundary_values.0
                                 [component_index * self.plan.boundary_face_count + boundary]
                                 .to_f64(),
@@ -1455,11 +1671,15 @@ impl DeviceFvmOperator<CpuBackend> {
                     &self.plan,
                     reconstruct,
                 );
+                let inside_left = state.cell_values.0[component_index * cells + owner].to_f64();
+                let inside_right = state.cell_values.0[component_index * cells + neighbor].to_f64();
                 let mass = state.face_mass_flux.0[face].to_f64();
                 let convective = mass
                     * operator_face_value(
                         left,
                         right,
+                        inside_left,
+                        inside_right,
                         mass,
                         self.schemes.convective,
                         self.schemes.reconstruction.limiter,
@@ -1475,8 +1695,6 @@ impl DeviceFvmOperator<CpuBackend> {
                     self.plan.face_normal_z.0[geometry],
                 ];
                 let d2 = dot3(delta, delta);
-                let inside_left = state.cell_values.0[component_index * cells + owner].to_f64();
-                let inside_right = state.cell_values.0[component_index * cells + neighbor].to_f64();
                 let orthogonal = if d2 > 0.0 {
                     -self.schemes.diffusion.diffusivity
                         * (inside_right - inside_left)
@@ -1510,7 +1728,7 @@ impl DeviceFvmOperator<CpuBackend> {
                     );
                 let (diffusive, deferred) = match self.schemes.diffusion.non_orthogonal_mode {
                     NonOrthogonalCorrectionMode::OrthogonalOnly => (orthogonal, 0.0),
-                    NonOrthogonalCorrectionMode::Deferred => (orthogonal, -nonorthogonal),
+                    NonOrthogonalCorrectionMode::Deferred => (orthogonal, nonorthogonal),
                     NonOrthogonalCorrectionMode::FullyCorrected => {
                         (orthogonal + nonorthogonal, 0.0)
                     }
@@ -1544,6 +1762,23 @@ impl DeviceFvmOperator<CpuBackend> {
                     self.boundary.convective_beta.0[boundary],
                     self.boundary.convective_gamma.0[boundary],
                     inside,
+                    state.boundary_override_active.0
+                        [component_index * self.plan.boundary_face_count + boundary]
+                        != 0,
+                    state.boundary_values.0
+                        [component_index * self.plan.boundary_face_count + boundary]
+                        .to_f64(),
+                );
+                let cell_value = state.cell_values.0[component_index * cells + owner].to_f64();
+                let base_exterior = boundary_exterior(
+                    self.boundary.convective_kind.0[boundary],
+                    self.boundary.convective_alpha.0[boundary],
+                    self.boundary.convective_beta.0[boundary],
+                    self.boundary.convective_gamma.0[boundary],
+                    cell_value,
+                    state.boundary_override_active.0
+                        [component_index * self.plan.boundary_face_count + boundary]
+                        != 0,
                     state.boundary_values.0
                         [component_index * self.plan.boundary_face_count + boundary]
                         .to_f64(),
@@ -1553,13 +1788,24 @@ impl DeviceFvmOperator<CpuBackend> {
                     * operator_face_value(
                         inside,
                         exterior,
+                        cell_value,
+                        base_exterior,
                         mass,
                         self.schemes.convective,
                         self.schemes.reconstruction.limiter,
                     );
-                let cell_value = state.cell_values.0[component_index * cells + owner].to_f64();
                 let area = self.plan.face_area.0[geometry];
-                let (diffusive, boundary_source) = match self.boundary.diffusive_kind.0[boundary] {
+                let dirichlet_value = if state.boundary_override_active.0
+                    [component_index * self.plan.boundary_face_count + boundary]
+                    != 0
+                {
+                    state.boundary_values.0
+                        [component_index * self.plan.boundary_face_count + boundary]
+                        .to_f64()
+                } else {
+                    self.boundary.diffusive_gamma.0[boundary]
+                };
+                let diffusive = match self.boundary.diffusive_kind.0[boundary] {
                     0 => {
                         let delta = [
                             self.plan.face_center_x.0[geometry] - self.plan.cell_center_x.0[owner],
@@ -1567,38 +1813,24 @@ impl DeviceFvmOperator<CpuBackend> {
                             self.plan.face_center_z.0[geometry] - self.plan.cell_center_z.0[owner],
                         ];
                         let distance = dot3(delta, delta).sqrt().max(1.0e-14);
-                        (
-                            -self.schemes.diffusion.diffusivity
-                                * (state.boundary_values.0
-                                    [component_index * self.plan.boundary_face_count + boundary]
-                                    .to_f64()
-                                    - cell_value)
-                                / distance
-                                * area,
-                            0.0,
-                        )
+                        -self.schemes.diffusion.diffusivity * (dirichlet_value - cell_value)
+                            / distance
+                            * area
                     }
-                    1 => (
+                    1 => {
                         -self.schemes.diffusion.diffusivity
                             * self.boundary.diffusive_gamma.0[boundary]
-                            * area,
-                        0.0,
-                    ),
+                            * area
+                    }
                     _ => {
-                        let beta = self.boundary.diffusive_beta.0[boundary].max(1.0e-14);
+                        let beta = self.boundary.diffusive_beta.0[boundary];
                         let gradient = (self.boundary.diffusive_gamma.0[boundary]
                             - self.boundary.diffusive_alpha.0[boundary] * cell_value)
                             / beta;
-                        (
-                            -self.schemes.diffusion.diffusivity * gradient * area,
-                            self.schemes.diffusion.diffusivity
-                                * self.boundary.diffusive_gamma.0[boundary]
-                                * area
-                                / beta,
-                        )
+                        -self.schemes.diffusion.diffusivity * gradient * area
                     }
                 };
-                state.face_deferred_source.0[output] = T::from_f64(boundary_source);
+                state.face_deferred_source.0[output] = T::zeroed();
                 state.face_flux.0[output] =
                     T::from_f64(convective + diffusive + state.face_source.0[output].to_f64());
             }
@@ -1622,11 +1854,10 @@ impl DeviceFvmOperator<CpuBackend> {
                 for incidence in begin..end {
                     let face = self.plan.cell_face_indices.0[incidence] as usize;
                     let sign = self.plan.cell_face_signs.0[incidence] as f64;
-                    residual += sign * state.face_flux.0[component_index * faces + face].to_f64();
-                    if sign > 0.0 {
-                        residual +=
-                            state.face_deferred_source.0[component_index * faces + face].to_f64();
-                    }
+                    residual += sign
+                        * (state.face_flux.0[component_index * faces + face].to_f64()
+                            + state.face_deferred_source.0[component_index * faces + face]
+                                .to_f64());
                 }
                 state.residual.0[output] = T::from_f64(residual);
             }
@@ -1663,10 +1894,12 @@ fn boundary_exterior(
     beta: f64,
     gamma: f64,
     inside: f64,
-    dirichlet_value: f64,
+    override_active: bool,
+    override_value: f64,
 ) -> f64 {
     match kind {
-        0 => dirichlet_value,
+        0 if override_active => override_value,
+        0 => gamma,
         1 => inside,
         _ if alpha.abs() < 1.0e-14 => inside,
         _ => (gamma - beta * inside) / alpha,
@@ -1676,12 +1909,13 @@ fn boundary_exterior(
 fn operator_face_value(
     left: f64,
     right: f64,
+    base_left: f64,
+    base_right: f64,
     mass: f64,
     scheme: ConvectiveScheme,
     limiter: LimiterOption,
 ) -> f64 {
     let upwind = if mass >= 0.0 { left } else { right };
-    let downwind = if mass >= 0.0 { right } else { left };
     let central = 0.5 * (left + right);
     let minimum = left.min(right);
     let maximum = left.max(right);
@@ -1699,28 +1933,34 @@ fn operator_face_value(
             blend,
             limiter: scheme_limiter,
         } => {
-            let psi = limiter_factor(limiter, upwind, downwind)
-                * slope_limiter_factor(scheme_limiter, upwind, downwind);
-            let high_resolution = upwind + 0.5 * psi * (downwind - upwind);
+            let (base_upwind, base_downwind, reconstructed_upwind) = if mass >= 0.0 {
+                (base_left, base_right, left)
+            } else {
+                (base_right, base_left, right)
+            };
+            let correction = reconstructed_upwind - base_upwind;
+            let ratio = if correction.abs() < 1.0e-14 {
+                1.0
+            } else {
+                (base_downwind - base_upwind) / (2.0 * correction)
+            };
+            let psi = limiter_factor(limiter, ratio) * slope_limiter_factor(scheme_limiter, ratio);
+            let high_resolution = base_upwind + psi * correction;
             let blend = blend.clamp(0.0, 1.0);
-            ((1.0 - blend) * upwind + blend * high_resolution).clamp(minimum, maximum)
+            ((1.0 - blend) * base_upwind + blend * high_resolution)
+                .clamp(base_left.min(base_right), base_left.max(base_right))
         }
     }
 }
 
-fn limiter_factor(limiter: LimiterOption, upwind: f64, downwind: f64) -> f64 {
+fn limiter_factor(limiter: LimiterOption, ratio: f64) -> f64 {
     match limiter {
         LimiterOption::None => 1.0,
-        LimiterOption::Family(family) => slope_limiter_factor(family, upwind, downwind),
+        LimiterOption::Family(family) => slope_limiter_factor(family, ratio),
     }
 }
 
-fn slope_limiter_factor(limiter: SlopeLimiterFamily, upwind: f64, downwind: f64) -> f64 {
-    let ratio = if (downwind - upwind).abs() < 1.0e-14 {
-        1.0
-    } else {
-        ((upwind - downwind) / (downwind - upwind)).abs()
-    };
+fn slope_limiter_factor(limiter: SlopeLimiterFamily, ratio: f64) -> f64 {
     match limiter {
         SlopeLimiterFamily::None => 1.0,
         SlopeLimiterFamily::Minmod => ratio.clamp(0.0, 1.0),
@@ -1780,6 +2020,22 @@ fn check_len(expected: usize, found: usize) -> Result<(), AcceleratorError> {
     }
 }
 
+pub(crate) fn ensure_backend(expected: u64, found: u64) -> Result<(), AcceleratorError> {
+    if expected == found {
+        Ok(())
+    } else {
+        Err(AcceleratorError::BackendMismatch { expected, found })
+    }
+}
+
+fn ensure_plan(expected: u64, found: u64) -> Result<(), AcceleratorError> {
+    if expected == found {
+        Ok(())
+    } else {
+        Err(AcceleratorError::PlanMismatch { expected, found })
+    }
+}
+
 fn encode_boundary_kind(branch: FvBoundaryBranch) -> u32 {
     match branch {
         FvBoundaryBranch::Open => 0,
@@ -1788,5 +2044,31 @@ fn encode_boundary_kind(branch: FvBoundaryBranch) -> u32 {
         FvBoundaryBranch::Tidal => 3,
         FvBoundaryBranch::Bed => 4,
         FvBoundaryBranch::FreeSurface => 5,
+    }
+}
+
+#[cfg(test)]
+mod numerical_contract_tests {
+    use super::*;
+
+    #[test]
+    fn limiter_families_produce_distinct_wider_stencil_corrections() {
+        let value = |limiter| {
+            operator_face_value(
+                1.5,
+                4.0,
+                1.0,
+                4.0,
+                1.0,
+                ConvectiveScheme::HighResolution {
+                    blend: 1.0,
+                    limiter,
+                },
+                LimiterOption::None,
+            )
+        };
+        assert_eq!(value(SlopeLimiterFamily::Minmod), 1.5);
+        assert_eq!(value(SlopeLimiterFamily::VanLeer), 1.75);
+        assert_eq!(value(SlopeLimiterFamily::Superbee), 2.0);
     }
 }

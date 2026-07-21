@@ -226,7 +226,7 @@ fn gradients_diffusion_and_wet_dry_masks_use_the_same_plan() {
     )
     .unwrap();
     plan.compute_gradients(&mut state).unwrap();
-    assert_eq!(state.gradient_x.as_slice(), &[-6.0, 16.0]);
+    assert_eq!(state.gradient_x().as_slice(), &[-6.0, 16.0]);
     plan.compute_diffusive_face_fluxes(&mut state, 1.0).unwrap();
     plan.assemble_cell_residuals(&mut state).unwrap();
     assert_eq!(
@@ -243,6 +243,57 @@ fn gradients_diffusion_and_wet_dry_masks_use_the_same_plan() {
         PlanEpochs::default(),
     )
     .unwrap();
-    assert_eq!(dry_plan.cell_active.as_slice(), &[1, 0]);
-    assert_eq!(dry_plan.face_active.as_slice(), &[0, 1, 0]);
+    assert_eq!(dry_plan.cell_active().as_slice(), &[1, 0]);
+    assert_eq!(dry_plan.face_active().as_slice(), &[0, 1, 0]);
+}
+
+#[test]
+fn fvm_plan_rejects_malformed_geometry_and_duplicate_classification() {
+    let backend = CpuBackend;
+
+    let mut non_finite = sample_inputs();
+    non_finite.cell_geometry[0].1.centroid[0] = f64::NAN;
+    assert!(matches!(
+        DeviceFvmPlan::compile(&backend, &non_finite, None, PlanEpochs::default()),
+        Err(AcceleratorError::InvalidPlan(_))
+    ));
+
+    let mut zero_area = sample_inputs();
+    zero_area.face_geometry[0].1.area = 0.0;
+    assert!(matches!(
+        DeviceFvmPlan::compile(&backend, &zero_area, None, PlanEpochs::default()),
+        Err(AcceleratorError::InvalidPlan(_))
+    ));
+
+    let mut duplicate = sample_inputs();
+    duplicate.loops.boundary.push(FluxStencil {
+        face: point(10),
+        left: point(1),
+        right: None,
+    });
+    assert!(matches!(
+        DeviceFvmPlan::compile(&backend, &duplicate, None, PlanEpochs::default()),
+        Err(AcceleratorError::InvalidPlan(_))
+    ));
+}
+
+#[test]
+fn fvm_state_cannot_be_reused_with_another_plan() {
+    let backend = CpuBackend;
+    let first =
+        DeviceFvmPlan::compile(&backend, &sample_inputs(), None, PlanEpochs::default()).unwrap();
+    let second =
+        DeviceFvmPlan::compile(&backend, &sample_inputs(), None, PlanEpochs::default()).unwrap();
+    let mut state = DeviceFvmState::upload(
+        &backend,
+        &first,
+        &[1.0_f64, 2.0],
+        &[0.0, 0.0, 0.0],
+        &[0.0, 0.0],
+    )
+    .unwrap();
+    assert!(matches!(
+        second.compute_gradients(&mut state),
+        Err(AcceleratorError::PlanMismatch { .. })
+    ));
 }

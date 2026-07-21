@@ -11,6 +11,13 @@ pub enum AcceleratorError {
     /// No device exists at the requested ordinal.
     #[error("CUDA device {ordinal} was not found")]
     DeviceNotFound { ordinal: usize },
+    /// A resource was submitted through a different backend/context than the
+    /// one that created it.
+    #[error("accelerator resource belongs to backend {expected}, not backend {found}")]
+    BackendMismatch { expected: u64, found: u64 },
+    /// A state was submitted to a different compiled FVM plan.
+    #[error("FVM state belongs to plan {found}, not plan {expected}")]
+    PlanMismatch { expected: u64, found: u64 },
     /// Device allocation failed.
     #[error("device allocation of {bytes} bytes failed: {reason}")]
     AllocationFailed { bytes: usize, reason: String },

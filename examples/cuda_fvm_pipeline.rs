@@ -99,10 +99,10 @@ mod cuda_example {
         let plan = DeviceFvmPlan::compile(&backend, &inputs, None, epochs)?;
         println!(
             "Plan uploaded: {} cells, {} internal faces, {} boundary faces, {}D",
-            plan.cell_ids.len(),
-            plan.internal_face_count,
-            plan.boundary_face_count,
-            plan.dimension
+            plan.cell_count(),
+            plan.internal_face_count(),
+            plan.boundary_face_count(),
+            plan.dimension()
         );
         let mut state = DeviceFvmState::upload(
             &backend,
@@ -114,7 +114,7 @@ mod cuda_example {
 
         backend.compute_gradients(&plan, &mut state, epochs)?;
         backend.synchronize()?;
-        let gradient_x = download_f64(&backend, &state.gradient_x)?;
+        let gradient_x = download_f64(&backend, state.gradient_x())?;
         assert_close(
             "Green--Gauss gradient",
             &gradient_x,
@@ -151,8 +151,8 @@ mod cuda_example {
         // recompiling topology/geometry or reallocating the state.
         let next_cell_values = [1.5_f64, 2.5, 3.5];
         let next_mass_flux = [0.25_f64, 0.5, -0.5, 1.0];
-        backend.upload_into(&next_cell_values, &mut state.cell_values)?;
-        backend.upload_into(&next_mass_flux, &mut state.face_mass_flux)?;
+        state.upload_cell_values(&backend, &next_cell_values)?;
+        state.upload_face_mass_flux(&backend, &next_mass_flux)?;
         backend.compute_face_fluxes(&plan, &mut state, ScalarFluxScheme::Central, epochs)?;
         backend.assemble_cell_residuals(&plan, &mut state, epochs)?;
         backend.synchronize()?;
@@ -359,7 +359,7 @@ mod cuda_example {
         let cell_source = [0.1_f64, 0.2, 0.3, 1.0, 2.0, 3.0];
         let mut cuda_state = DeviceFvmState::upload_components(
             backend,
-            &cuda_operator.plan,
+            cuda_operator.plan(),
             2,
             &cell_values,
             &mass_flux,
@@ -375,7 +375,7 @@ mod cuda_example {
 
         let mut cpu_state = DeviceFvmState::upload_components(
             &cpu,
-            &cpu_operator.plan,
+            cpu_operator.plan(),
             2,
             &cell_values,
             &mass_flux,
@@ -392,7 +392,7 @@ mod cuda_example {
         );
 
         let mut norm = DeviceReduction::new(backend, actual.len())?;
-        let residual_norm = norm.l2_norm(backend, &cuda_state.residual)?;
+        let residual_norm = norm.l2_norm(backend, cuda_state.residual())?;
         println!(
             "Phase-2 operator residual: {actual:?}; resident L2 norm={residual_norm}; \
              device time={elapsed_ms:.3} ms"
@@ -453,7 +453,7 @@ mod cuda_example {
             boundary_values,
         )?;
         plan.compute_gradients(&mut state)?;
-        let gradient_x = state.gradient_x.as_slice().to_vec();
+        let gradient_x = state.gradient_x().as_slice().to_vec();
         plan.compute_face_fluxes(&mut state, scheme)?;
         plan.assemble_cell_residuals(&mut state)?;
         let convective_residual = state.download_residual(&backend)?;

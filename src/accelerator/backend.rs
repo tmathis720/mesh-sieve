@@ -13,11 +13,26 @@ impl<T> DeviceValue for T where T: Pod + Zeroable + Send + Sync + 'static {}
 
 /// Values that can be copied byte-for-byte between host and CUDA memory.
 #[cfg(feature = "cuda")]
-pub trait DeviceValue: Pod + Zeroable + Send + Sync + 'static + cudarc::driver::DeviceRepr {}
+pub trait DeviceValue:
+    Pod
+    + Zeroable
+    + Send
+    + Sync
+    + 'static
+    + cudarc::driver::DeviceRepr
+    + cudarc::driver::ValidAsZeroBits
+{
+}
 
 #[cfg(feature = "cuda")]
 impl<T> DeviceValue for T where
-    T: Pod + Zeroable + Send + Sync + 'static + cudarc::driver::DeviceRepr
+    T: Pod
+        + Zeroable
+        + Send
+        + Sync
+        + 'static
+        + cudarc::driver::DeviceRepr
+        + cudarc::driver::ValidAsZeroBits
 {
 }
 
@@ -40,6 +55,10 @@ pub trait AcceleratorBackend: Send + Sync {
     type Event: Send + Sync;
     /// Native backend error.
     type Error: std::error::Error + Send + Sync + 'static;
+
+    /// Process-local identity used to prevent mixing resources from different
+    /// backend instances. CPU resources all use identity zero.
+    fn identity(&self) -> u64;
 
     /// Copy host values into a new device allocation.
     fn upload<T: DeviceValue>(&self, values: &[T]) -> Result<Self::Buffer<T>, Self::Error>;
@@ -91,6 +110,10 @@ impl AcceleratorBackend for CpuBackend {
     type Buffer<T: DeviceValue> = CpuBuffer<T>;
     type Event = ();
     type Error = AcceleratorError;
+
+    fn identity(&self) -> u64 {
+        0
+    }
 
     fn upload<T: DeviceValue>(&self, values: &[T]) -> Result<Self::Buffer<T>, Self::Error> {
         Ok(CpuBuffer(values.to_vec()))

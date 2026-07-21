@@ -207,10 +207,10 @@ fn bench_resident_fvm_operator(c: &mut Criterion) {
         .unwrap();
         let mut state = DeviceFvmState::upload(
             &backend,
-            &operator.plan,
-            &vec![1.0_f64; operator.plan.cell_ids.len()],
-            &vec![0.1_f64; operator.plan.face_count()],
-            &vec![0.0_f64; operator.plan.boundary_face_count],
+            operator.plan(),
+            &vec![1.0_f64; operator.plan().cell_count()],
+            &vec![0.1_f64; operator.plan().face_count()],
+            &vec![0.0_f64; operator.plan().boundary_face_count()],
         )
         .unwrap();
         group.bench_with_input(
@@ -221,7 +221,7 @@ fn bench_resident_fvm_operator(c: &mut Criterion) {
                     operator
                         .evaluate_residual(&mut state, PlanEpochs::default())
                         .unwrap();
-                    black_box(state.residual.as_slice());
+                    black_box(state.residual().as_slice());
                 });
             },
         );
@@ -291,9 +291,9 @@ fn bench_fvm_operator_setup(c: &mut Criterion) {
             PlanEpochs::default(),
         )
         .unwrap();
-        let cells = vec![1.0_f64; operator.plan.cell_ids.len() * 4];
-        let mass = vec![0.1_f64; operator.plan.face_count()];
-        let boundary_values = vec![0.0_f64; operator.plan.boundary_face_count * 4];
+        let cells = vec![1.0_f64; operator.plan().cell_count() * 4];
+        let mass = vec![0.1_f64; operator.plan().face_count()];
+        let boundary_values = vec![0.0_f64; operator.plan().boundary_face_count() * 4];
         group.bench_with_input(
             BenchmarkId::new("state_upload", internal),
             &internal,
@@ -302,7 +302,7 @@ fn bench_fvm_operator_setup(c: &mut Criterion) {
                     black_box(
                         DeviceFvmState::upload_components(
                             &backend,
-                            &operator.plan,
+                            operator.plan(),
                             4,
                             &cells,
                             &mass,
@@ -388,9 +388,9 @@ fn bench_cuda_resident_operator(c: &mut Criterion) {
             PlanEpochs::default(),
         )
         .unwrap();
-        let cell_values = vec![1.0_f64; operator.plan.cell_ids.len() * components];
-        let mass_flux = vec![0.1_f64; operator.plan.face_count()];
-        let boundary_values = vec![0.0_f64; operator.plan.boundary_face_count * components];
+        let cell_values = vec![1.0_f64; operator.plan().cell_count() * components];
+        let mass_flux = vec![0.1_f64; operator.plan().face_count()];
+        let boundary_values = vec![0.0_f64; operator.plan().boundary_face_count() * components];
         group.bench_with_input(
             BenchmarkId::new(format!("state_upload_{components}c"), internal),
             &internal,
@@ -399,7 +399,7 @@ fn bench_cuda_resident_operator(c: &mut Criterion) {
                     black_box(
                         DeviceFvmState::upload_components(
                             &backend,
-                            &operator.plan,
+                            operator.plan(),
                             components,
                             &cell_values,
                             &mass_flux,
@@ -412,7 +412,7 @@ fn bench_cuda_resident_operator(c: &mut Criterion) {
         );
         let mut state = DeviceFvmState::upload_components(
             &backend,
-            &operator.plan,
+            operator.plan(),
             components,
             &cell_values,
             &mass_flux,
@@ -435,7 +435,7 @@ fn bench_cuda_resident_operator(c: &mut Criterion) {
                         .evaluate_residual(&operator, &mut state, PlanEpochs::default())
                         .unwrap();
                     backend.synchronize_stream(0).unwrap();
-                    black_box(&state.residual);
+                    black_box(state.residual());
                 });
             },
         );

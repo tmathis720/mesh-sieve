@@ -2,6 +2,7 @@
 
 use cudarc::driver::{LaunchConfig, PushKernelArg};
 
+use crate::accelerator::fvm::validate_scalar_state;
 use crate::accelerator::{
     AcceleratorError, DeviceBuffer, DeviceFvmOperator, DeviceFvmPlan, DeviceFvmState,
     DeviceReduction, FvmScalar, PlanEpochs, ScalarFluxScheme,
@@ -52,6 +53,8 @@ pub trait CudaFvmScalar: FvmScalar {
     const REDUCE_L2: &'static str;
     /// Maximum-absolute-value reduction entry point.
     const REDUCE_MAX_ABS: &'static str;
+    /// In-place square-root entry point used to finalize L2 reductions.
+    const REDUCE_SQRT: &'static str;
     /// Multi-component internal interpolation.
     const OP_INTERNAL_VALUE: &'static str;
     /// Multi-component boundary interpolation.
@@ -85,6 +88,7 @@ impl CudaFvmScalar for f32 {
     const REDUCE_DOT: &'static str = "dot_f32";
     const REDUCE_L2: &'static str = "l2_f32";
     const REDUCE_MAX_ABS: &'static str = "max_abs_f32";
+    const REDUCE_SQRT: &'static str = "sqrt_f32";
     const OP_INTERNAL_VALUE: &'static str = "op_internal_value_f32";
     const OP_BOUNDARY_VALUE: &'static str = "op_boundary_value_f32";
     const OP_GREEN_GAUSS: &'static str = "op_green_gauss_f32";
@@ -111,6 +115,7 @@ impl CudaFvmScalar for f64 {
     const REDUCE_DOT: &'static str = "dot_f64";
     const REDUCE_L2: &'static str = "l2_f64";
     const REDUCE_MAX_ABS: &'static str = "max_abs_f64";
+    const REDUCE_SQRT: &'static str = "sqrt_f64";
     const OP_INTERNAL_VALUE: &'static str = "op_internal_value_f64";
     const OP_BOUNDARY_VALUE: &'static str = "op_boundary_value_f64";
     const OP_GREEN_GAUSS: &'static str = "op_green_gauss_f64";
@@ -138,25 +143,61 @@ impl<T: CudaFvmScalar> DeviceReduction<T, CudaBackend> {
         function_name: &str,
     ) -> Result<T, AcceleratorError> {
         self.validate(input.len())?;
+        backend.validate_buffer(input)?;
+        backend.validate_buffer(&self.result)?;
+        backend.validate_buffer(&self.workspace)?;
+        backend.validate_backend_id(self.backend_id)?;
         let function = backend.function(REDUCTION_KERNELS, "reduction.cu", function_name)?;
         let count = u32::try_from(input.len()).map_err(|_| AcceleratorError::IndexOverflow {
             what: "reduction input length",
             value: input.len(),
         })?;
         let stream = backend.stream_at(stream_index)?;
+        let blocks =
+            u32::try_from(self.workspace.len()).map_err(|_| AcceleratorError::IndexOverflow {
+                what: "reduction workspace length",
+                value: self.workspace.len(),
+            })?;
         let mut launch = stream.launch_builder(&function);
         launch
             .arg(&input.inner)
-            .arg(&mut self.result.inner)
+            .arg(&mut self.workspace.inner)
             .arg(&count);
-        let config = LaunchConfig {
+        let first_config = LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (256, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        // SAFETY: the kernel reads `count` values and writes one partial per block.
+        unsafe { launch.launch(first_config) }
+            .map_err(|e| AcceleratorError::KernelLaunchFailed(e.to_string()))?;
+        let combine_name = if function_name == T::REDUCE_MAX_ABS {
+            T::REDUCE_MAX_ABS
+        } else {
+            T::REDUCE_SUM
+        };
+        let combine = backend.function(REDUCTION_KERNELS, "reduction.cu", combine_name)?;
+        let mut combine_launch = stream.launch_builder(&combine);
+        combine_launch
+            .arg(&self.workspace.inner)
+            .arg(&mut self.result.inner)
+            .arg(&blocks);
+        let final_config = LaunchConfig {
             grid_dim: (1, 1, 1),
             block_dim: (256, 1, 1),
             shared_mem_bytes: 0,
         };
-        // SAFETY: the kernel reads exactly `count` values and writes one result.
-        unsafe { launch.launch(config) }
+        // SAFETY: the second stage consumes exactly the initialized partials.
+        unsafe { combine_launch.launch(final_config) }
             .map_err(|e| AcceleratorError::KernelLaunchFailed(e.to_string()))?;
+        if function_name == T::REDUCE_L2 {
+            let sqrt = backend.function(REDUCTION_KERNELS, "reduction.cu", T::REDUCE_SQRT)?;
+            let mut sqrt_launch = stream.launch_builder(&sqrt);
+            sqrt_launch.arg(&mut self.result.inner);
+            // SAFETY: the result buffer contains one initialized nonnegative sum.
+            unsafe { sqrt_launch.launch(LaunchConfig::for_num_elems(1)) }
+                .map_err(|e| AcceleratorError::KernelLaunchFailed(e.to_string()))?;
+        }
         let mut value = [T::zeroed()];
         backend.download_on(stream_index, &self.result, &mut value)?;
         Ok(value[0])
@@ -201,25 +242,49 @@ impl<T: CudaFvmScalar> DeviceReduction<T, CudaBackend> {
     ) -> Result<T, AcceleratorError> {
         self.validate(lhs.len())?;
         self.validate(rhs.len())?;
+        backend.validate_buffer(lhs)?;
+        backend.validate_buffer(rhs)?;
+        backend.validate_buffer(&self.result)?;
+        backend.validate_buffer(&self.workspace)?;
+        backend.validate_backend_id(self.backend_id)?;
         let function = backend.function(REDUCTION_KERNELS, "reduction.cu", T::REDUCE_DOT)?;
         let count = u32::try_from(lhs.len()).map_err(|_| AcceleratorError::IndexOverflow {
             what: "reduction input length",
             value: lhs.len(),
         })?;
         let stream = backend.stream_at(stream_index)?;
+        let blocks =
+            u32::try_from(self.workspace.len()).map_err(|_| AcceleratorError::IndexOverflow {
+                what: "reduction workspace length",
+                value: self.workspace.len(),
+            })?;
         let mut launch = stream.launch_builder(&function);
         launch
             .arg(&lhs.inner)
             .arg(&rhs.inner)
-            .arg(&mut self.result.inner)
+            .arg(&mut self.workspace.inner)
             .arg(&count);
         let config = LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (256, 1, 1),
+            shared_mem_bytes: 0,
+        };
+        // SAFETY: both inputs contain `count` values and the workspace has one slot per block.
+        unsafe { launch.launch(config) }
+            .map_err(|e| AcceleratorError::KernelLaunchFailed(e.to_string()))?;
+        let combine = backend.function(REDUCTION_KERNELS, "reduction.cu", T::REDUCE_SUM)?;
+        let mut combine_launch = stream.launch_builder(&combine);
+        combine_launch
+            .arg(&self.workspace.inner)
+            .arg(&mut self.result.inner)
+            .arg(&blocks);
+        let final_config = LaunchConfig {
             grid_dim: (1, 1, 1),
             block_dim: (256, 1, 1),
             shared_mem_bytes: 0,
         };
-        // SAFETY: both inputs contain `count` values and the output has one.
-        unsafe { launch.launch(config) }
+        // SAFETY: the second stage consumes exactly the initialized dot-product partials.
+        unsafe { combine_launch.launch(final_config) }
             .map_err(|e| AcceleratorError::KernelLaunchFailed(e.to_string()))?;
         let mut value = [T::zeroed()];
         backend.download_on(stream_index, &self.result, &mut value)?;
@@ -285,12 +350,13 @@ impl CudaBackend {
         current_epochs: PlanEpochs,
     ) -> Result<(), AcceleratorError> {
         operator.validate_state(state, current_epochs)?;
+        self.validate_backend_id(operator.plan.backend_id)?;
         let stream = self.stream_at(stream_index)?;
         let cells = checked_count(operator.plan.cell_ids.len(), "cell count")?;
         let faces = checked_count(operator.plan.face_count(), "face count")?;
         let internal = checked_count(operator.plan.internal_face_count, "internal face count")?;
         let boundary = checked_count(operator.plan.boundary_face_count, "boundary face count")?;
-        let components = checked_count(state.components, "component count")?;
+        let components = checked_count(state.components(), "component count")?;
         let internal_work = checked_work(internal, components, "internal operator work")?;
         let boundary_work = checked_work(boundary, components, "boundary operator work")?;
         let cell_work = checked_work(cells, components, "cell operator work")?;
@@ -330,6 +396,7 @@ impl CudaBackend {
                     .arg(&operator.boundary.convective_gamma.inner)
                     .arg(&state.cell_values.inner)
                     .arg(&state.boundary_values.inner)
+                    .arg(&state.boundary_override_active.inner)
                     .arg(&mut state.face_values.inner)
                     .arg(&cells)
                     .arg(&faces)
@@ -397,6 +464,7 @@ impl CudaBackend {
                 .arg(&operator.boundary.convective_gamma.inner)
                 .arg(&state.cell_values.inner)
                 .arg(&state.boundary_values.inner)
+                .arg(&state.boundary_override_active.inner)
                 .arg(&mut state.gradient_x.inner)
                 .arg(&mut state.gradient_y.inner)
                 .arg(&mut state.gradient_z.inner)
@@ -481,6 +549,7 @@ impl CudaBackend {
                 .arg(&operator.boundary.diffusive_gamma.inner)
                 .arg(&state.cell_values.inner)
                 .arg(&state.boundary_values.inner)
+                .arg(&state.boundary_override_active.inner)
                 .arg(&state.face_mass_flux.inner)
                 .arg(&state.gradient_x.inner)
                 .arg(&state.gradient_y.inner)
@@ -591,11 +660,12 @@ impl CudaBackend {
         output: &mut CudaBuffer<T>,
         value: T,
     ) -> Result<(), AcceleratorError> {
+        self.validate_buffer(output)?;
         if output.is_empty() {
             return Ok(());
         }
         let function = self.function(FVM_KERNELS, "fvm_scalar.cu", T::FILL)?;
-        let count = output.len() as u32;
+        let count = checked_count(output.len(), "fill length")?;
         let mut launch = self.stream_at(stream_index)?.launch_builder(&function);
         launch.arg(&mut output.inner).arg(&value).arg(&count);
         // SAFETY: the kernel bounds-checks against the allocation length.
@@ -610,6 +680,8 @@ impl CudaBackend {
         input: &CudaBuffer<T>,
         output: &mut CudaBuffer<T>,
     ) -> Result<(), AcceleratorError> {
+        self.validate_buffer(input)?;
+        self.validate_buffer(output)?;
         self.copy_on(0, input, output)
     }
 
@@ -620,6 +692,8 @@ impl CudaBackend {
         input: &CudaBuffer<T>,
         output: &mut CudaBuffer<T>,
     ) -> Result<(), AcceleratorError> {
+        self.validate_buffer(input)?;
+        self.validate_buffer(output)?;
         if input.len() != output.len() {
             return Err(AcceleratorError::LengthMismatch {
                 expected: input.len(),
@@ -630,7 +704,7 @@ impl CudaBackend {
             return Ok(());
         }
         let function = self.function(FVM_KERNELS, "fvm_scalar.cu", T::COPY)?;
-        let count = input.len() as u32;
+        let count = checked_count(input.len(), "copy length")?;
         let mut launch = self.stream_at(stream_index)?.launch_builder(&function);
         launch.arg(&input.inner).arg(&mut output.inner).arg(&count);
         // SAFETY: both buffers have exactly `count` elements.
@@ -646,6 +720,8 @@ impl CudaBackend {
         x: &CudaBuffer<T>,
         y: &mut CudaBuffer<T>,
     ) -> Result<(), AcceleratorError> {
+        self.validate_buffer(x)?;
+        self.validate_buffer(y)?;
         self.axpy_on(0, alpha, x, y)
     }
 
@@ -657,6 +733,8 @@ impl CudaBackend {
         x: &CudaBuffer<T>,
         y: &mut CudaBuffer<T>,
     ) -> Result<(), AcceleratorError> {
+        self.validate_buffer(x)?;
+        self.validate_buffer(y)?;
         if x.len() != y.len() {
             return Err(AcceleratorError::LengthMismatch {
                 expected: x.len(),
@@ -667,7 +745,7 @@ impl CudaBackend {
             return Ok(());
         }
         let function = self.function(FVM_KERNELS, "fvm_scalar.cu", T::AXPY)?;
-        let count = x.len() as u32;
+        let count = checked_count(x.len(), "AXPY length")?;
         let mut launch = self.stream_at(stream_index)?.launch_builder(&function);
         launch
             .arg(&x.inner)
@@ -686,6 +764,8 @@ impl CudaBackend {
         mask: &CudaBuffer<u8>,
         values: &mut CudaBuffer<T>,
     ) -> Result<(), AcceleratorError> {
+        self.validate_buffer(mask)?;
+        self.validate_buffer(values)?;
         self.apply_mask_on(0, mask, values)
     }
 
@@ -696,6 +776,8 @@ impl CudaBackend {
         mask: &CudaBuffer<u8>,
         values: &mut CudaBuffer<T>,
     ) -> Result<(), AcceleratorError> {
+        self.validate_buffer(mask)?;
+        self.validate_buffer(values)?;
         if mask.len() != values.len() {
             return Err(AcceleratorError::LengthMismatch {
                 expected: mask.len(),
@@ -706,7 +788,7 @@ impl CudaBackend {
             return Ok(());
         }
         let function = self.function(FVM_KERNELS, "fvm_scalar.cu", T::APPLY_MASK)?;
-        let count = mask.len() as u32;
+        let count = checked_count(mask.len(), "mask length")?;
         let mut launch = self.stream_at(stream_index)?.launch_builder(&function);
         launch.arg(&mask.inner).arg(&mut values.inner).arg(&count);
         // SAFETY: mask and values have exactly `count` elements.
@@ -735,10 +817,12 @@ impl CudaBackend {
         current_epochs: PlanEpochs,
     ) -> Result<(), AcceleratorError> {
         plan.validate(current_epochs)?;
+        validate_scalar_state(plan, state)?;
+        self.validate_backend_id(plan.backend_id)?;
         let stream = self.stream_at(stream_index)?;
         if plan.internal_face_count != 0 {
             let function = self.function(FVM_KERNELS, "fvm_scalar.cu", T::INTERNAL_VALUE)?;
-            let count = plan.internal_face_count as u32;
+            let count = checked_count(plan.internal_face_count, "internal face count")?;
             let mut launch = stream.launch_builder(&function);
             launch
                 .arg(&plan.internal_owner.inner)
@@ -752,8 +836,8 @@ impl CudaBackend {
         }
         if plan.boundary_face_count != 0 {
             let function = self.function(FVM_KERNELS, "fvm_scalar.cu", T::BOUNDARY_VALUE)?;
-            let count = plan.boundary_face_count as u32;
-            let offset = plan.internal_face_count as u32;
+            let count = checked_count(plan.boundary_face_count, "boundary face count")?;
+            let offset = checked_count(plan.internal_face_count, "internal face offset")?;
             let mut launch = stream.launch_builder(&function);
             launch
                 .arg(&state.boundary_values.inner)
@@ -766,7 +850,7 @@ impl CudaBackend {
         }
         if !plan.cell_ids.is_empty() {
             let function = self.function(FVM_KERNELS, "fvm_scalar.cu", T::GRADIENT_GATHER)?;
-            let count = plan.cell_ids.len() as u32;
+            let count = checked_count(plan.cell_ids.len(), "cell count")?;
             let mut launch = stream.launch_builder(&function);
             launch
                 .arg(&plan.cell_face_offsets.inner)
@@ -812,11 +896,13 @@ impl CudaBackend {
         current_epochs: PlanEpochs,
     ) -> Result<(), AcceleratorError> {
         plan.validate(current_epochs)?;
+        validate_scalar_state(plan, state)?;
+        self.validate_backend_id(plan.backend_id)?;
         let stream = self.stream_at(stream_index)?;
         let diffusivity = T::from_f64(diffusivity);
         if plan.internal_face_count != 0 {
             let function = self.function(FVM_KERNELS, "fvm_scalar.cu", T::INTERNAL_DIFFUSION)?;
-            let count = plan.internal_face_count as u32;
+            let count = checked_count(plan.internal_face_count, "internal face count")?;
             let mut launch = stream.launch_builder(&function);
             launch
                 .arg(&plan.internal_owner.inner)
@@ -839,8 +925,8 @@ impl CudaBackend {
         }
         if plan.boundary_face_count != 0 {
             let function = self.function(FVM_KERNELS, "fvm_scalar.cu", T::BOUNDARY_DIFFUSION)?;
-            let count = plan.boundary_face_count as u32;
-            let offset = plan.internal_face_count as u32;
+            let count = checked_count(plan.boundary_face_count, "boundary face count")?;
+            let offset = checked_count(plan.internal_face_count, "internal face offset")?;
             let mut launch = stream.launch_builder(&function);
             launch
                 .arg(&plan.boundary_owner.inner)
@@ -889,11 +975,13 @@ impl CudaBackend {
         current_epochs: PlanEpochs,
     ) -> Result<(), AcceleratorError> {
         plan.validate(current_epochs)?;
+        validate_scalar_state(plan, state)?;
+        self.validate_backend_id(plan.backend_id)?;
         let stream = self.stream_at(stream_index)?;
         let scheme = scheme as u32;
         if plan.internal_face_count != 0 {
             let function = self.function(FVM_KERNELS, "fvm_scalar.cu", T::INTERNAL_FLUX)?;
-            let count = plan.internal_face_count as u32;
+            let count = checked_count(plan.internal_face_count, "internal face count")?;
             let mut launch = stream.launch_builder(&function);
             launch
                 .arg(&plan.internal_owner.inner)
@@ -911,8 +999,8 @@ impl CudaBackend {
         }
         if plan.boundary_face_count != 0 {
             let function = self.function(FVM_KERNELS, "fvm_scalar.cu", T::BOUNDARY_FLUX)?;
-            let count = plan.boundary_face_count as u32;
-            let offset = plan.internal_face_count as u32;
+            let count = checked_count(plan.boundary_face_count, "boundary face count")?;
+            let offset = checked_count(plan.internal_face_count, "internal face offset")?;
             let mut launch = stream.launch_builder(&function);
             launch
                 .arg(&plan.boundary_owner.inner)
@@ -951,11 +1039,13 @@ impl CudaBackend {
         current_epochs: PlanEpochs,
     ) -> Result<(), AcceleratorError> {
         plan.validate(current_epochs)?;
+        validate_scalar_state(plan, state)?;
+        self.validate_backend_id(plan.backend_id)?;
         if plan.cell_ids.is_empty() {
             return Ok(());
         }
         let function = self.function(FVM_KERNELS, "fvm_scalar.cu", T::CELL_GATHER)?;
-        let count = plan.cell_ids.len() as u32;
+        let count = checked_count(plan.cell_ids.len(), "cell count")?;
         let mut launch = self.stream_at(stream_index)?.launch_builder(&function);
         launch
             .arg(&plan.cell_face_offsets.inner)

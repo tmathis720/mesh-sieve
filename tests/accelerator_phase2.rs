@@ -175,13 +175,23 @@ fn multicomponent_operator_is_component_major_and_conservative() {
     .unwrap();
     let mut state = DeviceFvmState::upload_components(
         &backend,
-        &operator.plan,
+        operator.plan(),
         2,
         &[3.0_f64, 5.0, 30.0, 50.0],
         &[2.0, -1.0, 0.5],
         &[10.0, 20.0, 100.0, 200.0],
     )
     .unwrap();
+    operator
+        .evaluate_residual(&mut state, PlanEpochs::default())
+        .unwrap();
+    assert_eq!(
+        state.download_residual(&backend).unwrap(),
+        vec![-4.0, -3.5, 50.0, -35.0]
+    );
+    state
+        .upload_boundary_overrides(&backend, &[10.0, 20.0, 100.0, 200.0])
+        .unwrap();
     operator
         .evaluate_residual(&mut state, PlanEpochs::default())
         .unwrap();
@@ -215,7 +225,7 @@ fn explicit_face_and_cell_sources_are_gathered_without_component_bleed() {
     .unwrap();
     let mut state = DeviceFvmState::upload_components(
         &backend,
-        &operator.plan,
+        operator.plan(),
         2,
         &[1.0_f64, 2.0, 10.0, 20.0],
         &[0.0, 0.0, 0.0],
@@ -286,7 +296,7 @@ fn schemes_limiters_diffusion_and_boundary_variants_are_deterministic() {
                 let run = || {
                     let mut state = DeviceFvmState::upload(
                         &backend,
-                        &operator.plan,
+                        operator.plan(),
                         &[1.0_f64, 3.0],
                         &[0.5, -0.25, 0.75],
                         &[2.0, 4.0],
@@ -381,7 +391,7 @@ fn f32_operator_supports_one_through_three_dimensions_and_stale_epochs() {
         .unwrap();
         let mut state = DeviceFvmState::upload(
             &backend,
-            &operator.plan,
+            operator.plan(),
             &[1.0_f32, 2.0],
             &[0.5, -0.25, 0.75],
             &[1.0, 2.0],
@@ -434,7 +444,7 @@ fn wet_dry_mask_zeroes_every_component_of_a_dry_cell() {
     .unwrap();
     let mut state = DeviceFvmState::upload_components(
         &backend,
-        &operator.plan,
+        operator.plan(),
         2,
         &[1.0_f64, 2.0, 10.0, 20.0],
         &[3.0, 4.0, 5.0],
@@ -495,7 +505,7 @@ fn boundary_diffusion_matches_dirichlet_neumann_and_robin_source_semantics() {
                 beta: 0.5,
                 gamma: 3.0,
             },
-            4.0,
+            -2.0,
         ),
     ];
     for (boundary, expected) in cases {
@@ -517,7 +527,7 @@ fn boundary_diffusion_matches_dirichlet_neumann_and_robin_source_semantics() {
         .unwrap();
         let mut state = DeviceFvmState::upload(
             &backend,
-            &operator.plan,
+            operator.plan(),
             &[1.0_f64, 1.0],
             &[0.0, 0.0, 0.0],
             &[3.0, 3.0],
@@ -528,6 +538,83 @@ fn boundary_diffusion_matches_dirichlet_neumann_and_robin_source_semantics() {
             .unwrap();
         assert_eq!(state.download_residual(&backend).unwrap(), [expected; 2]);
     }
+}
+
+#[test]
+fn boundary_refresh_updates_packed_dirichlet_values_without_state_overrides() {
+    let backend = CpuBackend;
+    let mut operator = DeviceFvmOperator::compile(
+        &backend,
+        &inputs(),
+        FiniteVolumeMetadata::new(1),
+        None,
+        &policy(
+            BoundaryCondition::Dirichlet { value: 2.0 },
+            BoundaryCondition::Dirichlet { value: 2.0 },
+        ),
+        schemes(
+            ConvectiveScheme::Upwind,
+            ReconstructionMode::GradientOnly(ReconstructionGradient::GreenGauss),
+            LimiterOption::None,
+            NonOrthogonalCorrectionMode::OrthogonalOnly,
+            1.0,
+        ),
+        PlanEpochs::default(),
+    )
+    .unwrap();
+    let mut state = DeviceFvmState::upload(
+        &backend,
+        operator.plan(),
+        &[1.0_f64, 1.0],
+        &[0.0, 0.0, 0.0],
+        &[99.0, 99.0],
+    )
+    .unwrap();
+    operator
+        .evaluate_residual(&mut state, PlanEpochs::default())
+        .unwrap();
+    let before = state.download_residual(&backend).unwrap();
+    operator
+        .refresh_boundary_conditions(
+            &backend,
+            &policy(
+                BoundaryCondition::Dirichlet { value: 4.0 },
+                BoundaryCondition::Dirichlet { value: 4.0 },
+            ),
+        )
+        .unwrap();
+    operator
+        .evaluate_residual(&mut state, PlanEpochs::default())
+        .unwrap();
+    let after = state.download_residual(&backend).unwrap();
+    assert_ne!(before, after);
+    assert_eq!(after, vec![-6.0, -6.0]);
+}
+
+#[test]
+fn zero_beta_robin_diffusion_is_rejected() {
+    let backend = CpuBackend;
+    let robin = BoundaryCondition::Robin {
+        alpha: 1.0,
+        beta: 0.0,
+        gamma: 2.0,
+    };
+    let result = DeviceFvmOperator::compile(
+        &backend,
+        &inputs(),
+        FiniteVolumeMetadata::new(1),
+        None,
+        &policy(robin, robin),
+        schemes(
+            ConvectiveScheme::Upwind,
+            ReconstructionMode::GradientOnly(ReconstructionGradient::GreenGauss),
+            LimiterOption::None,
+            NonOrthogonalCorrectionMode::OrthogonalOnly,
+            1.0,
+        ),
+        PlanEpochs::default(),
+    );
+    assert!(matches!(result, Err(AcceleratorError::InvalidPlan(_))));
 }
 
 #[test]

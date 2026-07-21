@@ -72,6 +72,14 @@ impl<T: CudaSparseScalar> DeviceCsrMatrix<T, CudaBackend> {
         beta: T,
         y: &mut CudaBuffer<T>,
     ) -> Result<(), AcceleratorError> {
+        backend.validate_buffer(&self.row_offsets)?;
+        backend.validate_buffer(&self.column_indices)?;
+        backend.validate_buffer(&self.values)?;
+        backend.validate_buffer(x)?;
+        backend.validate_buffer(y)?;
+        if let Some(workspace) = &self.workspace {
+            backend.validate_buffer(workspace)?;
+        }
         if x.len() != self.column_count {
             return Err(AcceleratorError::LengthMismatch {
                 expected: self.column_count,

@@ -10,6 +10,31 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  cuda-production:
+    # Repository-managed runners must provide a supported NVIDIA GPU, driver,
+    # and NVRTC. Dynamic skips are promoted to failures by the environment flag.
+    strategy:
+      fail-fast: false
+      matrix:
+        architecture: [cuda-sm80, cuda-sm90]
+    runs-on: [self-hosted, linux, x64, "${{ matrix.architecture }}"]
+    env:
+      MESH_SIEVE_RUN_CUDA_TESTS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Record CUDA runtime
+        run: nvidia-smi
+      - name: Compile every CUDA feature combination
+        run: |
+          cargo check --all-targets --features cuda
+          cargo check --all-targets --features cuda-cublas
+          cargo check --all-targets --features cuda-cusparse
+          cargo check --all-targets --features cuda-cusolver
+          cargo check --all-targets --features cuda-nccl
+      - name: Execute required CUDA differential tests
+        run: cargo test --features cuda,cuda-cusparse --test cuda_fvm --test cuda_strict_mode
+
   build:
     runs-on: ubuntu-latest
     

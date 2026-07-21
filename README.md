@@ -195,6 +195,12 @@ MESH_SIEVE_RUN_CUDA_TESTS=1 cargo test --features cuda --test cuda_fvm
 
 ## CUDA execution
 
+> **Experimental, single-GPU scope.** CUDA is not a production-supported
+> backend until the mandatory `cuda-sm80` and `cuda-sm90` CI lanes pass the
+> repository's correctness, stability, and performance gates. Distributed
+> halo exchange, mesh mutation, FE operators, and device-side I/O are outside
+> this scope.
+
 CUDA is a plan-based execution layer, not a `Section` storage adapter. Mutable
 topology, labels, coordinates, and layout remain authoritative on the host:
 
@@ -207,6 +213,10 @@ cell/face geometry and cell-to-face CSR. `DeviceFvmOperator` adds numerical
 schemes, standard boundary conditions, and least-squares reconstruction data.
 `DeviceFvmState` keeps component-major `f32` or `f64` fields, face workspaces,
 explicit sources, gradients, and residuals resident across iterations.
+Packed boundary-policy Dirichlet values are authoritative. Call
+`DeviceFvmState::upload_boundary_overrides` only when component-dependent
+Dirichlet values are intentionally required, and `clear_boundary_overrides`
+to return to the packed policy.
 
 The complete operator supports Green--Gauss and least-squares gradients,
 upwind/central/bounded/high-resolution convection, all built-in limiters,
@@ -229,6 +239,30 @@ the CUDA 13.0.3 ABI by default. `ComputeBackend::Auto` probes both the device an
 NVRTC during initialization and reports why it selected CUDA or CPU; it never
 falls back after a kernel error. WGPU remains available as an explicit backend
 for operations that support it.
+
+The project deliberately retains runtime NVRTC for the experimental phase;
+precompiled PTX/fatbins are not shipped. The compatibility contract is:
+
+| Layer | Supported/tested contract |
+| --- | --- |
+| CUDA ABI | `cuda-13030` / CUDA 13.0.3 |
+| Kernel delivery | Runtime NVRTC is mandatory |
+| Precision | `f32` and `f64` |
+| Device scope | One CUDA backend/context and one GPU per operator |
+| Required CI architectures | SM 8.0 (Ampere) and SM 9.0 (Hopper) self-hosted runners |
+| Multi-GPU/distributed | Experimental roadmap only; not supported |
+
+Driver versions are qualified by the two required runner images rather than
+by an unverified broad minimum-version claim. Record `nvidia-smi` output with
+each CUDA CI run when updating those images.
+
+Production promotion also requires checked-in per-runner benchmark baselines.
+The acceptance thresholds are a median resident-operator regression of at most
+10%, zero device allocations after plan/state/reduction warm-up, peak resident
+memory no more than 5% above the analytical sum of owned buffers, and no memory
+growth above 16 MiB or 1% (whichever is larger) over 10,000 evaluations. A
+runner without a reviewed baseline fails qualification; it does not establish
+one automatically.
 
 Plans capture topology, atlas, and geometry epochs. Callers must increment the
 geometry epoch after coordinate changes and the topology version after mesh

@@ -1,6 +1,7 @@
 //! CUDA context, streams, and explicit transfers.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use cudarc::driver::{CudaContext, CudaStream};
 
@@ -34,6 +35,7 @@ impl Default for CudaOptions {
 pub struct CudaBackend {
     pub(super) streams: Vec<Arc<CudaStream>>,
     pub(super) modules: CudaModuleCache,
+    id: u64,
     options: CudaOptions,
 }
 
@@ -44,8 +46,11 @@ pub struct CudaBackend {
 #[derive(Debug)]
 pub struct CudaEvent {
     pub(super) inner: cudarc::driver::CudaEvent,
+    backend_id: u64,
     timing_enabled: bool,
 }
+
+static NEXT_BACKEND_ID: AtomicU64 = AtomicU64::new(1);
 
 impl std::fmt::Debug for CudaBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -59,6 +64,8 @@ impl std::fmt::Debug for CudaBackend {
 impl CudaBackend {
     /// Initialize one persistent context and the requested streams.
     pub fn new(options: CudaOptions) -> Result<Self, AcceleratorError> {
+        ensure_dynamic_library(&["cuda", "nvcuda"], "CUDA driver")?;
+        ensure_dynamic_library(&["nvrtc"], "NVRTC")?;
         let context = std::panic::catch_unwind(|| CudaContext::new(options.device_ordinal))
             .map_err(|payload| AcceleratorError::BackendUnavailable(panic_message(payload)))?
             .map_err(|e| {
@@ -89,6 +96,7 @@ impl CudaBackend {
         Ok(Self {
             modules: CudaModuleCache::new(context.clone()),
             streams,
+            id: NEXT_BACKEND_ID.fetch_add(1, Ordering::Relaxed),
             options,
         })
     }
@@ -113,7 +121,10 @@ impl CudaBackend {
             .stream_at(stream_index)?
             .clone_htod(values)
             .map_err(|e| AcceleratorError::DeviceTransferFailed(e.to_string()))?;
-        Ok(CudaBuffer { inner })
+        Ok(CudaBuffer {
+            inner,
+            backend_id: self.id,
+        })
     }
 
     /// Allocate a zero-initialized buffer through an indexed stream.
@@ -122,15 +133,17 @@ impl CudaBackend {
         stream_index: usize,
         len: usize,
     ) -> Result<CudaBuffer<T>, AcceleratorError> {
-        let zeros = vec![T::zeroed(); len];
         let inner = self
             .stream_at(stream_index)?
-            .clone_htod(&zeros)
+            .alloc_zeros::<T>(len)
             .map_err(|e| AcceleratorError::AllocationFailed {
                 bytes: len.saturating_mul(std::mem::size_of::<T>()),
                 reason: e.to_string(),
             })?;
-        Ok(CudaBuffer { inner })
+        Ok(CudaBuffer {
+            inner,
+            backend_id: self.id,
+        })
     }
 
     /// Replace a complete device allocation through an indexed stream.
@@ -140,6 +153,7 @@ impl CudaBackend {
         values: &[T],
         buffer: &mut CudaBuffer<T>,
     ) -> Result<(), AcceleratorError> {
+        self.validate_buffer(buffer)?;
         if values.len() != buffer.len() {
             return Err(AcceleratorError::LengthMismatch {
                 expected: buffer.len(),
@@ -158,6 +172,7 @@ impl CudaBackend {
         buffer: &CudaBuffer<T>,
         values: &mut [T],
     ) -> Result<(), AcceleratorError> {
+        self.validate_buffer(buffer)?;
         if values.len() != buffer.len() {
             return Err(AcceleratorError::LengthMismatch {
                 expected: buffer.len(),
@@ -189,6 +204,7 @@ impl CudaBackend {
             .map_err(|e| AcceleratorError::EventFailed(e.to_string()))?;
         Ok(CudaEvent {
             inner,
+            backend_id: self.id,
             timing_enabled: self.options.enable_profiling,
         })
     }
@@ -199,6 +215,7 @@ impl CudaBackend {
         stream_index: usize,
         event: &CudaEvent,
     ) -> Result<(), AcceleratorError> {
+        self.validate_event(event)?;
         self.stream_at(stream_index)?
             .wait(&event.inner)
             .map_err(|e| AcceleratorError::EventFailed(e.to_string()))
@@ -206,6 +223,7 @@ impl CudaBackend {
 
     /// Block until an event has completed.
     pub fn synchronize_event(&self, event: &CudaEvent) -> Result<(), AcceleratorError> {
+        self.validate_event(event)?;
         event
             .inner
             .synchronize()
@@ -214,6 +232,8 @@ impl CudaBackend {
 
     /// Return elapsed device time between two timing-enabled events.
     pub fn elapsed_ms(&self, start: &CudaEvent, end: &CudaEvent) -> Result<f32, AcceleratorError> {
+        self.validate_event(start)?;
+        self.validate_event(end)?;
         if !start.timing_enabled || !end.timing_enabled {
             return Err(AcceleratorError::EventFailed(
                 "event timing requires CudaOptions::enable_profiling".into(),
@@ -265,6 +285,46 @@ impl CudaBackend {
                 stream_count: self.streams.len(),
             })
     }
+
+    pub(super) fn validate_backend_id(&self, expected: u64) -> Result<(), AcceleratorError> {
+        if expected == self.id {
+            Ok(())
+        } else {
+            Err(AcceleratorError::BackendMismatch {
+                expected,
+                found: self.id,
+            })
+        }
+    }
+
+    pub(super) fn validate_buffer<T: DeviceValue>(
+        &self,
+        buffer: &CudaBuffer<T>,
+    ) -> Result<(), AcceleratorError> {
+        self.validate_backend_id(buffer.backend_id)
+    }
+
+    fn validate_event(&self, event: &CudaEvent) -> Result<(), AcceleratorError> {
+        self.validate_backend_id(event.backend_id)
+    }
+}
+
+fn ensure_dynamic_library(names: &[&str], description: &str) -> Result<(), AcceleratorError> {
+    let candidates: Vec<_> = names
+        .iter()
+        .flat_map(|name| cudarc::get_lib_name_candidates(name))
+        .collect();
+    for candidate in &candidates {
+        // SAFETY: this is an availability probe; no symbols are accessed and
+        // the handle is dropped before cudarc opens its process-global handle.
+        if unsafe { libloading::Library::new(candidate) }.is_ok() {
+            return Ok(());
+        }
+    }
+    Err(AcceleratorError::BackendUnavailable(format!(
+        "{description} shared library is unavailable (tried {})",
+        candidates.join(", ")
+    )))
 }
 
 fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
@@ -281,6 +341,10 @@ impl AcceleratorBackend for CudaBackend {
     type Buffer<T: DeviceValue> = CudaBuffer<T>;
     type Event = ();
     type Error = AcceleratorError;
+
+    fn identity(&self) -> u64 {
+        self.id
+    }
 
     fn upload<T: DeviceValue>(&self, values: &[T]) -> Result<Self::Buffer<T>, Self::Error> {
         self.upload_on(0, values)

@@ -8,6 +8,7 @@ use crate::accelerator::{DeviceBuffer, DeviceValue};
 #[derive(Debug)]
 pub struct CudaBuffer<T: DeviceValue> {
     pub(super) inner: CudaSlice<T>,
+    pub(super) backend_id: u64,
 }
 
 impl<T: DeviceValue> DeviceBuffer<T> for CudaBuffer<T> {

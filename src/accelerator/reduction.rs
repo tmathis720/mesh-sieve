@@ -5,9 +5,11 @@ use super::{AcceleratorBackend, AcceleratorError, CpuBackend, DeviceBuffer, FvmS
 /// Reusable one-scalar output allocation for vector reductions.
 pub struct DeviceReduction<T: FvmScalar, B: AcceleratorBackend> {
     /// Maximum accepted input length.
-    pub input_len: usize,
+    pub(crate) input_len: usize,
     /// Resident one-element reduction result.
-    pub result: B::Buffer<T>,
+    pub(crate) result: B::Buffer<T>,
+    pub(crate) workspace: B::Buffer<T>,
+    pub(crate) backend_id: u64,
 }
 
 impl<T: FvmScalar, B: AcceleratorBackend> DeviceReduction<T, B> {
@@ -19,7 +21,20 @@ impl<T: FvmScalar, B: AcceleratorBackend> DeviceReduction<T, B> {
                 bytes: std::mem::size_of::<T>(),
                 reason: e.to_string(),
             })?;
-        Ok(Self { input_len, result })
+        let workspace_len = input_len.div_ceil(256).clamp(1, 4096);
+        let workspace =
+            backend
+                .allocate(workspace_len)
+                .map_err(|e| AcceleratorError::AllocationFailed {
+                    bytes: workspace_len.saturating_mul(std::mem::size_of::<T>()),
+                    reason: e.to_string(),
+                })?;
+        Ok(Self {
+            input_len,
+            result,
+            workspace,
+            backend_id: backend.identity(),
+        })
     }
 
     /// Download the most recently computed scalar.
