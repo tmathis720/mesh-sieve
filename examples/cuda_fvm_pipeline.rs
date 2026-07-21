@@ -7,8 +7,8 @@
 //! ```
 //!
 //! The CUDA feature uses dynamic loading, so compiling this example does not
-//! require a CUDA toolkit. Running it requires an NVIDIA driver and the CUDA 12
-//! NVRTC shared library.
+//! require a CUDA toolkit. Running it requires an NVIDIA driver and a CUDA
+//! 13.0.3-compatible NVRTC shared library.
 
 #[cfg(not(feature = "cuda"))]
 fn main() {
@@ -25,13 +25,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(feature = "cuda")]
 mod cuda_example {
+    use std::collections::{HashMap, HashSet};
+
+    #[cfg(feature = "cuda-cusparse")]
+    use mesh_sieve::accelerator::DeviceCsrMatrix;
     use mesh_sieve::accelerator::cuda::{CudaBackend, CudaBuffer, CudaOptions};
     use mesh_sieve::accelerator::{
-        AcceleratorBackend, AcceleratorError, CpuBackend, DeviceBuffer, DeviceFvmPlan,
-        DeviceFvmState, PlanEpochs, ScalarFluxScheme,
+        AcceleratorBackend, AcceleratorError, CpuBackend, DeviceBuffer, DeviceFvmOperator,
+        DeviceFvmPlan, DeviceFvmState, DeviceReduction, PlanEpochs, ScalarFluxScheme,
     };
-    use mesh_sieve::discretization::runtime::{CellGeometry, FaceGeometry, FluxStencil};
-    use mesh_sieve::physics::fvm::FvmInputs;
+    use mesh_sieve::discretization::runtime::{
+        CellGeometry, FaceGeometry, FiniteVolumeMetadata, FluxStencil,
+    };
+    #[cfg(feature = "cuda-cusparse")]
+    use mesh_sieve::discretization::runtime::{ClosureDof, CsrPattern};
+    use mesh_sieve::physics::fvm::{
+        BoundaryCondition, ConvectiveScheme, DiffusionSettings, FvBoundaryBranch, FvBoundaryPolicy,
+        FvmInputs, FvmSchemeSettings, LimiterOption, NonOrthogonalCorrectionMode,
+        ReconstructionMode, ReconstructionSettings, SlopeLimiterFamily,
+        UnsupportedBoundaryBehavior,
+    };
     use mesh_sieve::topology::coastal::{WET_DRY_MASK_LABEL, WetDryMask};
     use mesh_sieve::topology::labels::LabelSet;
     use mesh_sieve::topology::point::PointId;
@@ -70,6 +83,7 @@ mod cuda_example {
 
         println!("Initializing CUDA device 0 and probing NVRTC ...");
         let backend = CudaBackend::new(CudaOptions {
+            stream_count: 2,
             enable_profiling: true,
             ..CudaOptions::default()
         })?;
@@ -163,6 +177,8 @@ mod cuda_example {
         demonstrate_f32(&backend, &plan, epochs, &inputs)?;
         demonstrate_wet_dry_mask(&backend, &inputs, epochs)?;
         demonstrate_resident_vector_ops(&backend)?;
+        demonstrate_phase2_operator(&backend, &inputs, epochs)?;
+        demonstrate_sparse_spmv(&backend)?;
 
         // Epochs make an invalidated geometry/topology plan fail before a
         // kernel is launched rather than silently using stale data.
@@ -255,18 +271,166 @@ mod cuda_example {
     }
 
     fn demonstrate_resident_vector_ops(backend: &CudaBackend) -> Result<(), AcceleratorError> {
-        let x: CudaBuffer<f64> = backend.upload(&[1.0, 2.0, 3.0])?;
-        let mask: CudaBuffer<u8> = backend.upload(&[1, 0, 1])?;
-        let mut y: CudaBuffer<f64> = backend.allocate(3)?;
-        let mut result: CudaBuffer<f64> = backend.allocate(3)?;
-        backend.fill(&mut y, 2.0)?;
-        backend.axpy(0.5, &x, &mut y)?;
-        backend.apply_mask(&mask, &mut y)?;
-        backend.copy(&y, &mut result)?;
-        backend.synchronize()?;
-        let actual = download_f64(backend, &result)?;
+        let x: CudaBuffer<f64> = backend.upload_on(1, &[1.0, 2.0, 3.0])?;
+        let mask: CudaBuffer<u8> = backend.upload_on(1, &[1, 0, 1])?;
+        let mut y: CudaBuffer<f64> = backend.allocate_on(1, 3)?;
+        let mut result: CudaBuffer<f64> = backend.allocate_on(1, 3)?;
+        backend.fill_on(1, &mut y, 2.0)?;
+        backend.axpy_on(1, 0.5, &x, &mut y)?;
+        backend.apply_mask_on(1, &mask, &mut y)?;
+        backend.copy_on(1, &y, &mut result)?;
+        let ready = backend.record_event(1)?;
+        backend.wait_event(0, &ready)?;
+        let mut actual = vec![0.0; result.len()];
+        backend.download_on(0, &result, &mut actual)?;
         assert_eq!(actual, vec![2.5, 0.0, 3.5]);
-        println!("Resident fill/AXPY/mask/copy result: {actual:?}");
+        println!("Indexed-stream fill/AXPY/mask/copy result: {actual:?}");
+        Ok(())
+    }
+
+    fn demonstrate_phase2_operator(
+        backend: &CudaBackend,
+        inputs: &FvmInputs,
+        epochs: PlanEpochs,
+    ) -> Result<(), AcceleratorError> {
+        let policy = FvBoundaryPolicy {
+            boundary_face_branches: HashMap::from([
+                (point(12), FvBoundaryBranch::Inflow),
+                (point(13), FvBoundaryBranch::Outflow),
+            ]),
+            allowed_branches: HashSet::from([FvBoundaryBranch::Inflow, FvBoundaryBranch::Outflow]),
+            convective_branch_hooks: HashMap::from([
+                (
+                    FvBoundaryBranch::Inflow,
+                    BoundaryCondition::Dirichlet { value: 10.0 },
+                ),
+                (
+                    FvBoundaryBranch::Outflow,
+                    BoundaryCondition::Robin {
+                        alpha: 1.0,
+                        beta: 0.25,
+                        gamma: 5.0,
+                    },
+                ),
+            ]),
+            diffusive_branch_hooks: HashMap::from([
+                (
+                    FvBoundaryBranch::Inflow,
+                    BoundaryCondition::Dirichlet { value: 10.0 },
+                ),
+                (
+                    FvBoundaryBranch::Outflow,
+                    BoundaryCondition::Neumann { gradient: 0.1 },
+                ),
+            ]),
+            unsupported_behavior: UnsupportedBoundaryBehavior::Error,
+        };
+        let metadata = FiniteVolumeMetadata::new(2).with_reconstruction_order(2);
+        let schemes = FvmSchemeSettings {
+            convective: ConvectiveScheme::HighResolution {
+                blend: 0.75,
+                limiter: SlopeLimiterFamily::VanLeer,
+            },
+            reconstruction: ReconstructionSettings {
+                mode: ReconstructionMode::LeastSquaresWithGreenGaussFallback,
+                limiter: LimiterOption::Family(SlopeLimiterFamily::Minmod),
+            },
+            diffusion: DiffusionSettings {
+                diffusivity: 0.125,
+                non_orthogonal_mode: NonOrthogonalCorrectionMode::FullyCorrected,
+            },
+        };
+        let cuda_operator = DeviceFvmOperator::compile(
+            backend,
+            inputs,
+            metadata.clone(),
+            None,
+            &policy,
+            schemes.clone(),
+            epochs,
+        )?;
+        let cpu = CpuBackend;
+        let cpu_operator =
+            DeviceFvmOperator::compile(&cpu, inputs, metadata, None, &policy, schemes, epochs)?;
+        let cell_values = [1.0_f64, 2.0, 4.0, 10.0, 20.0, 40.0];
+        let mass_flux = [0.5_f64, -0.25, -1.0, 0.75];
+        let boundary_values = [10.0_f64, 20.0, 100.0, 200.0];
+        let face_source = [0.0_f64, 0.0, 0.05, 0.0, 0.0, 0.0, 0.5, 0.0];
+        let cell_source = [0.1_f64, 0.2, 0.3, 1.0, 2.0, 3.0];
+        let mut cuda_state = DeviceFvmState::upload_components(
+            backend,
+            &cuda_operator.plan,
+            2,
+            &cell_values,
+            &mass_flux,
+            &boundary_values,
+        )?;
+        cuda_state.upload_sources(backend, &face_source, &cell_source)?;
+        let start = backend.record_event(0)?;
+        backend.evaluate_residual(&cuda_operator, &mut cuda_state, epochs)?;
+        let end = backend.record_event(0)?;
+        backend.synchronize_event(&end)?;
+        let elapsed_ms = backend.elapsed_ms(&start, &end)?;
+        let actual = cuda_state.download_residual(backend)?;
+
+        let mut cpu_state = DeviceFvmState::upload_components(
+            &cpu,
+            &cpu_operator.plan,
+            2,
+            &cell_values,
+            &mass_flux,
+            &boundary_values,
+        )?;
+        cpu_state.upload_sources(&cpu, &face_source, &cell_source)?;
+        cpu_operator.evaluate_residual(&mut cpu_state, epochs)?;
+        let expected = cpu_state.download_residual(&cpu)?;
+        assert_close(
+            "phase-2 multi-component residual",
+            &actual,
+            &expected,
+            EPSILON,
+        );
+
+        let mut norm = DeviceReduction::new(backend, actual.len())?;
+        let residual_norm = norm.l2_norm(backend, &cuda_state.residual)?;
+        println!(
+            "Phase-2 operator residual: {actual:?}; resident L2 norm={residual_norm}; \
+             device time={elapsed_ms:.3} ms"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "cuda-cusparse")]
+    fn demonstrate_sparse_spmv(backend: &CudaBackend) -> Result<(), AcceleratorError> {
+        let dofs = [1_u64, 2, 3].map(|raw| ClosureDof {
+            point: point(raw),
+            local_dof: 0,
+        });
+        let pattern = CsrPattern {
+            xadj: vec![0, 2, 5, 7],
+            adjncy: vec![
+                dofs[0], dofs[1], dofs[0], dofs[1], dofs[2], dofs[1], dofs[2],
+            ],
+            rows: dofs.to_vec(),
+        };
+        let mut matrix = DeviceCsrMatrix::from_pattern(
+            backend,
+            &pattern,
+            &[2.0_f64, -1.0, -1.0, 2.0, -1.0, -1.0, 2.0],
+        )?;
+        let x = backend.upload(&[1.0_f64, 2.0, 4.0])?;
+        let mut y = backend.allocate(3)?;
+        matrix.spmv(backend, 1.0, &x, 0.0, &mut y)?;
+        backend.synchronize_stream(0)?;
+        let actual = download_f64(backend, &y)?;
+        assert_eq!(actual, vec![0.0, -1.0, 6.0]);
+        println!("cuSPARSE CSR SpMV result: {actual:?}");
+        Ok(())
+    }
+
+    #[cfg(not(feature = "cuda-cusparse"))]
+    fn demonstrate_sparse_spmv(_backend: &CudaBackend) -> Result<(), AcceleratorError> {
+        println!("Enable `cuda-cusparse` to run the CSR SpMV portion of this example.");
         Ok(())
     }
 

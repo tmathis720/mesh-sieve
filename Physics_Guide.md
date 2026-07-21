@@ -283,6 +283,19 @@ or application-specific face flux corrections. Keep these hooks physically
 meaningful and deterministic; use labels and metadata to select where they
 apply.
 
+### CUDA FV Operators
+
+With the `cuda` feature, compile stable mesh data into `DeviceFvmOperator` and
+upload component-major fields with `DeviceFvmState::upload_components`. A call
+to `CudaBackend::evaluate_residual` evaluates reconstruction, convection,
+diffusion, explicit face/cell sources, wet/dry masks, and deterministic gather
+without intermediate host transfers or allocations.
+
+Rust physics hooks cannot execute on a device. Populate the resident
+`face_source` and `cell_source` buffers instead, or load a model-specific PTX
+kernel. Standard boundary policy remains host-defined and is packed into
+refreshable device coefficient arrays.
+
 ## 6. DG and Trace-Based Methods
 
 DG methods often need both cell-local values and oriented traces on faces.

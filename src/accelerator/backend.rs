@@ -173,7 +173,7 @@ impl ComputeBackend {
                     })?;
                     Ok((
                         self.clone(),
-                        format!("CUDA device {device_ordinal} initialized"),
+                        format!("CUDA 13.0.3 ABI device {device_ordinal} and NVRTC initialized"),
                     ))
                 }
                 #[cfg(not(feature = "cuda"))]
@@ -191,7 +191,7 @@ impl ComputeBackend {
                     {
                         Ok(_) => Ok((
                             Self::Cuda { device_ordinal: 0 },
-                            "CUDA device 0 and NVRTC initialized successfully".into(),
+                            "CUDA 13.0.3 ABI device 0 and NVRTC initialized successfully".into(),
                         )),
                         Err(error) => Ok((
                             Self::Cpu,

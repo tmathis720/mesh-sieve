@@ -1,7 +1,18 @@
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use mesh_sieve::discretization::runtime::{CellGeometry, FaceGeometry, FluxStencil};
-use mesh_sieve::physics::fvm::{FvmInputs, FvmPackedCache};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+#[cfg(feature = "cuda")]
+use mesh_sieve::accelerator::{AcceleratorBackend, cuda::CudaBackend, cuda::CudaOptions};
+use mesh_sieve::accelerator::{CpuBackend, DeviceFvmOperator, DeviceFvmState, PlanEpochs};
+use mesh_sieve::discretization::runtime::{
+    CellGeometry, FaceGeometry, FiniteVolumeMetadata, FluxStencil,
+};
+use mesh_sieve::physics::fvm::{
+    BoundaryCondition, ConvectiveScheme, DiffusionSettings, FvBoundaryBranch, FvBoundaryPolicy,
+    FvmInputs, FvmPackedCache, FvmSchemeSettings, LimiterOption, NonOrthogonalCorrectionMode,
+    ReconstructionGradient, ReconstructionMode, ReconstructionSettings,
+    UnsupportedBoundaryBehavior,
+};
 use mesh_sieve::topology::point::PointId;
+use std::collections::{HashMap, HashSet};
 
 fn pid(raw: u64) -> PointId {
     PointId::new(raw + 1).expect("nonzero PointId")
@@ -150,5 +161,296 @@ fn bench_fvm_face_loop(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_fvm_face_loop);
+fn bench_resident_fvm_operator(c: &mut Criterion) {
+    let mut group = c.benchmark_group("fvm_resident_operator_cpu");
+    for &(internal, boundary) in &[(10_000usize, 1_000usize), (100_000, 10_000)] {
+        group.throughput(Throughput::Elements((internal + boundary) as u64));
+        let inputs = synthetic_inputs(internal, boundary);
+        let boundary_face_branches = inputs
+            .boundary_faces()
+            .map(|face| (face.face, FvBoundaryBranch::Inflow))
+            .collect::<HashMap<_, _>>();
+        let policy = FvBoundaryPolicy {
+            boundary_face_branches,
+            allowed_branches: HashSet::from([FvBoundaryBranch::Inflow]),
+            convective_branch_hooks: HashMap::from([(
+                FvBoundaryBranch::Inflow,
+                BoundaryCondition::Dirichlet { value: 0.0 },
+            )]),
+            diffusive_branch_hooks: HashMap::from([(
+                FvBoundaryBranch::Inflow,
+                BoundaryCondition::Neumann { gradient: 0.0 },
+            )]),
+            unsupported_behavior: UnsupportedBoundaryBehavior::Error,
+        };
+        let schemes = FvmSchemeSettings {
+            convective: ConvectiveScheme::Upwind,
+            reconstruction: ReconstructionSettings {
+                mode: ReconstructionMode::GradientOnly(ReconstructionGradient::GreenGauss),
+                limiter: LimiterOption::None,
+            },
+            diffusion: DiffusionSettings {
+                diffusivity: 0.01,
+                non_orthogonal_mode: NonOrthogonalCorrectionMode::FullyCorrected,
+            },
+        };
+        let backend = CpuBackend;
+        let operator = DeviceFvmOperator::compile(
+            &backend,
+            &inputs,
+            FiniteVolumeMetadata::new(1),
+            None,
+            &policy,
+            schemes,
+            PlanEpochs::default(),
+        )
+        .unwrap();
+        let mut state = DeviceFvmState::upload(
+            &backend,
+            &operator.plan,
+            &vec![1.0_f64; operator.plan.cell_ids.len()],
+            &vec![0.1_f64; operator.plan.face_count()],
+            &vec![0.0_f64; operator.plan.boundary_face_count],
+        )
+        .unwrap();
+        group.bench_with_input(
+            BenchmarkId::new("evaluate_residual", internal),
+            &internal,
+            |b, _| {
+                b.iter(|| {
+                    operator
+                        .evaluate_residual(&mut state, PlanEpochs::default())
+                        .unwrap();
+                    black_box(state.residual.as_slice());
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+fn bench_fvm_operator_setup(c: &mut Criterion) {
+    let mut group = c.benchmark_group("fvm_operator_setup_cpu");
+    for &(internal, boundary) in &[(10_000usize, 1_000usize), (100_000, 10_000)] {
+        let inputs = synthetic_inputs(internal, boundary);
+        let boundary_face_branches = inputs
+            .boundary_faces()
+            .map(|face| (face.face, FvBoundaryBranch::Inflow))
+            .collect::<HashMap<_, _>>();
+        let policy = FvBoundaryPolicy {
+            boundary_face_branches,
+            allowed_branches: HashSet::from([FvBoundaryBranch::Inflow]),
+            convective_branch_hooks: HashMap::from([(
+                FvBoundaryBranch::Inflow,
+                BoundaryCondition::Dirichlet { value: 0.0 },
+            )]),
+            diffusive_branch_hooks: HashMap::from([(
+                FvBoundaryBranch::Inflow,
+                BoundaryCondition::Neumann { gradient: 0.0 },
+            )]),
+            unsupported_behavior: UnsupportedBoundaryBehavior::Error,
+        };
+        let schemes = FvmSchemeSettings {
+            convective: ConvectiveScheme::HighResolution {
+                blend: 0.75,
+                limiter: mesh_sieve::physics::fvm::SlopeLimiterFamily::VanLeer,
+            },
+            reconstruction: ReconstructionSettings {
+                mode: ReconstructionMode::LeastSquaresWithGreenGaussFallback,
+                limiter: LimiterOption::None,
+            },
+            diffusion: DiffusionSettings {
+                diffusivity: 0.01,
+                non_orthogonal_mode: NonOrthogonalCorrectionMode::FullyCorrected,
+            },
+        };
+        let backend = CpuBackend;
+        group.bench_with_input(BenchmarkId::new("compile", internal), &internal, |b, _| {
+            b.iter(|| {
+                black_box(
+                    DeviceFvmOperator::compile(
+                        &backend,
+                        &inputs,
+                        FiniteVolumeMetadata::new(4).with_reconstruction_order(2),
+                        None,
+                        &policy,
+                        schemes.clone(),
+                        PlanEpochs::default(),
+                    )
+                    .unwrap(),
+                );
+            });
+        });
+        let operator = DeviceFvmOperator::compile(
+            &backend,
+            &inputs,
+            FiniteVolumeMetadata::new(4).with_reconstruction_order(2),
+            None,
+            &policy,
+            schemes,
+            PlanEpochs::default(),
+        )
+        .unwrap();
+        let cells = vec![1.0_f64; operator.plan.cell_ids.len() * 4];
+        let mass = vec![0.1_f64; operator.plan.face_count()];
+        let boundary_values = vec![0.0_f64; operator.plan.boundary_face_count * 4];
+        group.bench_with_input(
+            BenchmarkId::new("state_upload", internal),
+            &internal,
+            |b, _| {
+                b.iter(|| {
+                    black_box(
+                        DeviceFvmState::upload_components(
+                            &backend,
+                            &operator.plan,
+                            4,
+                            &cells,
+                            &mass,
+                            &boundary_values,
+                        )
+                        .unwrap(),
+                    );
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+#[cfg(feature = "cuda")]
+fn bench_cuda_resident_operator(c: &mut Criterion) {
+    let Ok(backend) = CudaBackend::new(CudaOptions::default()) else {
+        eprintln!("CUDA unavailable; skipping CUDA FVM benchmarks");
+        return;
+    };
+    let mut group = c.benchmark_group("fvm_resident_operator_cuda");
+    for &(internal, boundary, components) in &[
+        (10_000usize, 1_000usize, 1usize),
+        (10_000, 1_000, 4),
+        (100_000, 10_000, 4),
+    ] {
+        let inputs = synthetic_inputs(internal, boundary);
+        let boundary_face_branches = inputs
+            .boundary_faces()
+            .map(|face| (face.face, FvBoundaryBranch::Inflow))
+            .collect::<HashMap<_, _>>();
+        let policy = FvBoundaryPolicy {
+            boundary_face_branches,
+            allowed_branches: HashSet::from([FvBoundaryBranch::Inflow]),
+            convective_branch_hooks: HashMap::from([(
+                FvBoundaryBranch::Inflow,
+                BoundaryCondition::Dirichlet { value: 0.0 },
+            )]),
+            diffusive_branch_hooks: HashMap::from([(
+                FvBoundaryBranch::Inflow,
+                BoundaryCondition::Neumann { gradient: 0.0 },
+            )]),
+            unsupported_behavior: UnsupportedBoundaryBehavior::Error,
+        };
+        let schemes = FvmSchemeSettings {
+            convective: ConvectiveScheme::Upwind,
+            reconstruction: ReconstructionSettings {
+                mode: ReconstructionMode::GradientOnly(ReconstructionGradient::GreenGauss),
+                limiter: LimiterOption::None,
+            },
+            diffusion: DiffusionSettings {
+                diffusivity: 0.01,
+                non_orthogonal_mode: NonOrthogonalCorrectionMode::FullyCorrected,
+            },
+        };
+        group.bench_with_input(
+            BenchmarkId::new(format!("compile_{components}c"), internal),
+            &internal,
+            |b, _| {
+                b.iter(|| {
+                    black_box(
+                        DeviceFvmOperator::compile(
+                            &backend,
+                            &inputs,
+                            FiniteVolumeMetadata::new(components),
+                            None,
+                            &policy,
+                            schemes.clone(),
+                            PlanEpochs::default(),
+                        )
+                        .unwrap(),
+                    );
+                });
+            },
+        );
+        let operator = DeviceFvmOperator::compile(
+            &backend,
+            &inputs,
+            FiniteVolumeMetadata::new(components),
+            None,
+            &policy,
+            schemes,
+            PlanEpochs::default(),
+        )
+        .unwrap();
+        let cell_values = vec![1.0_f64; operator.plan.cell_ids.len() * components];
+        let mass_flux = vec![0.1_f64; operator.plan.face_count()];
+        let boundary_values = vec![0.0_f64; operator.plan.boundary_face_count * components];
+        group.bench_with_input(
+            BenchmarkId::new(format!("state_upload_{components}c"), internal),
+            &internal,
+            |b, _| {
+                b.iter(|| {
+                    black_box(
+                        DeviceFvmState::upload_components(
+                            &backend,
+                            &operator.plan,
+                            components,
+                            &cell_values,
+                            &mass_flux,
+                            &boundary_values,
+                        )
+                        .unwrap(),
+                    );
+                });
+            },
+        );
+        let mut state = DeviceFvmState::upload_components(
+            &backend,
+            &operator.plan,
+            components,
+            &cell_values,
+            &mass_flux,
+            &boundary_values,
+        )
+        .unwrap();
+        backend
+            .evaluate_residual(&operator, &mut state, PlanEpochs::default())
+            .unwrap();
+        backend.synchronize().unwrap();
+        group.throughput(Throughput::Elements(
+            ((internal + boundary) * components) as u64,
+        ));
+        group.bench_with_input(
+            BenchmarkId::new(format!("evaluate_residual_{components}c"), internal),
+            &internal,
+            |b, _| {
+                b.iter(|| {
+                    backend
+                        .evaluate_residual(&operator, &mut state, PlanEpochs::default())
+                        .unwrap();
+                    backend.synchronize_stream(0).unwrap();
+                    black_box(&state.residual);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+#[cfg(not(feature = "cuda"))]
+fn bench_cuda_resident_operator(_c: &mut Criterion) {}
+
+criterion_group!(
+    benches,
+    bench_fvm_face_loop,
+    bench_resident_fvm_operator,
+    bench_fvm_operator_setup,
+    bench_cuda_resident_operator
+);
 criterion_main!(benches);

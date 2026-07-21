@@ -729,6 +729,20 @@ This backend is optional and lower-level than normal `VecStorage` use. Most
 code should remain generic over `Section<V, S>` and `Storage<V>`, using
 `VecStorage` unless a workflow explicitly needs GPU-backed storage.
 
+## 18.1 CUDA Execution Plans
+
+With `--features cuda`, the `accelerator` module exposes explicit device
+buffers and immutable execution plans rather than a CUDA-backed `Section`.
+`DeviceFvmOperator` combines a `DeviceFvmPlan`, `FiniteVolumeMetadata`, scheme
+settings, standard boundary coefficients, and least-squares weights.
+`DeviceFvmState::upload_components` uses component-major storage and retains
+all flux, gradient, source, and residual workspaces across evaluations.
+
+Use `DeviceReduction` for resident sum, dot, L2, and maximum-absolute-value
+reductions. `DeviceCsrMatrix` validates symbolic/global CSR patterns and offers
+CPU SpMV; enable `cuda-cusparse` for CUDA SpMV. CUDA stream events are exposed
+through `CudaBackend::{record_event,wait_event,synchronize_event,elapsed_ms}`.
+
 ## 19. Error Model
 
 Most public operations return `Result<_, MeshSieveError>`.

@@ -5,10 +5,17 @@
 - Added a backend-neutral, plan-based accelerator layer with explicit opaque
   buffers, `DeviceSection` transfers, frozen CSR topology plans, FVM SoA plans,
   epoch validation, and a CPU reference executor.
-- Added optional native CUDA 12 execution through `cudarc`, including persistent
+- Added optional native CUDA 13.0.3 execution through `cudarc`, including persistent
   contexts/streams, cached NVRTC modules, `f32`/`f64` convective and diffusive
   face kernels, Green--Gauss gradients, wet/dry masks, and deterministic
   non-atomic cell residual gathering.
+- Added `DeviceFvmOperator` with component-major state, Green--Gauss and
+  least-squares reconstruction, all built-in convection/limiter and diffusion
+  modes, packed Dirichlet/Neumann/Robin boundaries, explicit resident sources,
+  deterministic total-residual evaluation, and indexed CUDA stream/event APIs.
+- Added reusable device reductions and validated `DeviceCsrMatrix` CPU/cuSPARSE
+  SpMV. CUDA numerical libraries are now enabled only by their dedicated
+  feature flags.
 
 - Remove `SieveArcPayload` wrapper. Use `InMemorySieveArc`, `InMemoryOrientedSieveArc`, or `InMemoryStackArc` (store `Arc<T>` directly) for shared payloads.
 - Added optional invariant checking for `Atlas` and `Section` via the

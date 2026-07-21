@@ -162,7 +162,7 @@ The default feature set is empty.
 | `deterministic-order` | Prefer deterministic map/set ordering where supported. |
 | `deterministic-owners` | Deterministic ownership-related behavior in gated paths. |
 | `wgpu` | Enable GPU storage support for sections. |
-| `cuda` | Enable native CUDA 12 execution through dynamically loaded `cudarc` driver/NVRTC libraries. |
+| `cuda` | Enable native CUDA 13.0.3 execution through dynamically loaded `cudarc` driver/NVRTC libraries. |
 | `cuda-cublas` | Add cuBLAS bindings to the CUDA backend. |
 | `cuda-cusparse` | Add cuSPARSE bindings to the CUDA backend. |
 | `cuda-cusolver` | Add cuSOLVER bindings to the CUDA backend. |
@@ -189,6 +189,8 @@ cargo test --features rayon
 cargo test --features mpi-support
 cargo check --features cuda
 cargo test --features cuda --test cuda_fvm
+# On a CUDA CI runner, require rather than skip runtime execution:
+MESH_SIEVE_RUN_CUDA_TESTS=1 cargo test --features cuda --test cuda_fvm
 ```
 
 ## CUDA execution
@@ -201,16 +203,29 @@ mutable mesh -> FrozenSieveCsr/FvmInputs -> persistent device plan -> batched ke
 ```
 
 `DeviceMeshPlan` uploads dense cone/support CSR arrays. `DeviceFvmPlan` compiles
-cell/face geometry and cell-to-face CSR, while `DeviceFvmState` keeps scalar
-state, face workspaces, gradients, and residuals resident across iterations.
-CUDA currently provides `f32` and `f64` scalar upwind/central convection,
-orthogonal diffusion, Green--Gauss gradients, wet/dry masking, and deterministic
-cell gathering without floating-point atomics. The CPU backend executes the
-same packed plans for parity testing.
+cell/face geometry and cell-to-face CSR. `DeviceFvmOperator` adds numerical
+schemes, standard boundary conditions, and least-squares reconstruction data.
+`DeviceFvmState` keeps component-major `f32` or `f64` fields, face workspaces,
+explicit sources, gradients, and residuals resident across iterations.
+
+The complete operator supports Green--Gauss and least-squares gradients,
+upwind/central/bounded/high-resolution convection, all built-in limiters,
+orthogonal/deferred/fully-corrected diffusion, Dirichlet/Neumann/Robin
+boundaries, wet/dry masking, and deterministic cell gathering without
+floating-point atomics. `DeviceReduction` supplies reusable vector reductions;
+`DeviceCsrMatrix` supplies CPU SpMV and cuSPARSE SpMV with `cuda-cusparse`.
+The CPU backend executes the same packed operator semantics for parity testing.
+
+`CudaBackend::evaluate_residual` enqueues the complete resident operator on
+stream 0. `evaluate_residual_on` targets another configured stream, while
+the `upload_on`, `download_on`, vector-operation `_on`, and legacy FVM `_on`
+variants use indexed streams. `record_event`, `wait_event`, and `elapsed_ms`
+expose synchronization and timing.
+No call silently falls back to CPU after CUDA initialization.
 
 The `cuda` feature builds without link-time CUDA dependencies, but execution
 requires the NVIDIA driver and NVRTC shared libraries at runtime. It targets
-the CUDA 12 ABI by default. `ComputeBackend::Auto` probes both the device and
+the CUDA 13.0.3 ABI by default. `ComputeBackend::Auto` probes both the device and
 NVRTC during initialization and reports why it selected CUDA or CPU; it never
 falls back after a kernel error. WGPU remains available as an explicit backend
 for operations that support it.
@@ -218,6 +233,13 @@ for operations that support it.
 Plans capture topology, atlas, and geometry epochs. Callers must increment the
 geometry epoch after coordinate changes and the topology version after mesh
 adaptation; stale plans return `AcceleratorError` before launch.
+
+The next CUDA stages are intentionally ordered after the resident FVM operator:
+distributed halo pack/unpack with pinned-host MPI staging first; a batched,
+matrix-free scalar-Poisson FE plan grouped by discretization/geometry shape;
+then moving-mesh metric and quality kernels when profiling justifies them.
+Topology mutation, adaptation, partitioning, label editing, and I/O remain
+host-side.
 
 MPI examples normally need an MPI launcher:
 

@@ -6,9 +6,11 @@
 //! pretend to be host slices.
 
 mod backend;
+mod csr;
 mod error;
 mod fvm;
 mod plan;
+mod reduction;
 mod section;
 
 #[cfg(feature = "cuda")]
@@ -17,10 +19,13 @@ pub mod cuda;
 pub use backend::{
     AcceleratorBackend, ComputeBackend, CpuBackend, CpuBuffer, DeviceBuffer, DeviceValue,
 };
+pub use csr::DeviceCsrMatrix;
 pub use error::AcceleratorError;
 pub use fvm::{
-    DeviceBoundaryFace, DeviceFvmPlan, DeviceFvmState, DeviceInternalFace, DevicePhysicsParams,
-    FvmScalar, ScalarFluxScheme,
+    DeviceBoundaryFace, DeviceFvmBoundaryConditions, DeviceFvmOperator, DeviceFvmPlan,
+    DeviceFvmState, DeviceInternalFace, DeviceLeastSquaresPlan, DevicePhysicsParams, FvmScalar,
+    ScalarFluxScheme,
 };
 pub use plan::{DeviceMeshPlan, DeviceTopology, PlanEpochs};
+pub use reduction::DeviceReduction;
 pub use section::DeviceSection;

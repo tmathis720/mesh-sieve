@@ -26,6 +26,15 @@ pub enum AcceleratorError {
     /// A kernel launch failed.
     #[error("CUDA kernel launch failed: {0}")]
     KernelLaunchFailed(String),
+    /// A CUDA stream index was outside the configured stream pool.
+    #[error("CUDA stream index {index} is out of range for {stream_count} streams")]
+    InvalidStreamIndex { index: usize, stream_count: usize },
+    /// A CUDA event operation failed.
+    #[error("CUDA event operation failed: {0}")]
+    EventFailed(String),
+    /// A CUDA numerical library call failed.
+    #[error("CUDA sparse-library operation failed: {0}")]
+    SparseLibraryFailed(String),
     /// A host/device transfer failed.
     #[error("device transfer failed: {0}")]
     DeviceTransferFailed(String),
